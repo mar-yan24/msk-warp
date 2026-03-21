@@ -41,7 +41,7 @@ def main():
     parser.add_argument('--model', type=str, default='assets/cartpole.xml')
     parser.add_argument('--episodes', type=int, default=5)
     parser.add_argument('--episode-length', type=int, default=240)
-    parser.add_argument('--action-strength', type=float, default=200.0)
+    parser.add_argument('--action-strength', type=float, default=20.0)
     parser.add_argument('--substeps', type=int, default=4)
     parser.add_argument('--device', type=str, default='cpu')
     parser.add_argument('--no-render', action='store_true', help='Run without viewer, print stats only')

@@ -22,7 +22,7 @@ class CartPoleSwingUpEnv(MjWarpEnv):
         stochastic_init=True,
         substeps=4,
         model_path='assets/cartpole.xml',
-        action_strength=1000.0,
+        action_strength=20.0,
         **kwargs,
     ):
         num_obs = 5

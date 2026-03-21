@@ -55,7 +55,7 @@ class SHAC:
             stochastic_init=cfg['params']['env'].get('stochastic_init', True),
             substeps=cfg['params']['env'].get('substeps', 4),
             model_path=cfg['params']['env'].get('model_path', 'assets/cartpole.xml'),
-            action_strength=cfg['params']['env'].get('action_strength', 1000.0),
+            action_strength=cfg['params']['env'].get('action_strength', 20.0),
             no_grad=False,
         )
 
