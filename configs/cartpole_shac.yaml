@@ -26,7 +26,7 @@ params:
   config:
     name: cartpole_shac
     gamma: 0.99
-    steps_num: 32
+    steps_num: 16
     max_epochs: 1000
     actor_learning_rate: 1e-2
     critic_learning_rate: 1e-3

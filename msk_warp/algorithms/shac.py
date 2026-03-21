@@ -379,8 +379,9 @@ class SHAC:
                     clip_grad_norm_(self.actor.parameters(), self.grad_norm)
                 self.grad_norm_after_clip = tu.grad_norm(self.actor.parameters())
 
-                if torch.isnan(self.grad_norm_before_clip):
-                    print('WARNING: NaN gradient detected, zeroing grads')
+                if torch.isnan(self.grad_norm_before_clip) or self.grad_norm_before_clip > 1e6:
+                    print('WARNING: NaN or extreme gradient detected (norm={:.2e}), zeroing grads'.format(
+                        self.grad_norm_before_clip.item() if not torch.isnan(self.grad_norm_before_clip) else float('nan')))
                     for p in self.actor.parameters():
                         if p.grad is not None:
                             p.grad.zero_()
