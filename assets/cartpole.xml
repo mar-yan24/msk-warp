@@ -22,7 +22,7 @@
       <!-- Pole (hanging down from cart) -->
       <body name="pole" pos="0 0 0">
         <joint name="hinge" type="hinge" axis="0 1 0"/>
-        <geom type="capsule" fromto="0 0 0 0 0 -1" size="0.025" mass="10" rgba="1 1 1 1"/>
+        <geom type="capsule" fromto="0 0 0 0 0 -1" size="0.025" mass="0.1" rgba="1 1 1 1"/>
       </body>
     </body>
   </worldbody>
