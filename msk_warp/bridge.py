@@ -138,14 +138,21 @@ class WarpSimStep(torch.autograd.Function):
             wp.copy(d.ctrl, ctrl_wp)
             wp.synchronize()
 
+            # Run kinematics + velocity OUTSIDE the tape. These contain
+            # constraint kernels with enable_backwards=False that produce NaN
+            # gradients. Safe for direct-drive actuators (gear * ctrl) where
+            # fwd_actuation does not depend on position/velocity outputs.
+            # NOTE: Revisit for muscle/tendon actuators that depend on
+            # length/velocity quantities from fwd_position/fwd_velocity.
+            mjw.fwd_position(m, d)
+            mjw.fwd_velocity(m, d)
+            wp.synchronize()
+
             d.ctrl.grad = wp.zeros_like(d.ctrl)
 
             loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
             tape = wp.Tape()
             with tape:
-                # Run kinematics + velocity to set up for actuation
-                mjw.fwd_position(m, d)
-                mjw.fwd_velocity(m, d)
                 mjw.fwd_actuation(m, d)
                 wp.launch(
                     vjp_qfrc_kernel,
