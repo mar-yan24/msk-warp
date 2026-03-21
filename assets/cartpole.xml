@@ -1,0 +1,37 @@
+<mujoco model="cartpole">
+  <option gravity="0 0 -9.81" timestep="0.004166667" jacobian="sparse">
+    <flag contact="disable" constraint="disable" eulerdamp="disable"/>
+  </option>
+
+  <compiler autolimits="true"/>
+
+  <default>
+    <joint damping="0"/>
+    <geom contype="0" conaffinity="0"/>
+  </default>
+
+  <worldbody>
+    <!-- Slide bar (visual only) -->
+    <geom type="box" size="4 0.025 0.025" rgba="0 0.8 0.8 1"/>
+
+    <!-- Cart -->
+    <body name="cart" pos="0 0 0">
+      <joint name="slider" type="slide" axis="1 0 0" range="-4 4"/>
+      <geom type="box" size="0.25 0.25 0.1" mass="1" rgba="0 0 0.8 1"/>
+
+      <!-- Pole (hanging down from cart) -->
+      <body name="pole" pos="0 0 0">
+        <joint name="hinge" type="hinge" axis="0 1 0"/>
+        <geom type="capsule" fromto="0 0 0 0 0 -1" size="0.025" mass="10" rgba="1 1 1 1"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="slide_motor" joint="slider" gear="1"/>
+  </actuator>
+
+  <keyframe>
+    <key name="hanging_down" qpos="0 3.14159265" qvel="0 0"/>
+  </keyframe>
+</mujoco>

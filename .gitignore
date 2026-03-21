@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# CUDA / Warp
+.warp_cache/
+
+# Training outputs
+logs/
+outputs/
+*.pt
+*.npy
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/

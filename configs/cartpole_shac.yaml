@@ -1,0 +1,45 @@
+params:
+  general:
+    seed: 42
+    device: cuda:0
+    logdir: logs/cartpole
+
+  env:
+    name: CartPoleSwingUp
+    model_path: assets/cartpole.xml
+    num_actors: 64
+    episode_length: 240
+    stochastic_init: true
+    substeps: 4
+    action_strength: 200.0
+
+  network:
+    actor: ActorStochasticMLP
+    actor_mlp:
+      units: [64, 64]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [64, 64]
+      activation: elu
+
+  config:
+    name: cartpole_shac
+    gamma: 0.99
+    steps_num: 32
+    max_epochs: 500
+    actor_learning_rate: 1e-2
+    critic_learning_rate: 1e-3
+    lr_schedule: linear
+    betas: [0.7, 0.95]
+    target_critic_alpha: 0.2
+    obs_rms: true
+    ret_rms: false
+    critic_iterations: 16
+    critic_method: td-lambda
+    lambda: 0.95
+    num_batch: 4
+    num_actors: 64
+    truncate_grads: true
+    grad_norm: 1.0
+    save_interval: 100
