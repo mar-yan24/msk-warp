@@ -10,6 +10,7 @@ import copy
 
 import numpy as np
 import torch
+import warp as wp
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from tensorboardX import SummaryWriter
 import yaml
@@ -210,6 +211,12 @@ class SHAC:
 
         # Initialize trajectory (cuts gradient graph)
         obs = self.env.initialize_trajectory()
+
+        # Initialize differentiable state tensors for dynamics gradient path
+        with torch.no_grad():
+            qpos = wp.to_torch(self.env.warp_data.qpos).clone()
+            qvel = wp.to_torch(self.env.warp_data.qvel).clone()
+
         if self.obs_rms is not None:
             with torch.no_grad():
                 self.obs_rms.update(obs)
@@ -220,37 +227,46 @@ class SHAC:
                 self.obs_buf[i] = obs.clone()
 
             actions = self.actor(obs, deterministic=deterministic)
-            obs, rew, done, extra_info = self.env.step(torch.tanh(actions))
+            # Pass state tensors through for dynamics gradient flow
+            obs_raw, rew, done, extra_info, qpos_new, qvel_new = self.env.step(
+                torch.tanh(actions), qpos, qvel
+            )
 
             with torch.no_grad():
                 raw_rew = rew.clone()
 
             rew = rew * self.rew_scale
 
+            self.episode_length += 1
+            done_env_ids = done.nonzero(as_tuple=False).squeeze(-1)
+
+            # Handle resets: detach state for reset envs, preserve gradient for others
+            if len(done_env_ids) > 0:
+                with torch.no_grad():
+                    qpos_reset = wp.to_torch(self.env.warp_data.qpos).clone()
+                    qvel_reset = wp.to_torch(self.env.warp_data.qvel).clone()
+
+                mask = torch.ones(self.num_envs, 1, dtype=torch.float32, device=self.device)
+                mask[done_env_ids] = 0.0
+                qpos = qpos_new * mask + qpos_reset * (1.0 - mask)
+                qvel = qvel_new * mask + qvel_reset * (1.0 - mask)
+            else:
+                qpos = qpos_new
+                qvel = qvel_new
+
+            # Compute obs from tracked state (always differentiable for non-reset envs)
+            obs = self.env._compute_obs(qpos, qvel)
+
             if self.obs_rms is not None:
                 with torch.no_grad():
                     self.obs_rms.update(obs)
                 obs = obs_rms.normalize(obs)
-
-            # Per-step gradient clipping: prevent exponential amplification
-            # through the BPTT chain. The gradient of obs accumulates from all
-            # future steps through the actor network; clipping it here bounds
-            # the cross-step amplification factor.
-            if self.obs_grad_clip is not None and obs.requires_grad:
-                _clip = self.obs_grad_clip
-                obs.register_hook(
-                    lambda g, c=_clip: g * torch.clamp(c / (g.norm() + 1e-8), max=1.0)
-                )
 
             if self.ret_rms is not None:
                 with torch.no_grad():
                     self.ret = self.ret * self.gamma + rew
                     self.ret_rms.update(self.ret)
                 rew = rew / torch.sqrt(ret_var + 1e-6)
-
-            self.episode_length += 1
-
-            done_env_ids = done.nonzero(as_tuple=False).squeeze(-1)
 
             next_values[i + 1] = self.target_critic(obs).squeeze(-1)
 

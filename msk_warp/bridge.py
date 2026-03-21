@@ -2,10 +2,11 @@
 
 Strategy: use Warp tape ONLY through fwd_actuation (ctrl -> qfrc_actuator),
 which has verified correct gradients. The rest of the backward chain is computed
-analytically:
+analytically + finite-difference dynamics Jacobian:
   - Euler backward: d(loss)/d(qacc) from incoming PyTorch gradients
   - Mass matrix solve: d(loss)/d(qfrc) = solve_M(d(loss)/d(qacc))
   - Actuation backward via Warp tape: d(loss)/d(ctrl) from VJP on qfrc_actuator
+  - FD dynamics Jacobian: d(qacc)/d(qpos), d(qacc)/d(qvel) for state gradient
 """
 
 import warp as wp
@@ -27,16 +28,25 @@ def vjp_qfrc_kernel(
 
 
 class WarpSimStep(torch.autograd.Function):
-    """Differentiable simulation step bridging Warp and PyTorch."""
+    """Differentiable simulation step bridging Warp and PyTorch.
+
+    Accepts (ctrl, qpos_in, qvel_in) as differentiable inputs so that
+    gradients flow through both the actuation path (ctrl -> forces) AND
+    the dynamics path (state -> next_state) across simulation steps.
+    """
 
     @staticmethod
-    def forward(ctx, ctrl_torch, env):
+    def forward(ctx, ctrl_torch, qpos_in_torch, qvel_in_torch, env):
         m = env.warp_model
         d = env.warp_data
 
         nworld = d.qpos.shape[0]
         nq = d.qpos.shape[1]
         nv = d.qvel.shape[1]
+
+        # Copy input state to Warp data
+        wp.copy(d.qpos, wp.from_torch(qpos_in_torch.detach().contiguous()))
+        wp.copy(d.qvel, wp.from_torch(qvel_in_torch.detach().contiguous()))
 
         # Save pre-step state for backward checkpointing
         saved_qpos = wp.clone(d.qpos)
@@ -75,10 +85,12 @@ class WarpSimStep(torch.autograd.Function):
         m = env.warp_model
         d = env.warp_data
         nworld = ctx.nworld
+        nq = ctx.nq
         nv = ctx.nv
         substeps = env.substeps
 
         dt = wp.to_torch(m.opt.timestep).item()
+        fd_eps = 1e-4
 
         # Restore to initial state
         wp.copy(d.qpos, ctx.saved_qpos)
@@ -118,19 +130,47 @@ class WarpSimStep(torch.autograd.Function):
             #    d(loss)/d(qacc) = g_qpos * dt^2 + g_qvel * dt
             grad_qacc_torch = g_qpos * (dt * dt) + g_qvel * dt
 
-            # 2. Run forward dynamics to get factored mass matrix
+            # 2. Run forward dynamics to get factored mass matrix + qacc
             mjw.forward(m, d)
             wp.synchronize()
+            qacc_orig = wp.to_torch(d.qacc).clone()
 
             # 3. Solve M_inv * grad_qacc to get grad_qfrc
-            #    qacc = M_inv * qfrc_smooth, so d(loss)/d(qfrc_smooth) = M_inv^T * d(loss)/d(qacc)
-            #    Since M is symmetric: M_inv^T = M_inv, so we solve M * grad_qfrc = grad_qacc
             grad_qacc_wp = wp.from_torch(grad_qacc_torch.contiguous())
             grad_qfrc_wp = wp.zeros((nworld, nv), dtype=wp.float32)
             mjw.solve_m(m, d, grad_qfrc_wp, grad_qacc_wp)
             wp.synchronize()
 
-            # 4. Use Warp tape through fwd_actuation only to get d(loss)/d(ctrl)
+            # 4. Finite-difference dynamics Jacobian: ∂qacc/∂qpos and ∂qacc/∂qvel
+            #    These capture gravity, Coriolis, mass-matrix dependence on state —
+            #    the terms missing from the actuation-only tape backward.
+            qpos_view = wp.to_torch(d.qpos)
+            qvel_view = wp.to_torch(d.qvel)
+            fd_g_qpos = torch.zeros(nworld, nq, device=g_qpos.device)
+            fd_g_qvel = torch.zeros(nworld, nv, device=g_qvel.device)
+
+            for j in range(nq):
+                qpos_view[:, j] += fd_eps
+                mjw.forward(m, d)
+                wp.synchronize()
+                qacc_plus = wp.to_torch(d.qacc).clone()
+                qpos_view[:, j] -= fd_eps  # restore
+
+                dqacc = (qacc_plus - qacc_orig) / fd_eps  # (nworld, nv)
+                # VJP: grad_qacc^T @ (∂qacc/∂qpos_j)
+                fd_g_qpos[:, j] = (grad_qacc_torch * dqacc).sum(dim=-1)
+
+            for j in range(nv):
+                qvel_view[:, j] += fd_eps
+                mjw.forward(m, d)
+                wp.synchronize()
+                qacc_plus = wp.to_torch(d.qacc).clone()
+                qvel_view[:, j] -= fd_eps  # restore
+
+                dqacc = (qacc_plus - qacc_orig) / fd_eps
+                fd_g_qvel[:, j] = (grad_qacc_torch * dqacc).sum(dim=-1)
+
+            # 5. Use Warp tape through fwd_actuation only to get d(loss)/d(ctrl)
             #    Restore state again for clean tape
             wp.copy(d.qpos, pre_qpos)
             wp.copy(d.qvel, pre_qvel)
@@ -142,8 +182,6 @@ class WarpSimStep(torch.autograd.Function):
             # constraint kernels with enable_backwards=False that produce NaN
             # gradients. Safe for direct-drive actuators (gear * ctrl) where
             # fwd_actuation does not depend on position/velocity outputs.
-            # NOTE: Revisit for muscle/tendon actuators that depend on
-            # length/velocity quantities from fwd_position/fwd_velocity.
             mjw.fwd_position(m, d)
             mjw.fwd_velocity(m, d)
             wp.synchronize()
@@ -164,26 +202,19 @@ class WarpSimStep(torch.autograd.Function):
 
             total_grad_ctrl += wp.to_torch(d.ctrl.grad).clone()
 
-            # 5. Propagate gradients to previous substep
-            if s > 0:
-                # Semi-implicit Euler: qvel_new = qvel + qacc*dt, qpos_new = qpos + qvel_new*dt
-                # d(loss)/d(qvel_prev) = g_qvel + g_qpos * dt  (chain through qpos via qvel_new)
-                # d(loss)/d(qpos_prev) = g_qpos  (direct)
-                # Plus contributions from forward dynamics (qacc depends on qpos, qvel)
-                # For simplicity and correctness, we include the forward dynamics contributions
-                # via the tape backward:
-                g_qpos_prev = g_qpos.clone()
-                g_qvel_prev = g_qvel + g_qpos * dt
-                # Add contributions from qacc dependence on qpos/qvel
-                # (these are the smooth dynamics Jacobians, which are small for simple systems)
-                if d.qpos.grad is not None:
-                    g_qpos_prev = g_qpos_prev + wp.to_torch(d.qpos.grad).clone()
-                if d.qvel.grad is not None:
-                    g_qvel_prev = g_qvel_prev + wp.to_torch(d.qvel.grad).clone()
-                g_qpos = g_qpos_prev
-                g_qvel = g_qvel_prev
+            # 6. Propagate gradients: Euler backward + FD dynamics Jacobian
+            #    g_qpos_prev = g_qpos + grad_qacc @ ∂qacc/∂qpos
+            #    g_qvel_prev = (g_qvel + g_qpos * dt) + grad_qacc @ ∂qacc/∂qvel
+            g_qpos_prev = g_qpos.clone() + fd_g_qpos
+            g_qvel_prev = g_qvel + g_qpos * dt + fd_g_qvel
+            g_qpos = g_qpos_prev
+            g_qvel = g_qvel_prev
 
             tape.zero()
+
+        # g_qpos, g_qvel now hold the gradient w.r.t. the INPUT state
+        grad_qpos_in = g_qpos
+        grad_qvel_in = g_qvel
 
         # Restore to post-step state
         wp.copy(d.qpos, ctx.saved_qpos)
@@ -194,4 +225,4 @@ class WarpSimStep(torch.autograd.Function):
             mjw.step(m, d)
         wp.synchronize()
 
-        return total_grad_ctrl, None
+        return total_grad_ctrl, grad_qpos_in, grad_qvel_in, None

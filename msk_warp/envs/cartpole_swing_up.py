@@ -52,6 +52,15 @@ class CartPoleSwingUpEnv(MjWarpEnv):
         self.num_joint_q = 2  # slider x, hinge theta
         self.num_joint_qd = 2
 
+        # Reward weights dict (reused each step)
+        self._reward_weights = {
+            'pole_angle': self.pole_angle_penalty,
+            'pole_vel': self.pole_velocity_penalty,
+            'cart_pos': self.cart_position_penalty,
+            'cart_vel': self.cart_velocity_penalty,
+            'action': self.cart_action_penalty,
+        }
+
         # Save default start state (pole hanging down at theta=pi)
         self._save_start_state()
 
@@ -96,21 +105,23 @@ class CartPoleSwingUpEnv(MjWarpEnv):
         )
         return reward
 
-    def step(self, actions):
+    def step(self, actions, qpos_in=None, qvel_in=None):
+        """Run one control step.
+
+        Args:
+            actions: (num_envs, num_actions) action tensor (already tanh'd)
+            qpos_in: Optional differentiable qpos input (for state gradient flow)
+            qvel_in: Optional differentiable qvel input (for state gradient flow)
+
+        Returns:
+            obs, rew, done, extras, qpos_out, qvel_out
+        """
         actions = actions.view(self.num_envs, self.num_actions)
         actions = torch.clamp(actions, -1.0, 1.0)
         self.actions = actions
 
         # Scale actions to ctrl
         ctrl = actions * self.action_strength
-
-        weights = {
-            'pole_angle': self.pole_angle_penalty,
-            'pole_vel': self.pole_velocity_penalty,
-            'cart_pos': self.cart_position_penalty,
-            'cart_vel': self.cart_velocity_penalty,
-            'action': self.cart_action_penalty,
-        }
 
         if self.no_grad:
             # Non-differentiable path
@@ -120,22 +131,26 @@ class CartPoleSwingUpEnv(MjWarpEnv):
                 mjw.step(self.warp_model, self.warp_data)
             wp.synchronize()
 
-            # Compute obs/reward from Warp state directly
             qpos = wp.to_torch(self.warp_data.qpos)
             qvel = wp.to_torch(self.warp_data.qvel)
             self.obs_buf = self._compute_obs(qpos, qvel)
-            self.rew_buf = self._compute_reward(qpos, qvel, actions, weights)
+            self.rew_buf = self._compute_reward(qpos, qvel, actions, self._reward_weights)
+            qpos_out, qvel_out = None, None
         else:
-            # Differentiable path: obs/reward are computed from the RETURNED tensors
-            # so gradients flow through WarpSimStep -> obs/reward -> actor_loss
-            qpos_torch, qvel_torch = WarpSimStep.apply(ctrl, self)
+            # Differentiable path: state flows through WarpSimStep
+            if qpos_in is None:
+                qpos_in = wp.to_torch(self.warp_data.qpos).clone()
+            if qvel_in is None:
+                qvel_in = wp.to_torch(self.warp_data.qvel).clone()
+
+            qpos_out, qvel_out = WarpSimStep.apply(ctrl, qpos_in, qvel_in, self)
 
             # Clamp state to prevent extreme values causing NaN gradients
-            qpos_torch = qpos_torch.clamp(-20.0, 20.0)
-            qvel_torch = qvel_torch.clamp(-50.0, 50.0)
+            qpos_out = qpos_out.clamp(-20.0, 20.0)
+            qvel_out = qvel_out.clamp(-50.0, 50.0)
 
-            self.obs_buf = self._compute_obs(qpos_torch, qvel_torch)
-            self.rew_buf = self._compute_reward(qpos_torch, qvel_torch, actions, weights)
+            self.obs_buf = self._compute_obs(qpos_out, qvel_out)
+            self.rew_buf = self._compute_reward(qpos_out, qvel_out, actions, self._reward_weights)
 
         self.reset_buf = torch.zeros_like(self.reset_buf)
         self.progress_buf += 1
@@ -157,9 +172,27 @@ class CartPoleSwingUpEnv(MjWarpEnv):
 
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
-            self.reset(env_ids)
+            self._reset_warp_state(env_ids)
 
-        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras
+        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras, qpos_out, qvel_out
+
+    def _reset_warp_state(self, env_ids):
+        """Reset Warp state for specified environments (no gradient)."""
+        with torch.no_grad():
+            qpos_torch = wp.to_torch(self.warp_data.qpos)
+            qvel_torch = wp.to_torch(self.warp_data.qvel)
+
+            qpos_torch[env_ids, :] = self.start_qpos[env_ids, :].clone()
+            qvel_torch[env_ids, :] = self.start_qvel[env_ids, :].clone()
+
+            if self.stochastic_init:
+                n = len(env_ids)
+                qpos_torch[env_ids, 0] += 1.0 * (torch.rand(n, device=self.device) - 0.5)
+                qpos_torch[env_ids, 1] += math.pi * (torch.rand(n, device=self.device) - 0.5)
+                qvel_torch[env_ids, 0] += 0.5 * (torch.rand(n, device=self.device) - 0.5)
+                qvel_torch[env_ids, 1] += 0.5 * (torch.rand(n, device=self.device) - 0.5)
+
+        self.progress_buf[env_ids] = 0
 
     def reset(self, env_ids=None, force_reset=True):
         if env_ids is None:
@@ -167,28 +200,9 @@ class CartPoleSwingUpEnv(MjWarpEnv):
                 env_ids = torch.arange(self.num_envs, dtype=torch.long, device=self.device)
 
         if env_ids is not None:
-            # Get current state as PyTorch tensors (direct Warp view for reset)
-            with torch.no_grad():
-                qpos_torch = wp.to_torch(self.warp_data.qpos)
-                qvel_torch = wp.to_torch(self.warp_data.qvel)
+            self._reset_warp_state(env_ids)
 
-                # Reset to start state
-                qpos_torch[env_ids, :] = self.start_qpos[env_ids, :].clone()
-                qvel_torch[env_ids, :] = self.start_qvel[env_ids, :].clone()
-
-                if self.stochastic_init:
-                    n = len(env_ids)
-                    # Cart position: small perturbation (+-0.5m)
-                    qpos_torch[env_ids, 0] += 1.0 * (torch.rand(n, device=self.device) - 0.5)
-                    # Pole angle: large perturbation (+-pi/2)
-                    qpos_torch[env_ids, 1] += math.pi * (torch.rand(n, device=self.device) - 0.5)
-                    # Velocities
-                    qvel_torch[env_ids, 0] += 0.5 * (torch.rand(n, device=self.device) - 0.5)
-                    qvel_torch[env_ids, 1] += 0.5 * (torch.rand(n, device=self.device) - 0.5)
-
-            self.progress_buf[env_ids] = 0
-
-            # Recompute obs for reset worlds (non-differentiable)
+            # Recompute obs for all worlds (non-differentiable, used for initialization)
             with torch.no_grad():
                 qpos_view = wp.to_torch(self.warp_data.qpos)
                 qvel_view = wp.to_torch(self.warp_data.qvel)
