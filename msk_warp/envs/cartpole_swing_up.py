@@ -45,9 +45,9 @@ class CartPoleSwingUpEnv(MjWarpEnv):
         # Reward weights (matching DiffRL)
         self.pole_angle_penalty = 1.0
         self.pole_velocity_penalty = 0.1
-        self.cart_position_penalty = 0.5
+        self.cart_position_penalty = 0.05
         self.cart_velocity_penalty = 0.1
-        self.cart_action_penalty = 0.01
+        self.cart_action_penalty = 0.0
 
         self.num_joint_q = 2  # slider x, hinge theta
         self.num_joint_qd = 2
@@ -94,9 +94,6 @@ class CartPoleSwingUpEnv(MjWarpEnv):
             - torch.pow(xdot, 2.0) * weights['cart_vel']
             - torch.sum(actions ** 2, dim=-1) * weights['action']
         )
-        # Soft boundary penalty: penalize cart position beyond ±3
-        boundary_penalty = torch.clamp(torch.abs(x) - 3.0, min=0.0) ** 2
-        reward = reward - boundary_penalty * 50.0
         return reward
 
     def step(self, actions):
