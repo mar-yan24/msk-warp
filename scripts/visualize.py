@@ -84,9 +84,11 @@ def main():
         mjd.qpos[0] = 0.0
         mjd.qpos[1] = math.pi
         mjd.qvel[:] = 0.0
-        # Add stochastic perturbation
-        mjd.qpos += (np.random.rand(mjm.nq) - 0.5) * math.pi
-        mjd.qvel += (np.random.rand(mjm.nv) - 0.5) * 0.5
+        # Add stochastic perturbation (separated cart vs pole)
+        mjd.qpos[0] += (np.random.rand() - 0.5) * 1.0      # cart: +-0.5m
+        mjd.qpos[1] += (np.random.rand() - 0.5) * math.pi  # pole: +-pi/2
+        mjd.qvel[0] += (np.random.rand() - 0.5) * 0.5
+        mjd.qvel[1] += (np.random.rand() - 0.5) * 0.5
         mujoco.mj_forward(mjm, mjd)
 
         total_reward = 0.0
@@ -109,12 +111,16 @@ def main():
             for _ in range(args.substeps):
                 mujoco.mj_step(mjm, mjd)
 
-            # Compute reward
+            # Compute reward (matching training weights)
             theta = np.arctan2(np.sin(mjd.qpos[1]), np.cos(mjd.qpos[1]))
+            action_val = ctrl[0] / args.action_strength
             reward = -(theta**2 * 1.0
                        + mjd.qvel[1]**2 * 0.1
-                       + mjd.qpos[0]**2 * 0.05
-                       + mjd.qvel[0]**2 * 0.1)
+                       + mjd.qpos[0]**2 * 0.5
+                       + mjd.qvel[0]**2 * 0.1
+                       + action_val**2 * 0.01)
+            boundary = max(abs(mjd.qpos[0]) - 3.0, 0.0) ** 2
+            reward -= boundary * 50.0
             total_reward += reward
             step_count += 1
 
@@ -149,8 +155,10 @@ def main():
         mujoco.mj_resetData(mjm, mjd)
         mjd.qpos[0] = 0.0
         mjd.qpos[1] = math.pi
-        mjd.qpos += (np.random.rand(mjm.nq) - 0.5) * math.pi
-        mjd.qvel += (np.random.rand(mjm.nv) - 0.5) * 0.5
+        mjd.qpos[0] += (np.random.rand() - 0.5) * 1.0
+        mjd.qpos[1] += (np.random.rand() - 0.5) * math.pi
+        mjd.qvel[0] += (np.random.rand() - 0.5) * 0.5
+        mjd.qvel[1] += (np.random.rand() - 0.5) * 0.5
         mujoco.mj_forward(mjm, mjd)
 
         with mujoco.viewer.launch_passive(mjm, mjd) as viewer:
@@ -177,10 +185,14 @@ def main():
                 for _ in range(args.substeps):
                     mujoco.mj_step(mjm, mjd)
 
-                # Reward
+                # Reward (matching training weights)
                 theta = np.arctan2(np.sin(mjd.qpos[1]), np.cos(mjd.qpos[1]))
+                action_val = ctrl[0] / args.action_strength
                 reward = -(theta**2 * 1.0 + mjd.qvel[1]**2 * 0.1
-                           + mjd.qpos[0]**2 * 0.05 + mjd.qvel[0]**2 * 0.1)
+                           + mjd.qpos[0]**2 * 0.5 + mjd.qvel[0]**2 * 0.1
+                           + action_val**2 * 0.01)
+                boundary = max(abs(mjd.qpos[0]) - 3.0, 0.0) ** 2
+                reward -= boundary * 50.0
                 total_reward += reward
                 step_in_ep += 1
 
@@ -205,8 +217,10 @@ def main():
                         mujoco.mj_resetData(mjm, mjd)
                         mjd.qpos[0] = 0.0
                         mjd.qpos[1] = math.pi
-                        mjd.qpos += (np.random.rand(mjm.nq) - 0.5) * math.pi
-                        mjd.qvel += (np.random.rand(mjm.nv) - 0.5) * 0.5
+                        mjd.qpos[0] += (np.random.rand() - 0.5) * 1.0
+                        mjd.qpos[1] += (np.random.rand() - 0.5) * math.pi
+                        mjd.qvel[0] += (np.random.rand() - 0.5) * 0.5
+                        mjd.qvel[1] += (np.random.rand() - 0.5) * 0.5
                         mujoco.mj_forward(mjm, mjd)
 
             if episode_rewards:
