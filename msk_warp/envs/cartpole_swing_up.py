@@ -180,10 +180,14 @@ class CartPoleSwingUpEnv(MjWarpEnv):
                 qvel_torch[env_ids, :] = self.start_qvel[env_ids, :].clone()
 
                 if self.stochastic_init:
-                    qpos_torch[env_ids, :] = qpos_torch[env_ids, :] + \
-                        math.pi * (torch.rand(len(env_ids), self.num_joint_q, device=self.device) - 0.5)
-                    qvel_torch[env_ids, :] = qvel_torch[env_ids, :] + \
-                        0.5 * (torch.rand(len(env_ids), self.num_joint_qd, device=self.device) - 0.5)
+                    n = len(env_ids)
+                    # Cart position: small perturbation (+-0.5m)
+                    qpos_torch[env_ids, 0] += 1.0 * (torch.rand(n, device=self.device) - 0.5)
+                    # Pole angle: large perturbation (+-pi/2)
+                    qpos_torch[env_ids, 1] += math.pi * (torch.rand(n, device=self.device) - 0.5)
+                    # Velocities
+                    qvel_torch[env_ids, 0] += 0.5 * (torch.rand(n, device=self.device) - 0.5)
+                    qvel_torch[env_ids, 1] += 0.5 * (torch.rand(n, device=self.device) - 0.5)
 
             self.progress_buf[env_ids] = 0
 
