@@ -11,7 +11,7 @@ params:
     episode_length: 240
     stochastic_init: true
     substeps: 4
-    action_strength: 200.0
+    action_strength: 20.0
 
   network:
     actor: ActorStochasticMLP
