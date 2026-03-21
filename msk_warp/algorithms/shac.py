@@ -100,6 +100,14 @@ class SHAC:
         self.truncate_grad = cfg['params']['config']['truncate_grads']
         self.grad_norm = cfg['params']['config']['grad_norm']
 
+        # Per-step observation gradient clipping for BPTT stability.
+        # Without a full dynamics Jacobian backward (missing in WarpSimStep),
+        # all cross-step gradients flow through the actor network, which can
+        # amplify exponentially over the rollout horizon. This clips the
+        # gradient at each step boundary, mimicking the damping that a full
+        # dynamics backward path would provide.
+        self.obs_grad_clip = cfg['params']['config'].get('obs_grad_clip', 0.5)
+
         self.log_dir = cfg['params']['general']['logdir']
         os.makedirs(self.log_dir, exist_ok=True)
 
@@ -223,6 +231,16 @@ class SHAC:
                 with torch.no_grad():
                     self.obs_rms.update(obs)
                 obs = obs_rms.normalize(obs)
+
+            # Per-step gradient clipping: prevent exponential amplification
+            # through the BPTT chain. The gradient of obs accumulates from all
+            # future steps through the actor network; clipping it here bounds
+            # the cross-step amplification factor.
+            if self.obs_grad_clip is not None and obs.requires_grad:
+                _clip = self.obs_grad_clip
+                obs.register_hook(
+                    lambda g, c=_clip: g * torch.clamp(c / (g.norm() + 1e-8), max=1.0)
+                )
 
             if self.ret_rms is not None:
                 with torch.no_grad():
