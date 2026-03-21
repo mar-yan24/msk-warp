@@ -32,9 +32,9 @@ params:
     critic_learning_rate: 1e-3
     lr_schedule: linear
     betas: [0.7, 0.95]
-    target_critic_alpha: 0.95
+    target_critic_alpha: 0.2
     obs_rms: true
-    ret_rms: false
+    ret_rms: true
     critic_iterations: 16
     critic_method: td-lambda
     lambda: 0.95
