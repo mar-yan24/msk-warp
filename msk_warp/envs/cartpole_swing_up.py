@@ -77,6 +77,10 @@ class CartPoleSwingUpEnv(MjWarpEnv):
         self.start_qpos[:, 1] = math.pi
         self.start_qvel[:, :] = 0.0
 
+    def compute_obs(self, qpos, qvel):
+        """Instance method wrapper for SHAC compatibility."""
+        return self._compute_obs(qpos, qvel)
+
     @staticmethod
     def _compute_obs(qpos, qvel):
         """Compute observations from qpos/qvel tensors (differentiable in PyTorch)."""

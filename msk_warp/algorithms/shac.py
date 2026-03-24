@@ -16,6 +16,8 @@ from tensorboardX import SummaryWriter
 import yaml
 
 from msk_warp.envs.cartpole_swing_up import CartPoleSwingUpEnv
+from msk_warp.envs.ant import AntEnv
+from msk_warp.envs.myoleg_walk import MyoLegWalkEnv
 from msk_warp.networks.actor import ActorStochasticMLP, ActorDeterministicMLP
 from msk_warp.networks.critic import CriticMLP
 from msk_warp.utils.common import seeding, print_info
@@ -28,6 +30,8 @@ import msk_warp.utils.torch_utils as tu
 
 ENV_MAP = {
     'CartPoleSwingUp': CartPoleSwingUpEnv,
+    'Ant': AntEnv,
+    'MyoLegWalk': MyoLegWalkEnv,
 }
 
 ACTOR_MAP = {
@@ -49,16 +53,16 @@ class SHAC:
 
         self.device = cfg['params']['general']['device']
 
-        self.env = env_fn(
-            num_envs=cfg['params']['config']['num_actors'],
-            device=self.device,
-            episode_length=cfg['params']['env'].get('episode_length', 240),
-            stochastic_init=cfg['params']['env'].get('stochastic_init', True),
-            substeps=cfg['params']['env'].get('substeps', 4),
-            model_path=cfg['params']['env'].get('model_path', 'assets/cartpole.xml'),
-            action_strength=cfg['params']['env'].get('action_strength', 20.0),
-            no_grad=False,
-        )
+        # Build env kwargs from config, passing through all env-specific keys
+        env_cfg = cfg['params']['env']
+        shac_only_keys = {'name'}
+        env_kwargs = {k: v for k, v in env_cfg.items() if k not in shac_only_keys}
+        if 'num_actors' in env_kwargs:
+            env_kwargs['num_envs'] = env_kwargs.pop('num_actors')
+        env_kwargs['device'] = self.device
+        env_kwargs['no_grad'] = False
+
+        self.env = env_fn(**env_kwargs)
 
         print('num_envs =', self.env.num_envs)
         print('num_actions =', self.env.num_actions)
@@ -255,7 +259,7 @@ class SHAC:
                 qvel = qvel_new
 
             # Compute obs from tracked state (always differentiable for non-reset envs)
-            obs = self.env._compute_obs(qpos, qvel)
+            obs = self.env.compute_obs(qpos, qvel)
 
             if self.obs_rms is not None:
                 with torch.no_grad():
