@@ -22,6 +22,7 @@ class MjWarpEnv:
         device='cuda:0',
         no_grad=False,
         substeps=4,
+        njmax=None,
     ):
         self.device = device
         self.num_environments = num_envs
@@ -36,9 +37,15 @@ class MjWarpEnv:
             model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), model_path)
         self.mjm = mujoco.MjModel.from_xml_path(model_path)
 
+        # Determine njmax for contact constraint buffers (per world)
+        self._njmax = njmax
+        diff_data_kwargs = {}
+        if njmax is not None:
+            diff_data_kwargs['njmax'] = njmax
+
         # Create Warp model and data
         self.warp_model = mjw.put_model(self.mjm)
-        self.warp_data = mjw.make_diff_data(self.mjm, nworld=num_envs)
+        self.warp_data = mjw.make_diff_data(self.mjm, nworld=num_envs, **diff_data_kwargs)
         mjw.reset_data(self.warp_model, self.warp_data)
 
         # Run kinematics once to initialize derived quantities
@@ -80,7 +87,10 @@ class MjWarpEnv:
             time_save = wp.clone(self.warp_data.time)
 
         # Recreate diff data (fresh gradient graph)
-        self.warp_data = mjw.make_diff_data(self.mjm, nworld=self.num_environments)
+        diff_data_kwargs = {}
+        if self._njmax is not None:
+            diff_data_kwargs['njmax'] = self._njmax
+        self.warp_data = mjw.make_diff_data(self.mjm, nworld=self.num_environments, **diff_data_kwargs)
         mjw.reset_data(self.warp_model, self.warp_data)
 
         # Restore state

@@ -3,6 +3,7 @@
   <option timestep="0.00104167" gravity="0 0 -9.81">
     <flag eulerdamp="disable"/>
   </option>
+  <size njmax="4096" nconmax="1024"/>
 
   <default>
     <joint armature="0.05" damping="1" limited="true"/>
@@ -62,14 +63,14 @@
   </worldbody>
 
   <actuator>
-    <motor joint="hip_4" gear="150"/>
-    <motor joint="ankle_4" gear="150"/>
-    <motor joint="hip_1" gear="150"/>
-    <motor joint="ankle_1" gear="150"/>
-    <motor joint="hip_2" gear="150"/>
-    <motor joint="ankle_2" gear="150"/>
-    <motor joint="hip_3" gear="150"/>
-    <motor joint="ankle_3" gear="150"/>
+    <motor joint="hip_4" gear="200"/>
+    <motor joint="ankle_4" gear="200"/>
+    <motor joint="hip_1" gear="200"/>
+    <motor joint="ankle_1" gear="200"/>
+    <motor joint="hip_2" gear="200"/>
+    <motor joint="ankle_2" gear="200"/>
+    <motor joint="hip_3" gear="200"/>
+    <motor joint="ankle_3" gear="200"/>
   </actuator>
 
   <keyframe>

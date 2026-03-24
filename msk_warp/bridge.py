@@ -14,6 +14,56 @@ import torch
 import mujoco_warp as mjw
 
 
+def _qpos_grad_to_qvel_grad(g_qpos, qpos, nq, nv, dt):
+    """Map d(loss)/d(qpos_new) to d(loss)/d(qvel_new) through the integration Jacobian.
+
+    MuJoCo semi-implicit Euler:
+      qvel_new = qvel + qacc * dt
+      qpos_new = integrate_pos(qpos, qvel_new, dt)
+
+    For simple joints (nq==nv): qpos_new = qpos + qvel_new * dt,
+      so d(qpos_new)/d(qvel_new) = dt * I, and the VJP is g_qpos * dt.
+
+    For free joints: position part is the same (dt * I_3), but quaternion uses
+      quat_new = quat + 0.5 * dt * quat_mul(quat, [0, omega]), so
+      d(quat_new)/d(omega) = 0.5 * dt * J, and the VJP maps g_quat (4D) -> g_omega (3D).
+
+    Returns: d(loss)/d(qvel_new) contribution from qpos path, shape (nworld, nv).
+    """
+    if nq == nv:
+        # Simple joints only (e.g., cartpole): d(qpos)/d(qvel) = dt * I
+        return g_qpos * dt
+
+    # Free joint present: nq = nv + 1 (7 qpos vs 6 qvel for the free joint)
+    nworld = g_qpos.shape[0]
+    g_qvel_from_qpos = torch.zeros(nworld, nv, device=g_qpos.device, dtype=g_qpos.dtype)
+
+    # Free joint position (qpos[0:3] -> qvel[0:3]): d(pos_new)/d(lin_vel_new) = dt * I_3
+    g_qvel_from_qpos[:, 0:3] = g_qpos[:, 0:3] * dt
+
+    # Free joint quaternion (qpos[3:7] -> qvel[3:6]):
+    # quat_new ≈ quat + 0.5 * dt * quat_mul(quat, [0, ω])
+    # VJP: g_omega = 0.5 * dt * (quat_conjugate(quat) ⊗ g_quat)[1:4]
+    quat = qpos[:, 3:7]    # [w, x, y, z]
+    g_quat = g_qpos[:, 3:7]
+    # Hamilton product of conjugate(quat) with g_quat (treated as quaternion)
+    w, x, y, z = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    gw, gx, gy, gz = g_quat[:, 0], g_quat[:, 1], g_quat[:, 2], g_quat[:, 3]
+    # (q*)⊗g = [w,-x,-y,-z]⊗[gw,gx,gy,gz], take xyz components:
+    g_omega_x = -x * gw + w * gx + z * gy - y * gz
+    g_omega_y = -y * gw - z * gx + w * gy + x * gz
+    g_omega_z = -z * gw + y * gx - x * gy + w * gz
+    g_qvel_from_qpos[:, 3] = 0.5 * dt * g_omega_x
+    g_qvel_from_qpos[:, 4] = 0.5 * dt * g_omega_y
+    g_qvel_from_qpos[:, 5] = 0.5 * dt * g_omega_z
+
+    # Hinge/slide joints (qpos[7:] -> qvel[6:]): d(qpos)/d(qvel) = dt * I
+    n_hinge = nq - 7
+    g_qvel_from_qpos[:, 6:6 + n_hinge] = g_qpos[:, 7:7 + n_hinge] * dt
+
+    return g_qvel_from_qpos
+
+
 @wp.kernel
 def vjp_qfrc_kernel(
     qfrc_actuator: wp.array2d(dtype=float),
@@ -126,9 +176,14 @@ class WarpSimStep(torch.autograd.Function):
             wp.synchronize()
 
             # 1. Analytical Euler backward:
-            #    Semi-implicit: qvel_new = qvel + qacc*dt, qpos_new = qpos + qvel_new*dt
-            #    d(loss)/d(qacc) = g_qpos * dt^2 + g_qvel * dt
-            grad_qacc_torch = g_qpos * (dt * dt) + g_qvel * dt
+            #    Semi-implicit: qvel_new = qvel + qacc*dt
+            #                   qpos_new = integrate_pos(qpos, qvel_new, dt)
+            #    d(loss)/d(qacc) = d(loss)/d(qvel_new)*dt + d(loss)/d(qpos_new)*dqpos/dqvel*dt
+            #    For nq==nv this simplifies to g_qpos*dt^2 + g_qvel*dt.
+            #    For free joints, the quaternion integration Jacobian is used.
+            pre_qpos_torch = wp.to_torch(pre_qpos)
+            g_qvel_from_qpos = _qpos_grad_to_qvel_grad(g_qpos, pre_qpos_torch, nq, nv, dt)
+            grad_qacc_torch = g_qvel_from_qpos * dt + g_qvel * dt
 
             # 2. Run forward dynamics to get factored mass matrix + qacc
             mjw.forward(m, d)
@@ -204,9 +259,9 @@ class WarpSimStep(torch.autograd.Function):
 
             # 6. Propagate gradients: Euler backward + FD dynamics Jacobian
             #    g_qpos_prev = g_qpos + grad_qacc @ ∂qacc/∂qpos
-            #    g_qvel_prev = (g_qvel + g_qpos * dt) + grad_qacc @ ∂qacc/∂qvel
+            #    g_qvel_prev = (g_qvel + dqpos/dqvel^T @ g_qpos) + grad_qacc @ ∂qacc/∂qvel
             g_qpos_prev = g_qpos.clone() + fd_g_qpos
-            g_qvel_prev = g_qvel + g_qpos * dt + fd_g_qvel
+            g_qvel_prev = g_qvel + g_qvel_from_qpos + fd_g_qvel
             g_qpos = g_qpos_prev
             g_qvel = g_qvel_prev
 

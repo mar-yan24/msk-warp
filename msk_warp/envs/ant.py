@@ -28,8 +28,9 @@ class AntEnv(MjWarpEnv):
         stochastic_init=True,
         substeps=16,
         model_path='assets/ant.xml',
-        action_strength=200.0,
+        action_strength=1.0,
         early_termination=True,
+        njmax=512,
         **kwargs,
     ):
         num_obs = 37
@@ -44,6 +45,7 @@ class AntEnv(MjWarpEnv):
             device=device,
             no_grad=no_grad,
             substeps=substeps,
+            njmax=njmax,
         )
 
         self.stochastic_init = stochastic_init
@@ -188,7 +190,9 @@ class AntEnv(MjWarpEnv):
         """
         actions = actions.view(self.num_envs, self.num_actions)
         actions = torch.clamp(actions, -1.0, 1.0)
-        self.actions = actions
+        # Detach stored actions to prevent cross-epoch graph references.
+        # Actions in obs are informational; reward uses the live actions tensor directly.
+        self.actions = actions.detach()
 
         # Scale actions to ctrl
         ctrl = actions * self.action_strength
