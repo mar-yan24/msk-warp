@@ -37,7 +37,7 @@ def compute_obs(qpos, qvel):
 
 def main():
     parser = argparse.ArgumentParser(description='Visualize trained policy')
-    parser.add_argument('--policy', type=str, default='logs/cartpole/best_policy.pt')
+    parser.add_argument('--policy', type=str, default='logs/cartpole_v3/best_policy.pt')
     parser.add_argument('--model', type=str, default='assets/cartpole.xml')
     parser.add_argument('--episodes', type=int, default=5)
     parser.add_argument('--episode-length', type=int, default=240)
