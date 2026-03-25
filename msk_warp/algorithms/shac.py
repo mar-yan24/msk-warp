@@ -261,6 +261,11 @@ class SHAC:
             # Compute obs from tracked state (always differentiable for non-reset envs)
             obs = self.env.compute_obs(qpos, qvel)
 
+            # Clip gradients at step boundaries to prevent BPTT explosion
+            if obs.requires_grad and self.obs_grad_clip > 0:
+                _clip = self.obs_grad_clip
+                obs.register_hook(lambda grad, c=_clip: grad.clamp(-c, c))
+
             if self.obs_rms is not None:
                 with torch.no_grad():
                     self.obs_rms.update(obs)

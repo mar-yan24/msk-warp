@@ -141,6 +141,8 @@ class WarpSimStep(torch.autograd.Function):
 
         dt = wp.to_torch(m.opt.timestep).item()
         fd_eps = 1e-4
+        fd_max_dqacc = 1.0  # Clamp raw FD diffs to block contact discontinuity spikes
+        substep_grad_max = 1e4  # Prevent per-substep gradient explosion
 
         # Restore to initial state
         wp.copy(d.qpos, ctx.saved_qpos)
@@ -211,7 +213,9 @@ class WarpSimStep(torch.autograd.Function):
                 qacc_plus = wp.to_torch(d.qacc).clone()
                 qpos_view[:, j] -= fd_eps  # restore
 
-                dqacc = (qacc_plus - qacc_orig) / fd_eps  # (nworld, nv)
+                dqacc_raw = qacc_plus - qacc_orig
+                dqacc_raw = dqacc_raw.clamp(-fd_max_dqacc, fd_max_dqacc)
+                dqacc = torch.nan_to_num(dqacc_raw / fd_eps, 0.0, 0.0, 0.0)
                 # VJP: grad_qacc^T @ (∂qacc/∂qpos_j)
                 fd_g_qpos[:, j] = (grad_qacc_torch * dqacc).sum(dim=-1)
 
@@ -222,7 +226,9 @@ class WarpSimStep(torch.autograd.Function):
                 qacc_plus = wp.to_torch(d.qacc).clone()
                 qvel_view[:, j] -= fd_eps  # restore
 
-                dqacc = (qacc_plus - qacc_orig) / fd_eps
+                dqacc_raw = qacc_plus - qacc_orig
+                dqacc_raw = dqacc_raw.clamp(-fd_max_dqacc, fd_max_dqacc)
+                dqacc = torch.nan_to_num(dqacc_raw / fd_eps, 0.0, 0.0, 0.0)
                 fd_g_qvel[:, j] = (grad_qacc_torch * dqacc).sum(dim=-1)
 
             # 5. Use Warp tape through fwd_actuation only to get d(loss)/d(ctrl)
@@ -262,14 +268,15 @@ class WarpSimStep(torch.autograd.Function):
             #    g_qvel_prev = (g_qvel + dqpos/dqvel^T @ g_qpos) + grad_qacc @ ∂qacc/∂qvel
             g_qpos_prev = g_qpos.clone() + fd_g_qpos
             g_qvel_prev = g_qvel + g_qvel_from_qpos + fd_g_qvel
-            g_qpos = g_qpos_prev
-            g_qvel = g_qvel_prev
+            g_qpos = g_qpos_prev.clamp(-substep_grad_max, substep_grad_max)
+            g_qvel = g_qvel_prev.clamp(-substep_grad_max, substep_grad_max)
 
             tape.zero()
 
         # g_qpos, g_qvel now hold the gradient w.r.t. the INPUT state
-        grad_qpos_in = g_qpos
-        grad_qvel_in = g_qvel
+        total_grad_ctrl = torch.nan_to_num(total_grad_ctrl, 0.0, 0.0, 0.0)
+        grad_qpos_in = torch.nan_to_num(g_qpos, 0.0, 0.0, 0.0)
+        grad_qvel_in = torch.nan_to_num(g_qvel, 0.0, 0.0, 0.0)
 
         # Restore to post-step state
         wp.copy(d.qpos, ctx.saved_qpos)

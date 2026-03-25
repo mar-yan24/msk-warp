@@ -190,9 +190,10 @@ class AntEnv(MjWarpEnv):
         """
         actions = actions.view(self.num_envs, self.num_actions)
         actions = torch.clamp(actions, -1.0, 1.0)
-        # Detach stored actions to prevent cross-epoch graph references.
-        # Actions in obs are informational; reward uses the live actions tensor directly.
-        self.actions = actions.detach()
+        # Clone + detach stored actions to prevent cross-epoch graph references
+        # and avoid in-place modification (by _reset_warp_state) of shared storage
+        # that would invalidate the gradient-tracked actions tensor.
+        self.actions = actions.detach().clone()
 
         # Scale actions to ctrl
         ctrl = actions * self.action_strength
@@ -226,6 +227,12 @@ class AntEnv(MjWarpEnv):
             # Clamp state to prevent extreme values
             qpos_out = qpos_out.clamp(-100.0, 100.0)
             qvel_out = qvel_out.clamp(-100.0, 100.0)
+
+            # NaN-to-zero gradient hooks to prevent stray NaN from poisoning the batch
+            if qpos_out.requires_grad:
+                qpos_out.register_hook(lambda g: torch.nan_to_num(g, 0.0, 0.0, 0.0))
+            if qvel_out.requires_grad:
+                qvel_out.register_hook(lambda g: torch.nan_to_num(g, 0.0, 0.0, 0.0))
 
             self.obs_buf = self._compute_obs(
                 qpos_out, qvel_out, actions,
