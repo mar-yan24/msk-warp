@@ -18,5 +18,11 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["msk_warp*"]
 
+[tool.setuptools.package-data]
+msk_warp = ["assets/*.xml", "configs/*.yaml"]
+
 [project.optional-dependencies]
 dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

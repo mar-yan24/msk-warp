@@ -1,12 +1,12 @@
 """Base MuJoCo Warp environment for differentiable RL."""
 
-import os
-
 import numpy as np
 import torch
 import warp as wp
 import mujoco
 import mujoco_warp as mjw
+
+from msk_warp import resolve_model_path
 
 
 class MjWarpEnv:
@@ -33,8 +33,7 @@ class MjWarpEnv:
         self.substeps = substeps
 
         # Load MuJoCo model
-        if not os.path.isabs(model_path):
-            model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), model_path)
+        model_path = resolve_model_path(model_path)
         self.mjm = mujoco.MjModel.from_xml_path(model_path)
 
         # Determine njmax for contact constraint buffers (per world)

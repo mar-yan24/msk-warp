@@ -1,19 +1,12 @@
 """Gradient verification: AD (via WarpSimStep) vs finite differences.
 
-Three tests:
+Two tests:
 1. Single-step: loss = sum(qpos_after), verify d(loss)/d(ctrl)
-2. Multi-step chain: 3 steps, loss on final qpos
-3. Network-in-loop: ctrl = linear(obs) -> WarpSimStep -> loss
+2. Network-in-loop: ctrl = linear(obs) -> WarpSimStep -> loss
 """
 
 import warnings
 warnings.filterwarnings('ignore')
-
-import os
-import sys
-
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
 
 import warp as wp
 wp.init()
@@ -23,6 +16,7 @@ import numpy as np
 import mujoco
 import mujoco_warp as mjw
 
+from msk_warp import resolve_model_path
 from msk_warp.bridge import WarpSimStep
 
 
@@ -34,8 +28,7 @@ class MinimalEnv:
         self.substeps = substeps
         self.nworld = nworld
 
-        if not os.path.isabs(model_path):
-            model_path = os.path.join(project_root, model_path)
+        model_path = resolve_model_path(model_path)
 
         self.mjm = mujoco.MjModel.from_xml_path(model_path)
         self.warp_model = mjw.put_model(self.mjm)
@@ -75,7 +68,6 @@ def test_single_step():
     print("=" * 60)
 
     env = MinimalEnv(nworld=1, substeps=4)
-    nu = env.mjm.nu
 
     qpos0 = np.array([[0.5, 1.0]])
     qvel0 = np.array([[0.1, 0.2]])
@@ -98,14 +90,13 @@ def test_single_step():
     if np.abs(fd_grad).max() > 1e-10:
         rel_error = np.abs(ad_grad - fd_grad) / (np.abs(fd_grad) + 1e-10)
         print(f"Relative error: {rel_error}")
-        success = rel_error.max() < 0.1  # 10% tolerance for float32 vs float64
+        assert rel_error.max() < 0.1, f"Single-step gradient check failed: rel_error={rel_error}"
     else:
         abs_error = np.abs(ad_grad - fd_grad)
         print(f"Absolute error: {abs_error}")
-        success = abs_error.max() < 1e-5
+        assert abs_error.max() < 1e-5, f"Single-step gradient check failed: abs_error={abs_error}"
 
-    print(f"PASS: {success}\n")
-    return success
+    print("PASS\n")
 
 
 def test_network_in_loop():
@@ -142,23 +133,11 @@ def test_network_in_loop():
         print(f"linear.weight.grad norm: {linear.weight.grad.norm().item():.8f}")
         print(f"linear.bias.grad norm: {linear.bias.grad.norm().item():.8f}")
 
-    success = has_grad
-    print(f"PASS: {success}\n")
-    return success
+    assert has_grad, "Network gradient not flowing through WarpSimStep"
+    print("PASS\n")
 
 
 if __name__ == '__main__':
-    results = []
-    results.append(('Single-step', test_single_step()))
-    results.append(('Network-in-loop', test_network_in_loop()))
-
-    print("=" * 60)
-    print("SUMMARY")
-    print("=" * 60)
-    all_pass = True
-    for name, passed in results:
-        status = "PASS" if passed else "FAIL"
-        print(f"  {name}: {status}")
-        all_pass = all_pass and passed
-
-    print(f"\nOverall: {'ALL PASSED' if all_pass else 'SOME FAILED'}")
+    test_single_step()
+    test_network_in_loop()
+    print("All tests passed.")

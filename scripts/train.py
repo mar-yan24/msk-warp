@@ -2,17 +2,13 @@
 
 import argparse
 import os
-import sys
 
 import yaml
-
-# Add project root to path
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
 
 import warp as wp
 wp.init()
 
+from msk_warp import PACKAGE_ROOT
 from msk_warp.algorithms.shac import SHAC
 
 
@@ -24,10 +20,12 @@ def main():
     parser.add_argument('--device', type=str, default=None)
     args = parser.parse_args()
 
-    # Load config
+    # Resolve config path: check package first, then CWD
     cfg_path = args.cfg
     if not os.path.isabs(cfg_path):
-        cfg_path = os.path.join(project_root, cfg_path)
+        pkg_path = PACKAGE_ROOT / cfg_path
+        if pkg_path.exists():
+            cfg_path = str(pkg_path)
 
     with open(cfg_path, 'r') as f:
         cfg = yaml.safe_load(f)

@@ -15,33 +15,14 @@ from torch.nn.utils.clip_grad import clip_grad_norm_
 from tensorboardX import SummaryWriter
 import yaml
 
-from msk_warp.envs.cartpole_swing_up import CartPoleSwingUpEnv
-from msk_warp.envs.ant import AntEnv
-from msk_warp.envs.myoleg_walk import MyoLegWalkEnv
-from msk_warp.networks.actor import ActorStochasticMLP, ActorDeterministicMLP
-from msk_warp.networks.critic import CriticMLP
+from msk_warp.envs import ENV_MAP
+from msk_warp.networks import ACTOR_MAP, CRITIC_MAP
 from msk_warp.utils.common import seeding, print_info
 from msk_warp.utils.running_mean_std import RunningMeanStd
 from msk_warp.utils.dataset import CriticDataset
 from msk_warp.utils.time_report import TimeReport
 from msk_warp.utils.average_meter import AverageMeter
 import msk_warp.utils.torch_utils as tu
-
-
-ENV_MAP = {
-    'CartPoleSwingUp': CartPoleSwingUpEnv,
-    'Ant': AntEnv,
-    'MyoLegWalk': MyoLegWalkEnv,
-}
-
-ACTOR_MAP = {
-    'ActorStochasticMLP': ActorStochasticMLP,
-    'ActorDeterministicMLP': ActorDeterministicMLP,
-}
-
-CRITIC_MAP = {
-    'CriticMLP': CriticMLP,
-}
 
 
 class SHAC:

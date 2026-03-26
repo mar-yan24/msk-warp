@@ -2,18 +2,15 @@
 
 import argparse
 import os
-import sys
 import math
 import time
-
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
 
 import numpy as np
 import torch
 import mujoco
 import mujoco.viewer
 
+from msk_warp import resolve_model_path
 from msk_warp.utils.running_mean_std import RunningMeanStd
 
 
@@ -48,13 +45,13 @@ def main():
     parser.add_argument('--save-frames', type=str, default=None, help='Directory to save rendered frames')
     args = parser.parse_args()
 
+    # Resolve policy path relative to CWD
     policy_path = args.policy
     if not os.path.isabs(policy_path):
-        policy_path = os.path.join(project_root, policy_path)
+        policy_path = os.path.abspath(policy_path)
 
-    model_path = args.model
-    if not os.path.isabs(model_path):
-        model_path = os.path.join(project_root, model_path)
+    # Resolve model path via package assets
+    model_path = resolve_model_path(args.model)
 
     print(f"Loading policy from: {policy_path}")
     actor, obs_rms = load_policy(policy_path, device=args.device)
