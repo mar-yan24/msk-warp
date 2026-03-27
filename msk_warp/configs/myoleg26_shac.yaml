@@ -1,0 +1,48 @@
+params:
+  general:
+    seed: 42
+    device: cuda:0
+    logdir: logs/myoleg26
+
+  env:
+    name: MyoLeg26Walk
+    model_path: assets/myoleg/myoLeg26_BASELINE.xml
+    num_actors: 64
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    early_termination: true
+    njmax: 1000
+
+  network:
+    actor: ActorStochasticMLP
+    actor_mlp:
+      units: [256, 128, 64]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [128, 64]
+      activation: elu
+
+  config:
+    name: myoleg26_shac
+    gamma: 0.99
+    steps_num: 16
+    max_epochs: 2000
+    actor_learning_rate: 1e-3
+    critic_learning_rate: 1e-3
+    lr_schedule: linear
+    betas: [0.7, 0.95]
+    target_critic_alpha: 0.2
+    obs_rms: true
+    ret_rms: false
+    critic_iterations: 16
+    critic_method: td-lambda
+    lambda: 0.95
+    num_batch: 4
+    num_actors: 64
+    truncate_grads: true
+    grad_norm: 1.0
+    obs_grad_clip: 0.3
+    save_interval: 200

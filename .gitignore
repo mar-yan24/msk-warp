@@ -31,5 +31,8 @@ outputs/
 .DS_Store
 Thumbs.db
 
+# Session docs (local reference, not part of codebase)
+docs/
+
 # Claude
 .claude/

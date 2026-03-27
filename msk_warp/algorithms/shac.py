@@ -403,6 +403,7 @@ class SHAC:
                 _saved_qpos = wp.clone(self.env.warp_data.qpos)
                 _saved_qvel = wp.clone(self.env.warp_data.qvel)
                 _saved_time = wp.clone(self.env.warp_data.time)
+                _saved_act = wp.clone(self.env.warp_data.act) if self.env.warp_data.act.shape[1] > 0 else None
 
             self.time_report.start_timer("backward simulation")
             actor_loss.backward()
@@ -412,6 +413,8 @@ class SHAC:
             wp.copy(self.env.warp_data.qpos, _saved_qpos)
             wp.copy(self.env.warp_data.qvel, _saved_qvel)
             wp.copy(self.env.warp_data.time, _saved_time)
+            if _saved_act is not None:
+                wp.copy(self.env.warp_data.act, _saved_act)
             wp.synchronize()
 
             with torch.no_grad():

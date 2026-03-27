@@ -102,6 +102,7 @@ class WarpSimStep(torch.autograd.Function):
         saved_qpos = wp.clone(d.qpos)
         saved_qvel = wp.clone(d.qvel)
         saved_time = wp.clone(d.time)
+        saved_act = wp.clone(d.act) if d.act.shape[1] > 0 else None
 
         # Set ctrl from PyTorch tensor
         ctrl_wp = wp.from_torch(ctrl_torch.contiguous())
@@ -122,6 +123,7 @@ class WarpSimStep(torch.autograd.Function):
         ctx.saved_qpos = saved_qpos
         ctx.saved_qvel = saved_qvel
         ctx.saved_time = saved_time
+        ctx.saved_act = saved_act
         ctx.ctrl_torch = ctrl_torch.detach()
         ctx.nworld = nworld
         ctx.nq = nq
@@ -148,14 +150,18 @@ class WarpSimStep(torch.autograd.Function):
         wp.copy(d.qpos, ctx.saved_qpos)
         wp.copy(d.qvel, ctx.saved_qvel)
         wp.copy(d.time, ctx.saved_time)
+        if ctx.saved_act is not None:
+            wp.copy(d.act, ctx.saved_act)
         ctrl_wp = wp.from_torch(ctx.ctrl_torch.contiguous())
         wp.copy(d.ctrl, ctrl_wp)
         wp.synchronize()
 
-        # Save intermediate states for all substeps
+        # Save intermediate states for all substeps (including act for muscles)
+        has_act = ctx.saved_act is not None
         states = []
         for s in range(substeps):
-            states.append((wp.clone(d.qpos), wp.clone(d.qvel), wp.clone(d.time)))
+            act_snap = wp.clone(d.act) if has_act else None
+            states.append((wp.clone(d.qpos), wp.clone(d.qvel), wp.clone(d.time), act_snap))
             mjw.step(m, d)
         wp.synchronize()
 
@@ -168,12 +174,14 @@ class WarpSimStep(torch.autograd.Function):
 
         # Backward through substeps in reverse
         for s in reversed(range(substeps)):
-            pre_qpos, pre_qvel, pre_time = states[s]
+            pre_qpos, pre_qvel, pre_time, pre_act = states[s]
 
-            # Restore state to pre-substep
+            # Restore state to pre-substep (including muscle activation)
             wp.copy(d.qpos, pre_qpos)
             wp.copy(d.qvel, pre_qvel)
             wp.copy(d.time, pre_time)
+            if pre_act is not None:
+                wp.copy(d.act, pre_act)
             wp.copy(d.ctrl, ctrl_wp)
             wp.synchronize()
 
@@ -236,6 +244,8 @@ class WarpSimStep(torch.autograd.Function):
             wp.copy(d.qpos, pre_qpos)
             wp.copy(d.qvel, pre_qvel)
             wp.copy(d.time, pre_time)
+            if pre_act is not None:
+                wp.copy(d.act, pre_act)
             wp.copy(d.ctrl, ctrl_wp)
             wp.synchronize()
 
@@ -282,6 +292,8 @@ class WarpSimStep(torch.autograd.Function):
         wp.copy(d.qpos, ctx.saved_qpos)
         wp.copy(d.qvel, ctx.saved_qvel)
         wp.copy(d.time, ctx.saved_time)
+        if ctx.saved_act is not None:
+            wp.copy(d.act, ctx.saved_act)
         wp.copy(d.ctrl, ctrl_wp)
         for _ in range(substeps):
             mjw.step(m, d)
