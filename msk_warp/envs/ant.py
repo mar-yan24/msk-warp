@@ -53,6 +53,7 @@ class AntEnv(MjWarpEnv):
         self.early_termination = early_termination
 
         self.termination_height = 0.27
+        self.termination_height_max = 1.0
         self.joint_vel_obs_scaling = 0.1
         self.action_penalty = 0.0
 
