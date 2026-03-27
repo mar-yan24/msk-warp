@@ -393,9 +393,26 @@ class SHAC:
             actor_loss = self.compute_actor_loss()
             self.time_report.end_timer("forward simulation")
 
+            # Save post-rollout warp_data state before backward corrupts it.
+            # WarpSimStep.backward() restores/modifies warp_data in-place for
+            # FD Jacobian computation. PyTorch runs the 32 backwards in reverse
+            # (step 31 -> 0), leaving warp_data in the post-step-0 state instead
+            # of post-step-31. Without this save/restore, the next epoch's rollout
+            # starts ~31 steps behind, advancing only 1 step per epoch.
+            with torch.no_grad():
+                _saved_qpos = wp.clone(self.env.warp_data.qpos)
+                _saved_qvel = wp.clone(self.env.warp_data.qvel)
+                _saved_time = wp.clone(self.env.warp_data.time)
+
             self.time_report.start_timer("backward simulation")
             actor_loss.backward()
             self.time_report.end_timer("backward simulation")
+
+            # Restore post-rollout state so the next epoch continues from here
+            wp.copy(self.env.warp_data.qpos, _saved_qpos)
+            wp.copy(self.env.warp_data.qvel, _saved_qvel)
+            wp.copy(self.env.warp_data.time, _saved_time)
+            wp.synchronize()
 
             with torch.no_grad():
                 self.grad_norm_before_clip = tu.grad_norm(self.actor.parameters())
