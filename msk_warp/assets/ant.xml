@@ -7,7 +7,7 @@
 
   <default>
     <joint armature="0.05" damping="1" limited="true"/>
-    <geom condim="3" density="5.0" friction="1.5 0.1 0.1" margin="0.01"
+    <geom condim="3" density="1000.0" friction="1.5 0.1 0.1" margin="0.01"
           rgba="0.97 0.38 0.06 1" contype="1" conaffinity="1"/>
   </default>
 
