@@ -12,6 +12,8 @@ params:
     stochastic_init: true
     substeps: 4
     action_strength: 20.0
+    use_fd_jacobian: false
+    tape_per_substep: false
 
   network:
     actor: ActorStochasticMLP

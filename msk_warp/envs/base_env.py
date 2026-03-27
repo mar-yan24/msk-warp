@@ -23,6 +23,8 @@ class MjWarpEnv:
         no_grad=False,
         substeps=4,
         njmax=None,
+        use_fd_jacobian=False,
+        tape_per_substep=False,
     ):
         self.device = device
         self.num_environments = num_envs
@@ -31,6 +33,8 @@ class MjWarpEnv:
         self.episode_length = episode_length
         self.no_grad = no_grad
         self.substeps = substeps
+        self.use_fd_jacobian = use_fd_jacobian
+        self.tape_per_substep = tape_per_substep
 
         # Load MuJoCo model
         model_path = resolve_model_path(model_path)

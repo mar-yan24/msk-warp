@@ -1,18 +1,46 @@
 """Gradient bridge between MuJoCo Warp (Warp autodiff) and PyTorch autograd.
 
-Strategy: use Warp tape ONLY through fwd_actuation (ctrl -> qfrc_actuator),
-which has verified correct gradients. The rest of the backward chain is computed
-analytically + finite-difference dynamics Jacobian:
-  - Euler backward: d(loss)/d(qacc) from incoming PyTorch gradients
-  - Mass matrix solve: d(loss)/d(qfrc) = solve_M(d(loss)/d(qacc))
-  - Actuation backward via Warp tape: d(loss)/d(ctrl) from VJP on qfrc_actuator
-  - FD dynamics Jacobian: d(qacc)/d(qpos), d(qacc)/d(qvel) for state gradient
+Three backward modes:
+  1. Tape-all (default): single wp.Tape() over all substeps — fastest, ~2-3x forward cost
+  2. Tape-per-substep: tape each substep individually, chain gradients — lower memory
+  3. FD Jacobian (fallback): finite-difference dynamics Jacobian — slow but battle-tested
+
+Mode selection via env flags:
+  env.use_fd_jacobian = True   → mode 3
+  env.tape_per_substep = True  → mode 2
+  else                         → mode 1
 """
 
 import warp as wp
 import torch
 import mujoco_warp as mjw
 
+
+# ---------------------------------------------------------------------------
+# VJP kernels
+# ---------------------------------------------------------------------------
+
+@wp.kernel
+def _vjp_state_kernel(
+    qpos: wp.array2d(dtype=float),
+    qvel: wp.array2d(dtype=float),
+    grad_qpos: wp.array2d(dtype=float),
+    grad_qvel: wp.array2d(dtype=float),
+    loss: wp.array(dtype=float),
+):
+    """Seed tape backward: loss = sum(qpos * grad_qpos + qvel * grad_qvel)."""
+    worldid, idx = wp.tid()
+    nq = qpos.shape[1]
+    nv = qvel.shape[1]
+    if idx < nq:
+        wp.atomic_add(loss, 0, qpos[worldid, idx] * grad_qpos[worldid, idx])
+    if idx < nv:
+        wp.atomic_add(loss, 0, qvel[worldid, idx] * grad_qvel[worldid, idx])
+
+
+# ---------------------------------------------------------------------------
+# FD backward helpers (used only by _backward_fd)
+# ---------------------------------------------------------------------------
 
 def _qpos_grad_to_qvel_grad(g_qpos, qpos, nq, nv, dt):
     """Map d(loss)/d(qpos_new) to d(loss)/d(qvel_new) through the integration Jacobian.
@@ -31,25 +59,17 @@ def _qpos_grad_to_qvel_grad(g_qpos, qpos, nq, nv, dt):
     Returns: d(loss)/d(qvel_new) contribution from qpos path, shape (nworld, nv).
     """
     if nq == nv:
-        # Simple joints only (e.g., cartpole): d(qpos)/d(qvel) = dt * I
         return g_qpos * dt
 
-    # Free joint present: nq = nv + 1 (7 qpos vs 6 qvel for the free joint)
     nworld = g_qpos.shape[0]
     g_qvel_from_qpos = torch.zeros(nworld, nv, device=g_qpos.device, dtype=g_qpos.dtype)
 
-    # Free joint position (qpos[0:3] -> qvel[0:3]): d(pos_new)/d(lin_vel_new) = dt * I_3
     g_qvel_from_qpos[:, 0:3] = g_qpos[:, 0:3] * dt
 
-    # Free joint quaternion (qpos[3:7] -> qvel[3:6]):
-    # quat_new ≈ quat + 0.5 * dt * quat_mul(quat, [0, ω])
-    # VJP: g_omega = 0.5 * dt * (quat_conjugate(quat) ⊗ g_quat)[1:4]
-    quat = qpos[:, 3:7]    # [w, x, y, z]
+    quat = qpos[:, 3:7]
     g_quat = g_qpos[:, 3:7]
-    # Hamilton product of conjugate(quat) with g_quat (treated as quaternion)
     w, x, y, z = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
     gw, gx, gy, gz = g_quat[:, 0], g_quat[:, 1], g_quat[:, 2], g_quat[:, 3]
-    # (q*)⊗g = [w,-x,-y,-z]⊗[gw,gx,gy,gz], take xyz components:
     g_omega_x = -x * gw + w * gx + z * gy - y * gz
     g_omega_y = -y * gw - z * gx + w * gy + x * gz
     g_omega_z = -z * gw + y * gx - x * gy + w * gz
@@ -57,7 +77,6 @@ def _qpos_grad_to_qvel_grad(g_qpos, qpos, nq, nv, dt):
     g_qvel_from_qpos[:, 4] = 0.5 * dt * g_omega_y
     g_qvel_from_qpos[:, 5] = 0.5 * dt * g_omega_z
 
-    # Hinge/slide joints (qpos[7:] -> qvel[6:]): d(qpos)/d(qvel) = dt * I
     n_hinge = nq - 7
     g_qvel_from_qpos[:, 6:6 + n_hinge] = g_qpos[:, 7:7 + n_hinge] * dt
 
@@ -65,17 +84,46 @@ def _qpos_grad_to_qvel_grad(g_qpos, qpos, nq, nv, dt):
 
 
 @wp.kernel
-def vjp_qfrc_kernel(
+def _vjp_qfrc_kernel(
     qfrc_actuator: wp.array2d(dtype=float),
     grad_qfrc: wp.array2d(dtype=float),
     loss: wp.array(dtype=float),
 ):
-    """Compute loss = sum(qfrc_actuator * grad_qfrc) for VJP."""
+    """Compute loss = sum(qfrc_actuator * grad_qfrc) for ctrl VJP (FD path only)."""
     worldid, dofid = wp.tid()
     nv = qfrc_actuator.shape[1]
     if dofid < nv:
         wp.atomic_add(loss, 0, qfrc_actuator[worldid, dofid] * grad_qfrc[worldid, dofid])
 
+
+# ---------------------------------------------------------------------------
+# Common helpers
+# ---------------------------------------------------------------------------
+
+def _restore_and_rerun(m, d, saved_qpos, saved_qvel, saved_time, saved_act, ctrl_wp, substeps):
+    """Restore pre-step state and re-run substeps to reach post-step state."""
+    wp.copy(d.qpos, saved_qpos)
+    wp.copy(d.qvel, saved_qvel)
+    wp.copy(d.time, saved_time)
+    if saved_act is not None:
+        wp.copy(d.act, saved_act)
+    wp.copy(d.ctrl, ctrl_wp)
+    for _ in range(substeps):
+        mjw.step(m, d)
+    wp.synchronize()
+
+
+def _sanitize_and_clamp(grad_ctrl, grad_qpos, grad_qvel, max_grad=1e4):
+    """NaN-to-zero and clamp returned gradients."""
+    grad_ctrl = torch.nan_to_num(grad_ctrl, 0.0, 0.0, 0.0).clamp(-max_grad, max_grad)
+    grad_qpos = torch.nan_to_num(grad_qpos, 0.0, 0.0, 0.0).clamp(-max_grad, max_grad)
+    grad_qvel = torch.nan_to_num(grad_qvel, 0.0, 0.0, 0.0).clamp(-max_grad, max_grad)
+    return grad_ctrl, grad_qpos, grad_qvel
+
+
+# ---------------------------------------------------------------------------
+# WarpSimStep: differentiable simulation step
+# ---------------------------------------------------------------------------
 
 class WarpSimStep(torch.autograd.Function):
     """Differentiable simulation step bridging Warp and PyTorch.
@@ -134,6 +182,180 @@ class WarpSimStep(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_qpos_torch, grad_qvel_torch):
         env = ctx.env
+
+        if getattr(env, 'use_fd_jacobian', False):
+            return WarpSimStep._backward_fd(ctx, grad_qpos_torch, grad_qvel_torch)
+        elif getattr(env, 'tape_per_substep', False):
+            return WarpSimStep._backward_tape_per_substep(ctx, grad_qpos_torch, grad_qvel_torch)
+        else:
+            return WarpSimStep._backward_tape(ctx, grad_qpos_torch, grad_qvel_torch)
+
+    # ------------------------------------------------------------------
+    # Mode 1: Tape over ALL substeps (default, fastest)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _backward_tape(ctx, grad_qpos_torch, grad_qvel_torch):
+        env = ctx.env
+        m, d = env.warp_model, env.warp_data
+        substeps = env.substeps
+
+        # 1. Restore to pre-step state
+        wp.copy(d.qpos, ctx.saved_qpos)
+        wp.copy(d.qvel, ctx.saved_qvel)
+        wp.copy(d.time, ctx.saved_time)
+        if ctx.saved_act is not None:
+            wp.copy(d.act, ctx.saved_act)
+        ctrl_wp = wp.from_torch(ctx.ctrl_torch.contiguous())
+        wp.copy(d.ctrl, ctrl_wp)
+        wp.synchronize()
+
+        # 2. Convert incoming PyTorch grads to Warp arrays
+        grad_qpos_wp = wp.from_torch(grad_qpos_torch.contiguous())
+        grad_qvel_wp = wp.from_torch(grad_qvel_torch.contiguous())
+
+        # 3. Zero existing .grad fields
+        d.qpos.grad = wp.zeros_like(d.qpos)
+        d.qvel.grad = wp.zeros_like(d.qvel)
+        d.ctrl.grad = wp.zeros_like(d.ctrl)
+        if ctx.saved_act is not None:
+            d.act.grad = wp.zeros_like(d.act)
+
+        # 4. Tape through all substeps + VJP kernel
+        loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
+        tape = wp.Tape()
+        with tape:
+            for _ in range(substeps):
+                mjw.step(m, d)
+            wp.launch(
+                _vjp_state_kernel,
+                dim=(ctx.nworld, max(ctx.nq, ctx.nv)),
+                inputs=[d.qpos, d.qvel, grad_qpos_wp, grad_qvel_wp, loss],
+            )
+
+        # 5. Backward through tape
+        tape.backward(loss=loss)
+        wp.synchronize()
+
+        # 6. Extract gradients
+        grad_ctrl = wp.to_torch(d.ctrl.grad).clone()
+        grad_qpos_in = wp.to_torch(d.qpos.grad).clone()
+        grad_qvel_in = wp.to_torch(d.qvel.grad).clone()
+
+        # 7. Sanitize and clamp
+        grad_ctrl, grad_qpos_in, grad_qvel_in = _sanitize_and_clamp(
+            grad_ctrl, grad_qpos_in, grad_qvel_in
+        )
+
+        # 8. Clean up tape
+        tape.zero()
+
+        # 9. Restore to post-step state
+        _restore_and_rerun(
+            m, d, ctx.saved_qpos, ctx.saved_qvel, ctx.saved_time,
+            ctx.saved_act, ctrl_wp, substeps,
+        )
+
+        return grad_ctrl, grad_qpos_in, grad_qvel_in, None
+
+    # ------------------------------------------------------------------
+    # Mode 2: Tape per substep (lower memory)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _backward_tape_per_substep(ctx, grad_qpos_torch, grad_qvel_torch):
+        env = ctx.env
+        m, d = env.warp_model, env.warp_data
+        substeps = env.substeps
+
+        # 1. Restore to pre-step state and capture intermediate states
+        wp.copy(d.qpos, ctx.saved_qpos)
+        wp.copy(d.qvel, ctx.saved_qvel)
+        wp.copy(d.time, ctx.saved_time)
+        if ctx.saved_act is not None:
+            wp.copy(d.act, ctx.saved_act)
+        ctrl_wp = wp.from_torch(ctx.ctrl_torch.contiguous())
+        wp.copy(d.ctrl, ctrl_wp)
+        wp.synchronize()
+
+        # 2. Save intermediate states for all substeps
+        has_act = ctx.saved_act is not None
+        states = []
+        for s in range(substeps):
+            act_snap = wp.clone(d.act) if has_act else None
+            states.append((wp.clone(d.qpos), wp.clone(d.qvel), wp.clone(d.time), act_snap))
+            mjw.step(m, d)
+        wp.synchronize()
+
+        # 3. Current gradients w.r.t. post-final-substep state
+        g_qpos = grad_qpos_torch.clone()
+        g_qvel = grad_qvel_torch.clone()
+        total_grad_ctrl = torch.zeros_like(ctx.ctrl_torch)
+
+        # 4. Backward through substeps in reverse
+        for s in reversed(range(substeps)):
+            pre_qpos, pre_qvel, pre_time, pre_act = states[s]
+
+            # Restore pre-substep state
+            wp.copy(d.qpos, pre_qpos)
+            wp.copy(d.qvel, pre_qvel)
+            wp.copy(d.time, pre_time)
+            if pre_act is not None:
+                wp.copy(d.act, pre_act)
+            wp.copy(d.ctrl, ctrl_wp)
+            wp.synchronize()
+
+            # Convert current grads to Warp
+            grad_qpos_wp = wp.from_torch(g_qpos.contiguous())
+            grad_qvel_wp = wp.from_torch(g_qvel.contiguous())
+
+            # Zero .grad fields
+            d.qpos.grad = wp.zeros_like(d.qpos)
+            d.qvel.grad = wp.zeros_like(d.qvel)
+            d.ctrl.grad = wp.zeros_like(d.ctrl)
+            if has_act:
+                d.act.grad = wp.zeros_like(d.act)
+
+            # Tape one substep + VJP
+            loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
+            tape = wp.Tape()
+            with tape:
+                mjw.step(m, d)
+                wp.launch(
+                    _vjp_state_kernel,
+                    dim=(ctx.nworld, max(ctx.nq, ctx.nv)),
+                    inputs=[d.qpos, d.qvel, grad_qpos_wp, grad_qvel_wp, loss],
+                )
+            tape.backward(loss=loss)
+            wp.synchronize()
+
+            # Accumulate ctrl grad and chain state grads
+            total_grad_ctrl += wp.to_torch(d.ctrl.grad).clone()
+            g_qpos = wp.to_torch(d.qpos.grad).clone()
+            g_qvel = wp.to_torch(d.qvel.grad).clone()
+
+            tape.zero()
+
+        # 5. Sanitize and clamp
+        total_grad_ctrl, g_qpos, g_qvel = _sanitize_and_clamp(
+            total_grad_ctrl, g_qpos, g_qvel
+        )
+
+        # 6. Restore to post-step state
+        _restore_and_rerun(
+            m, d, ctx.saved_qpos, ctx.saved_qvel, ctx.saved_time,
+            ctx.saved_act, ctrl_wp, substeps,
+        )
+
+        return total_grad_ctrl, g_qpos, g_qvel, None
+
+    # ------------------------------------------------------------------
+    # Mode 3: FD Jacobian (fallback for debugging / comparison)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _backward_fd(ctx, grad_qpos_torch, grad_qvel_torch):
+        env = ctx.env
         m = env.warp_model
         d = env.warp_data
         nworld = ctx.nworld
@@ -143,8 +365,8 @@ class WarpSimStep(torch.autograd.Function):
 
         dt = wp.to_torch(m.opt.timestep).item()
         fd_eps = 1e-4
-        fd_max_dqacc = 1.0  # Clamp raw FD diffs to block contact discontinuity spikes
-        substep_grad_max = 1e4  # Prevent per-substep gradient explosion
+        fd_max_dqacc = 1.0
+        substep_grad_max = 1e4
 
         # Restore to initial state
         wp.copy(d.qpos, ctx.saved_qpos)
@@ -185,12 +407,7 @@ class WarpSimStep(torch.autograd.Function):
             wp.copy(d.ctrl, ctrl_wp)
             wp.synchronize()
 
-            # 1. Analytical Euler backward:
-            #    Semi-implicit: qvel_new = qvel + qacc*dt
-            #                   qpos_new = integrate_pos(qpos, qvel_new, dt)
-            #    d(loss)/d(qacc) = d(loss)/d(qvel_new)*dt + d(loss)/d(qpos_new)*dqpos/dqvel*dt
-            #    For nq==nv this simplifies to g_qpos*dt^2 + g_qvel*dt.
-            #    For free joints, the quaternion integration Jacobian is used.
+            # 1. Analytical Euler backward
             pre_qpos_torch = wp.to_torch(pre_qpos)
             g_qvel_from_qpos = _qpos_grad_to_qvel_grad(g_qpos, pre_qpos_torch, nq, nv, dt)
             grad_qacc_torch = g_qvel_from_qpos * dt + g_qvel * dt
@@ -206,9 +423,7 @@ class WarpSimStep(torch.autograd.Function):
             mjw.solve_m(m, d, grad_qfrc_wp, grad_qacc_wp)
             wp.synchronize()
 
-            # 4. Finite-difference dynamics Jacobian: ∂qacc/∂qpos and ∂qacc/∂qvel
-            #    These capture gravity, Coriolis, mass-matrix dependence on state —
-            #    the terms missing from the actuation-only tape backward.
+            # 4. Finite-difference dynamics Jacobian
             qpos_view = wp.to_torch(d.qpos)
             qvel_view = wp.to_torch(d.qvel)
             fd_g_qpos = torch.zeros(nworld, nq, device=g_qpos.device)
@@ -219,12 +434,11 @@ class WarpSimStep(torch.autograd.Function):
                 mjw.forward(m, d)
                 wp.synchronize()
                 qacc_plus = wp.to_torch(d.qacc).clone()
-                qpos_view[:, j] -= fd_eps  # restore
+                qpos_view[:, j] -= fd_eps
 
                 dqacc_raw = qacc_plus - qacc_orig
                 dqacc_raw = dqacc_raw.clamp(-fd_max_dqacc, fd_max_dqacc)
                 dqacc = torch.nan_to_num(dqacc_raw / fd_eps, 0.0, 0.0, 0.0)
-                # VJP: grad_qacc^T @ (∂qacc/∂qpos_j)
                 fd_g_qpos[:, j] = (grad_qacc_torch * dqacc).sum(dim=-1)
 
             for j in range(nv):
@@ -232,15 +446,14 @@ class WarpSimStep(torch.autograd.Function):
                 mjw.forward(m, d)
                 wp.synchronize()
                 qacc_plus = wp.to_torch(d.qacc).clone()
-                qvel_view[:, j] -= fd_eps  # restore
+                qvel_view[:, j] -= fd_eps
 
                 dqacc_raw = qacc_plus - qacc_orig
                 dqacc_raw = dqacc_raw.clamp(-fd_max_dqacc, fd_max_dqacc)
                 dqacc = torch.nan_to_num(dqacc_raw / fd_eps, 0.0, 0.0, 0.0)
                 fd_g_qvel[:, j] = (grad_qacc_torch * dqacc).sum(dim=-1)
 
-            # 5. Use Warp tape through fwd_actuation only to get d(loss)/d(ctrl)
-            #    Restore state again for clean tape
+            # 5. Use Warp tape through fwd_actuation only
             wp.copy(d.qpos, pre_qpos)
             wp.copy(d.qvel, pre_qvel)
             wp.copy(d.time, pre_time)
@@ -249,10 +462,6 @@ class WarpSimStep(torch.autograd.Function):
             wp.copy(d.ctrl, ctrl_wp)
             wp.synchronize()
 
-            # Run kinematics + velocity OUTSIDE the tape. These contain
-            # constraint kernels with enable_backwards=False that produce NaN
-            # gradients. Safe for direct-drive actuators (gear * ctrl) where
-            # fwd_actuation does not depend on position/velocity outputs.
             mjw.fwd_position(m, d)
             mjw.fwd_velocity(m, d)
             wp.synchronize()
@@ -264,7 +473,7 @@ class WarpSimStep(torch.autograd.Function):
             with tape:
                 mjw.fwd_actuation(m, d)
                 wp.launch(
-                    vjp_qfrc_kernel,
+                    _vjp_qfrc_kernel,
                     dim=(nworld, nv),
                     inputs=[d.qfrc_actuator, grad_qfrc_wp, loss],
                 )
@@ -273,9 +482,7 @@ class WarpSimStep(torch.autograd.Function):
 
             total_grad_ctrl += wp.to_torch(d.ctrl.grad).clone()
 
-            # 6. Propagate gradients: Euler backward + FD dynamics Jacobian
-            #    g_qpos_prev = g_qpos + grad_qacc @ ∂qacc/∂qpos
-            #    g_qvel_prev = (g_qvel + dqpos/dqvel^T @ g_qpos) + grad_qacc @ ∂qacc/∂qvel
+            # 6. Propagate gradients
             g_qpos_prev = g_qpos.clone() + fd_g_qpos
             g_qvel_prev = g_qvel + g_qvel_from_qpos + fd_g_qvel
             g_qpos = g_qpos_prev.clamp(-substep_grad_max, substep_grad_max)
@@ -283,20 +490,15 @@ class WarpSimStep(torch.autograd.Function):
 
             tape.zero()
 
-        # g_qpos, g_qvel now hold the gradient w.r.t. the INPUT state
+        # Sanitize
         total_grad_ctrl = torch.nan_to_num(total_grad_ctrl, 0.0, 0.0, 0.0)
         grad_qpos_in = torch.nan_to_num(g_qpos, 0.0, 0.0, 0.0)
         grad_qvel_in = torch.nan_to_num(g_qvel, 0.0, 0.0, 0.0)
 
         # Restore to post-step state
-        wp.copy(d.qpos, ctx.saved_qpos)
-        wp.copy(d.qvel, ctx.saved_qvel)
-        wp.copy(d.time, ctx.saved_time)
-        if ctx.saved_act is not None:
-            wp.copy(d.act, ctx.saved_act)
-        wp.copy(d.ctrl, ctrl_wp)
-        for _ in range(substeps):
-            mjw.step(m, d)
-        wp.synchronize()
+        _restore_and_rerun(
+            m, d, ctx.saved_qpos, ctx.saved_qvel, ctx.saved_time,
+            ctx.saved_act, wp.from_torch(ctx.ctrl_torch.contiguous()), substeps,
+        )
 
         return total_grad_ctrl, grad_qpos_in, grad_qvel_in, None
