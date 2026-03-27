@@ -247,8 +247,10 @@ class AntEnv(MjWarpEnv):
 
         # Early termination: height below threshold
         if self.early_termination:
+            too_low = self.obs_buf[:, 0] < self.termination_height
+            too_high = self.obs_buf[:, 0] > self.termination_height_max
             self.termination_buf = torch.where(
-                self.obs_buf[:, 0] < self.termination_height,
+                too_low | too_high,
                 torch.ones_like(self.termination_buf),
                 torch.zeros_like(self.termination_buf),
             )
