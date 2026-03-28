@@ -7,10 +7,28 @@ the gradient bridge (WarpSimStep) handles the Warp<->PyTorch autodiff interface.
 import os
 import time
 import copy
+import warnings
 
 import numpy as np
 import torch
 import warp as wp
+
+# Suppress expected Warp warnings from mujoco_warp kernels that use custom
+# adjoint paths (implicit differentiation) instead of tape-based AD.
+# Warp's warn() uses catch_warnings()+simplefilter("default") internally,
+# which overrides standard filterwarnings. Monkey-patch to skip these.
+_wp_warn_original = wp._src.utils.warn
+
+def _wp_warn_filtered(message, category=None, stacklevel=1, once=False):
+    if "Running the tape backwards may produce incorrect gradients" in str(message):
+        return
+    _wp_warn_original(message, category, stacklevel=stacklevel + 1, once=once)
+
+wp._src.utils.warn = _wp_warn_filtered
+
+warnings.filterwarnings(
+    "ignore", message="The .grad attribute of a Tensor that is not a leaf Tensor"
+)
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from tensorboardX import SummaryWriter
 import yaml
@@ -87,12 +105,11 @@ class SHAC:
         self.grad_norm = cfg['params']['config']['grad_norm']
 
         # Per-step observation gradient clipping for BPTT stability.
-        # Without a full dynamics Jacobian backward (missing in WarpSimStep),
-        # all cross-step gradients flow through the actor network, which can
-        # amplify exponentially over the rollout horizon. This clips the
-        # gradient at each step boundary, mimicking the damping that a full
-        # dynamics backward path would provide.
-        self.obs_grad_clip = cfg['params']['config'].get('obs_grad_clip', 0.5)
+        # Set to 0 (disabled) by default to match DiffRL. The custom MuJoCo
+        # Warp build provides full dynamics gradients via tape-all backward,
+        # so aggressive clipping is no longer needed. Enable (e.g., 0.5) only
+        # if gradient explosion is observed during training.
+        self.obs_grad_clip = cfg['params']['config'].get('obs_grad_clip', 0.0)
 
         self.log_dir = cfg['params']['general']['logdir']
         os.makedirs(self.log_dir, exist_ok=True)
