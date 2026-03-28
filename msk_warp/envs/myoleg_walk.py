@@ -32,6 +32,8 @@ class MyoLegWalkEnv(MjWarpEnv):
         substeps=4,
         model_path=None,
         action_strength=1.0,
+        use_fd_jacobian=False,
+        tape_per_substep=False,
         **kwargs,
     ):
         # Auto-discover model path if not provided
@@ -61,6 +63,8 @@ class MyoLegWalkEnv(MjWarpEnv):
             device=device,
             no_grad=no_grad,
             substeps=substeps,
+            use_fd_jacobian=use_fd_jacobian,
+            tape_per_substep=tape_per_substep,
         )
 
         self.stochastic_init = stochastic_init

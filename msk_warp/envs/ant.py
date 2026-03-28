@@ -31,6 +31,8 @@ class AntEnv(MjWarpEnv):
         action_strength=1.0,
         early_termination=True,
         njmax=512,
+        use_fd_jacobian=False,
+        tape_per_substep=False,
         **kwargs,
     ):
         num_obs = 37
@@ -46,6 +48,8 @@ class AntEnv(MjWarpEnv):
             no_grad=no_grad,
             substeps=substeps,
             njmax=njmax,
+            use_fd_jacobian=use_fd_jacobian,
+            tape_per_substep=tape_per_substep,
         )
 
         self.stochastic_init = stochastic_init
@@ -55,7 +59,7 @@ class AntEnv(MjWarpEnv):
         self.termination_height = 0.27
         self.termination_height_max = 1.0
         self.joint_vel_obs_scaling = 0.1
-        self.action_penalty = 0.0
+        self.action_penalty = -0.001
 
         # DOF layout: free joint (7 qpos / 6 qvel) + 8 hinge joints
         self.num_joint_q = 15

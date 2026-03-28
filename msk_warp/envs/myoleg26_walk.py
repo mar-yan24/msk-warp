@@ -35,6 +35,8 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         action_strength=1.0,
         early_termination=True,
         njmax=1000,
+        use_fd_jacobian=False,
+        tape_per_substep=False,
         **kwargs,
     ):
         # Pre-load model to discover dimensions
@@ -65,6 +67,8 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             no_grad=no_grad,
             substeps=substeps,
             njmax=njmax,
+            use_fd_jacobian=use_fd_jacobian,
+            tape_per_substep=tape_per_substep,
         )
 
         self.stochastic_init = stochastic_init
