@@ -7,7 +7,7 @@ params:
   env:
     name: Ant
     model_path: assets/ant.xml
-    num_actors: 512
+    num_actors: 64
     episode_length: 1000
     stochastic_init: true
     substeps: 16
@@ -30,7 +30,7 @@ params:
     name: ant_shac
     gamma: 0.99
     steps_num: 32
-    max_epochs: 1000
+    max_epochs: 2000
     actor_learning_rate: 2e-3
     critic_learning_rate: 2e-3
     lr_schedule: linear
@@ -42,7 +42,7 @@ params:
     critic_method: td-lambda
     lambda: 0.95
     num_batch: 4
-    num_actors: 512
+    num_actors: 64
     truncate_grads: true
     grad_norm: 1.0
     obs_grad_clip: 0.5

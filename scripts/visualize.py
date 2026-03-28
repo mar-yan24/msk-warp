@@ -98,7 +98,6 @@ class AntAdapter:
         self.episode_length = env_cfg.get('episode_length', 1000)
         self.early_termination = env_cfg.get('early_termination', True)
         self.termination_height = 0.27
-        self.termination_height_max = 1.0
         self.vel_scale = 0.1
         self.device = device
 
@@ -187,7 +186,7 @@ class AntAdapter:
         if not self.early_termination:
             return False
         h = obs[0, 0].item()
-        return h < self.termination_height or h > self.termination_height_max
+        return h < self.termination_height
 
     def update_actions(self, action_np):
         self.last_actions = torch.tensor(

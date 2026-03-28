@@ -57,9 +57,8 @@ class AntEnv(MjWarpEnv):
         self.early_termination = early_termination
 
         self.termination_height = 0.27
-        self.termination_height_max = 1.0
         self.joint_vel_obs_scaling = 0.1
-        self.action_penalty = -0.001
+        self.action_penalty = 0.0
 
         # DOF layout: free joint (7 qpos / 6 qvel) + 8 hinge joints
         self.num_joint_q = 15
@@ -252,9 +251,8 @@ class AntEnv(MjWarpEnv):
         # Early termination: height below threshold
         if self.early_termination:
             too_low = self.obs_buf[:, 0] < self.termination_height
-            too_high = self.obs_buf[:, 0] > self.termination_height_max
             self.termination_buf = torch.where(
-                too_low | too_high,
+                too_low,
                 torch.ones_like(self.termination_buf),
                 torch.zeros_like(self.termination_buf),
             )
