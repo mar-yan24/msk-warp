@@ -440,7 +440,7 @@ class SHAC:
                     clip_grad_norm_(self.actor.parameters(), self.grad_norm)
                 self.grad_norm_after_clip = tu.grad_norm(self.actor.parameters())
 
-                if torch.isnan(self.grad_norm_before_clip) or self.grad_norm_before_clip > 1e6:
+                if torch.isnan(self.grad_norm_before_clip):
                     print('WARNING: NaN or extreme gradient detected (norm={:.2e}), zeroing grads'.format(
                         self.grad_norm_before_clip.item() if not torch.isnan(self.grad_norm_before_clip) else float('nan')))
                     for p in self.actor.parameters():
@@ -513,6 +513,8 @@ class SHAC:
             self.writer.add_scalar('actor_loss/iter', self.actor_loss, self.iter_count)
             self.writer.add_scalar('value_loss/step', self.value_loss, self.step_count)
             self.writer.add_scalar('value_loss/iter', self.value_loss, self.iter_count)
+            self.writer.add_scalar('grad_norm/before_clip', self.grad_norm_before_clip, self.iter_count)
+            self.writer.add_scalar('grad_norm/after_clip', self.grad_norm_after_clip, self.iter_count)
 
             if len(self.episode_loss_his) > 0:
                 mean_episode_length = self.episode_length_meter.get_mean()

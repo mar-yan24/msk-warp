@@ -232,12 +232,6 @@ class AntEnv(MjWarpEnv):
             qpos_out = qpos_out.clamp(-100.0, 100.0)
             qvel_out = qvel_out.clamp(-100.0, 100.0)
 
-            # NaN-to-zero gradient hooks to prevent stray NaN from poisoning the batch
-            if qpos_out.requires_grad:
-                qpos_out.register_hook(lambda g: torch.nan_to_num(g, 0.0, 0.0, 0.0))
-            if qvel_out.requires_grad:
-                qvel_out.register_hook(lambda g: torch.nan_to_num(g, 0.0, 0.0, 0.0))
-
             self.obs_buf = self._compute_obs(
                 qpos_out, qvel_out, actions,
                 self.targets, self.up_vec, self.heading_vec,

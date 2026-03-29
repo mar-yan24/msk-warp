@@ -13,8 +13,8 @@ params:
     substeps: 16
     action_strength: 1.0
     early_termination: true
-    use_fd_jacobian: true
-    tape_per_substep: false
+    use_fd_jacobian: false
+    tape_per_substep: true
 
   network:
     actor: ActorStochasticMLP

@@ -276,7 +276,8 @@ class WarpSimStep(torch.autograd.Function):
                 grad_ctrl, grad_qpos_in, grad_qvel_in,
             )
 
-        # 7. Sanitize and clamp
+        # 7. Sanitize: NaN-to-zero and clamp extreme outliers.
+        # No tight per-element clamp — clip_grad_norm_ in SHAC handles magnitude.
         grad_ctrl, grad_qpos_in, grad_qvel_in = _sanitize_and_clamp(
             grad_ctrl, grad_qpos_in, grad_qvel_in
         )
@@ -370,7 +371,7 @@ class WarpSimStep(torch.autograd.Function):
 
             tape.zero()
 
-        # 5. Sanitize and clamp
+        # 5. Sanitize: NaN-to-zero and clamp extreme outliers.
         total_grad_ctrl, g_qpos, g_qvel = _sanitize_and_clamp(
             total_grad_ctrl, g_qpos, g_qvel
         )
