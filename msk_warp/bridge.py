@@ -400,7 +400,13 @@ class WarpSimStep(torch.autograd.Function):
         dt = wp.to_torch(m.opt.timestep).item()
         fd_eps = 1e-4
         fd_max_dqacc = 1.0
-        substep_grad_max = 1e4
+        # Per-substep gradient clamp. The FD Jacobian can have entries up to
+        # fd_max_dqacc/fd_eps = 1e4. Over 16 substeps the amplification factor
+        # is ~(1e4 * nv * dt) per substep ≈ 140x, causing exponential blowup
+        # unless clamped tightly. A value of 1.0 keeps state gradients bounded
+        # while preserving gradient direction (the correct single-step gradient
+        # magnitude is O(0.01-0.1)).
+        substep_grad_max = 1.0
 
         # Restore to initial state
         wp.copy(d.qpos, ctx.saved_qpos)
@@ -524,10 +530,10 @@ class WarpSimStep(torch.autograd.Function):
 
             tape.zero()
 
-        # Sanitize
-        total_grad_ctrl = torch.nan_to_num(total_grad_ctrl, 0.0, 0.0, 0.0)
-        grad_qpos_in = torch.nan_to_num(g_qpos, 0.0, 0.0, 0.0)
-        grad_qvel_in = torch.nan_to_num(g_qvel, 0.0, 0.0, 0.0)
+        # Sanitize and clamp (consistent with tape-all mode)
+        total_grad_ctrl, grad_qpos_in, grad_qvel_in = _sanitize_and_clamp(
+            total_grad_ctrl, g_qpos, g_qvel
+        )
 
         # Restore to post-step state
         _restore_and_rerun(
