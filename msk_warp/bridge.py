@@ -11,9 +11,36 @@ Mode selection via env flags:
   else                         → mode 1
 """
 
+import os
+
 import warp as wp
 import torch
 import mujoco_warp as mjw
+
+# Set MSK_GRAD_DIAG=1 to print per-backward gradient diagnostics
+_GRAD_DIAG = bool(int(os.environ.get("MSK_GRAD_DIAG", "0")))
+_grad_diag_count = 0
+
+
+def _log_grad_diag(mode, incoming_qpos, incoming_qvel, raw_ctrl, raw_qpos, raw_qvel):
+    """Print gradient magnitudes and NaN counts for debugging."""
+    global _grad_diag_count
+    _grad_diag_count += 1
+    # Only log every 32 calls (once per SHAC rollout) to avoid flooding
+    if _grad_diag_count % 32 != 1:
+        return
+    step_label = f"step {(_grad_diag_count - 1) % 32}"
+    nan_ctrl = raw_ctrl.isnan().sum().item()
+    nan_qpos = raw_qpos.isnan().sum().item()
+    nan_qvel = raw_qvel.isnan().sum().item()
+    total_elems = raw_ctrl.numel() + raw_qpos.numel() + raw_qvel.numel()
+    total_nan = nan_ctrl + nan_qpos + nan_qvel
+    print(
+        f"  [GRAD DIAG {mode} {step_label}] "
+        f"incoming |g_qpos|={incoming_qpos.norm():.4e} |g_qvel|={incoming_qvel.norm():.4e} | "
+        f"tape raw |ctrl|={raw_ctrl.norm():.4e} |qpos|={raw_qpos.norm():.4e} |qvel|={raw_qvel.norm():.4e} | "
+        f"NaN {total_nan}/{total_elems} (ctrl={nan_ctrl} qpos={nan_qpos} qvel={nan_qvel})"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +268,13 @@ class WarpSimStep(torch.autograd.Function):
         grad_ctrl = wp.to_torch(d.ctrl.grad).clone()
         grad_qpos_in = wp.to_torch(d.qpos.grad).clone()
         grad_qvel_in = wp.to_torch(d.qvel.grad).clone()
+
+        # Diagnostic: log raw gradient magnitudes before sanitization
+        if _GRAD_DIAG:
+            _log_grad_diag(
+                "tape-all", grad_qpos_torch, grad_qvel_torch,
+                grad_ctrl, grad_qpos_in, grad_qvel_in,
+            )
 
         # 7. Sanitize and clamp
         grad_ctrl, grad_qpos_in, grad_qvel_in = _sanitize_and_clamp(
