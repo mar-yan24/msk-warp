@@ -259,10 +259,17 @@ class SHAC:
             # Compute obs from tracked state (always differentiable for non-reset envs)
             obs = self.env.compute_obs(qpos, qvel)
 
-            # Clip gradients at step boundaries to prevent BPTT explosion
+            # Clip gradient norm at step boundaries to prevent BPTT explosion.
+            # Norm-based (not per-element) to preserve gradient direction —
+            # per-element clamp selectively suppresses the forward velocity
+            # signal and causes a standing-still local optimum.
             if obs.requires_grad and self.obs_grad_clip > 0:
-                _clip = self.obs_grad_clip
-                obs.register_hook(lambda grad, c=_clip: grad.clamp(-c, c))
+                _max_norm = self.obs_grad_clip
+                def _norm_clip_hook(grad, mn=_max_norm):
+                    gn = grad.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+                    scale = (mn / gn).clamp(max=1.0)
+                    return grad * scale
+                obs.register_hook(_norm_clip_hook)
 
             if self.obs_rms is not None:
                 with torch.no_grad():
