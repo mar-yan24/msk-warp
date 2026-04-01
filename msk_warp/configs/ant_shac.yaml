@@ -45,5 +45,5 @@ params:
     num_actors: 64
     truncate_grads: true
     grad_norm: 1.0
-    obs_grad_clip: 1.0
+    obs_grad_clip: 0.0
     save_interval: 400
