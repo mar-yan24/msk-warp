@@ -14,7 +14,7 @@ params:
     action_strength: 1.0
     early_termination: true
     use_fd_jacobian: false
-    tape_per_substep: true
+    tape_per_substep: false
 
   network:
     actor: ActorStochasticMLP
