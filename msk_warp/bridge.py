@@ -241,12 +241,10 @@ class WarpSimStep(torch.autograd.Function):
         grad_qpos_wp = wp.from_torch(grad_qpos_torch.contiguous())
         grad_qvel_wp = wp.from_torch(grad_qvel_torch.contiguous())
 
-        # 3. Zero existing .grad fields
-        d.qpos.grad = wp.zeros_like(d.qpos)
-        d.qvel.grad = wp.zeros_like(d.qvel)
-        d.ctrl.grad = wp.zeros_like(d.ctrl)
-        if ctx.saved_act is not None:
-            d.act.grad = wp.zeros_like(d.act)
+        # 3. Let the tape manage .grad arrays — do NOT replace them with
+        # new arrays, as this disconnects them from the tape's internal
+        # gradient routing.  tape.zero() (called at the end of backward)
+        # handles cleanup between calls.
 
         # 4. Tape through all substeps + VJP kernel
         loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
@@ -344,12 +342,7 @@ class WarpSimStep(torch.autograd.Function):
             grad_qpos_wp = wp.from_torch(g_qpos.contiguous())
             grad_qvel_wp = wp.from_torch(g_qvel.contiguous())
 
-            # Zero .grad fields
-            d.qpos.grad = wp.zeros_like(d.qpos)
-            d.qvel.grad = wp.zeros_like(d.qvel)
-            d.ctrl.grad = wp.zeros_like(d.ctrl)
-            if has_act:
-                d.act.grad = wp.zeros_like(d.act)
+            # Let the tape manage .grad arrays — do NOT replace them.
 
             # Tape one substep + VJP
             loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)

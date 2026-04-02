@@ -73,8 +73,8 @@ def test_forward_vel_gradient_tape():
 
     env.set_state(qpos0, qvel0)
     ctrl_torch = torch.tensor(ctrl_val, dtype=torch.float32, device='cuda:0', requires_grad=True)
-    qpos_in = wp.to_torch(env.warp_data.qpos).clone().requires_grad_(True)
-    qvel_in = wp.to_torch(env.warp_data.qvel).clone().requires_grad_(True)
+    qpos_in = wp.to_torch(env.warp_data.qpos).clone().detach().requires_grad_(True)
+    qvel_in = wp.to_torch(env.warp_data.qvel).clone().detach().requires_grad_(True)
 
     qpos_out, qvel_out = WarpSimStep.apply(ctrl_torch, qpos_in, qvel_in, env)
 
@@ -122,8 +122,8 @@ def test_forward_vel_gradient_fd():
 
     env.set_state(qpos0, qvel0)
     ctrl_torch = torch.tensor(ctrl_val, dtype=torch.float32, device='cuda:0', requires_grad=True)
-    qpos_in = wp.to_torch(env.warp_data.qpos).clone().requires_grad_(True)
-    qvel_in = wp.to_torch(env.warp_data.qvel).clone().requires_grad_(True)
+    qpos_in = wp.to_torch(env.warp_data.qpos).clone().detach().requires_grad_(True)
+    qvel_in = wp.to_torch(env.warp_data.qvel).clone().detach().requires_grad_(True)
 
     qpos_out, qvel_out = WarpSimStep.apply(ctrl_torch, qpos_in, qvel_in, env)
 
@@ -219,5 +219,63 @@ def test_compare_all_modes():
     print()
 
 
+def test_forward_vel_gradient_tape_per_substep():
+    """Test state gradients using tape-per-substep (workaround for tape-all).
+
+    tape-all produces zero d(fwd_vel)/d(qpos) and d(fwd_vel)/d(qvel) because
+    Warp's tape doesn't chain the clone->overwrite sequence for d.qpos/d.qvel
+    across multiple step() calls. tape-per-substep manually chains state
+    gradients and should produce non-zero values.
+    """
+    print("=" * 70)
+    print("Test: d(forward_vel)/d(ctrl,qpos,qvel) via tape-per-substep")
+    print("=" * 70)
+
+    env = MinimalAntEnv(nworld=1, use_fd_jacobian=False, tape_per_substep=True)
+    qpos0, qvel0 = _ant_standing_state()
+
+    np.random.seed(42)
+    ctrl_val = np.random.uniform(-0.3, 0.3, (1, 8))
+
+    env.set_state(qpos0, qvel0)
+    ctrl_torch = torch.tensor(ctrl_val, dtype=torch.float32, device='cuda:0', requires_grad=True)
+    qpos_in = wp.to_torch(env.warp_data.qpos).clone().detach().requires_grad_(True)
+    qvel_in = wp.to_torch(env.warp_data.qvel).clone().detach().requires_grad_(True)
+
+    qpos_out, qvel_out = WarpSimStep.apply(ctrl_torch, qpos_in, qvel_in, env)
+
+    forward_vel = qvel_out[:, 0]
+    forward_vel.sum().backward()
+
+    grad = ctrl_torch.grad.cpu().numpy().flatten()
+    grad_qpos = qpos_in.grad.cpu().numpy().flatten() if qpos_in.grad is not None else np.zeros(15)
+    grad_qvel = qvel_in.grad.cpu().numpy().flatten() if qvel_in.grad is not None else np.zeros(14)
+
+    print(f"d(fwd_vel)/d(ctrl):  {grad}")
+    print(f"  |grad|:            {np.linalg.norm(grad):.8e}")
+    print(f"  max |grad_i|:      {np.abs(grad).max():.8e}")
+    print(f"  any NaN:           {np.any(np.isnan(grad))}")
+    print()
+    print(f"d(fwd_vel)/d(qpos):  norm={np.linalg.norm(grad_qpos):.8e}")
+    print(f"d(fwd_vel)/d(qvel):  norm={np.linalg.norm(grad_qvel):.8e}")
+
+    qpos_ok = np.linalg.norm(grad_qpos) > 1e-8
+    qvel_ok = np.linalg.norm(grad_qvel) > 1e-8
+    ctrl_ok = np.abs(grad).max() > 1e-8
+
+    print()
+    print(f"  ctrl gradient:     {'NON-ZERO' if ctrl_ok else 'ZERO (BROKEN)'}")
+    print(f"  qpos gradient:     {'NON-ZERO — BPTT works!' if qpos_ok else 'ZERO — BPTT broken!'}")
+    print(f"  qvel gradient:     {'NON-ZERO — BPTT works!' if qvel_ok else 'ZERO — BPTT broken!'}")
+
+    assert not np.any(np.isnan(grad)), "Gradient contains NaN"
+    print("DONE\n")
+    return grad, grad_qpos, grad_qvel
+
+
 if __name__ == '__main__':
     test_compare_all_modes()
+    print("\n" + "=" * 70)
+    print("TAPE-PER-SUBSTEP (workaround for tape-all state gradient issue)")
+    print("=" * 70 + "\n")
+    test_forward_vel_gradient_tape_per_substep()
