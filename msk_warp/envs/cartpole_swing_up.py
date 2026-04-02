@@ -23,6 +23,8 @@ class CartPoleSwingUpEnv(MjWarpEnv):
         substeps=4,
         model_path='assets/cartpole.xml',
         action_strength=20.0,
+        use_fd_jacobian=False,
+        tape_per_substep=False,
         **kwargs,
     ):
         num_obs = 5
@@ -37,6 +39,8 @@ class CartPoleSwingUpEnv(MjWarpEnv):
             device=device,
             no_grad=no_grad,
             substeps=substeps,
+            use_fd_jacobian=use_fd_jacobian,
+            tape_per_substep=tape_per_substep,
         )
 
         self.stochastic_init = stochastic_init

@@ -7,10 +7,28 @@ the gradient bridge (WarpSimStep) handles the Warp<->PyTorch autodiff interface.
 import os
 import time
 import copy
+import warnings
 
 import numpy as np
 import torch
 import warp as wp
+
+# Suppress expected Warp warnings from mujoco_warp kernels that use custom
+# adjoint paths (implicit differentiation) instead of tape-based AD.
+# Warp's warn() uses catch_warnings()+simplefilter("default") internally,
+# which overrides standard filterwarnings. Monkey-patch to skip these.
+_wp_warn_original = wp._src.utils.warn
+
+def _wp_warn_filtered(message, category=None, stacklevel=1, once=False):
+    if "Running the tape backwards may produce incorrect gradients" in str(message):
+        return
+    _wp_warn_original(message, category, stacklevel=stacklevel + 1, once=once)
+
+wp._src.utils.warn = _wp_warn_filtered
+
+warnings.filterwarnings(
+    "ignore", message="The .grad attribute of a Tensor that is not a leaf Tensor"
+)
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from tensorboardX import SummaryWriter
 import yaml
@@ -87,12 +105,11 @@ class SHAC:
         self.grad_norm = cfg['params']['config']['grad_norm']
 
         # Per-step observation gradient clipping for BPTT stability.
-        # Without a full dynamics Jacobian backward (missing in WarpSimStep),
-        # all cross-step gradients flow through the actor network, which can
-        # amplify exponentially over the rollout horizon. This clips the
-        # gradient at each step boundary, mimicking the damping that a full
-        # dynamics backward path would provide.
-        self.obs_grad_clip = cfg['params']['config'].get('obs_grad_clip', 0.5)
+        # Set to 0 (disabled) by default to match DiffRL. The custom MuJoCo
+        # Warp build provides full dynamics gradients via tape-all backward,
+        # so aggressive clipping is no longer needed. Enable (e.g., 0.5) only
+        # if gradient explosion is observed during training.
+        self.obs_grad_clip = cfg['params']['config'].get('obs_grad_clip', 0.0)
 
         self.log_dir = cfg['params']['general']['logdir']
         os.makedirs(self.log_dir, exist_ok=True)
@@ -242,10 +259,17 @@ class SHAC:
             # Compute obs from tracked state (always differentiable for non-reset envs)
             obs = self.env.compute_obs(qpos, qvel)
 
-            # Clip gradients at step boundaries to prevent BPTT explosion
+            # Clip gradient norm at step boundaries to prevent BPTT explosion.
+            # Norm-based (not per-element) to preserve gradient direction —
+            # per-element clamp selectively suppresses the forward velocity
+            # signal and causes a standing-still local optimum.
             if obs.requires_grad and self.obs_grad_clip > 0:
-                _clip = self.obs_grad_clip
-                obs.register_hook(lambda grad, c=_clip: grad.clamp(-c, c))
+                _max_norm = self.obs_grad_clip
+                def _norm_clip_hook(grad, mn=_max_norm):
+                    gn = grad.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+                    scale = (mn / gn).clamp(max=1.0)
+                    return grad * scale
+                obs.register_hook(_norm_clip_hook)
 
             if self.obs_rms is not None:
                 with torch.no_grad():
@@ -403,6 +427,7 @@ class SHAC:
                 _saved_qpos = wp.clone(self.env.warp_data.qpos)
                 _saved_qvel = wp.clone(self.env.warp_data.qvel)
                 _saved_time = wp.clone(self.env.warp_data.time)
+                _saved_act = wp.clone(self.env.warp_data.act) if self.env.warp_data.act.shape[1] > 0 else None
 
             self.time_report.start_timer("backward simulation")
             actor_loss.backward()
@@ -412,6 +437,8 @@ class SHAC:
             wp.copy(self.env.warp_data.qpos, _saved_qpos)
             wp.copy(self.env.warp_data.qvel, _saved_qvel)
             wp.copy(self.env.warp_data.time, _saved_time)
+            if _saved_act is not None:
+                wp.copy(self.env.warp_data.act, _saved_act)
             wp.synchronize()
 
             with torch.no_grad():
@@ -420,7 +447,7 @@ class SHAC:
                     clip_grad_norm_(self.actor.parameters(), self.grad_norm)
                 self.grad_norm_after_clip = tu.grad_norm(self.actor.parameters())
 
-                if torch.isnan(self.grad_norm_before_clip) or self.grad_norm_before_clip > 1e6:
+                if torch.isnan(self.grad_norm_before_clip):
                     print('WARNING: NaN or extreme gradient detected (norm={:.2e}), zeroing grads'.format(
                         self.grad_norm_before_clip.item() if not torch.isnan(self.grad_norm_before_clip) else float('nan')))
                     for p in self.actor.parameters():
@@ -493,6 +520,8 @@ class SHAC:
             self.writer.add_scalar('actor_loss/iter', self.actor_loss, self.iter_count)
             self.writer.add_scalar('value_loss/step', self.value_loss, self.step_count)
             self.writer.add_scalar('value_loss/iter', self.value_loss, self.iter_count)
+            self.writer.add_scalar('grad_norm/before_clip', self.grad_norm_before_clip, self.iter_count)
+            self.writer.add_scalar('grad_norm/after_clip', self.grad_norm_after_clip, self.iter_count)
 
             if len(self.episode_loss_his) > 0:
                 mean_episode_length = self.episode_length_meter.get_mean()

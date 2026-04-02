@@ -1,13 +1,13 @@
 <mujoco model="ant">
   <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
-  <option timestep="0.00104167" gravity="0 0 -9.81">
+  <option timestep="0.00104167" gravity="0 0 -9.81" solver="Newton" jacobian="dense">
     <flag eulerdamp="disable"/>
   </option>
   <size njmax="4096" nconmax="1024"/>
 
   <default>
     <joint armature="0.05" damping="1" limited="true"/>
-    <geom condim="3" density="5.0" friction="1.5 0.1 0.1" margin="0.01"
+    <geom condim="3" density="1000.0" friction="1.5 0.1 0.1" margin="0.01"
           rgba="0.97 0.38 0.06 1" contype="1" conaffinity="1"/>
   </default>
 

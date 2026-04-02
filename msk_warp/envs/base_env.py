@@ -23,6 +23,8 @@ class MjWarpEnv:
         no_grad=False,
         substeps=4,
         njmax=None,
+        use_fd_jacobian=False,
+        tape_per_substep=False,
     ):
         self.device = device
         self.num_environments = num_envs
@@ -31,6 +33,8 @@ class MjWarpEnv:
         self.episode_length = episode_length
         self.no_grad = no_grad
         self.substeps = substeps
+        self.use_fd_jacobian = use_fd_jacobian
+        self.tape_per_substep = tape_per_substep
 
         # Load MuJoCo model
         model_path = resolve_model_path(model_path)
@@ -80,10 +84,11 @@ class MjWarpEnv:
     def clear_grad(self):
         """Cut off the gradient graph by recreating diff data and restoring state."""
         with torch.no_grad():
-            # Save current state
+            # Save current state (including muscle activation if present)
             qpos_save = wp.clone(self.warp_data.qpos)
             qvel_save = wp.clone(self.warp_data.qvel)
             time_save = wp.clone(self.warp_data.time)
+            act_save = wp.clone(self.warp_data.act) if self.warp_data.act.shape[1] > 0 else None
 
         # Recreate diff data (fresh gradient graph)
         diff_data_kwargs = {}
@@ -96,6 +101,8 @@ class MjWarpEnv:
         wp.copy(self.warp_data.qpos, qpos_save)
         wp.copy(self.warp_data.qvel, qvel_save)
         wp.copy(self.warp_data.time, time_save)
+        if act_save is not None:
+            wp.copy(self.warp_data.act, act_save)
         wp.synchronize()
 
     def initialize_trajectory(self):

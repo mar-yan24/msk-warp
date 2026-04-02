@@ -31,6 +31,8 @@ class AntEnv(MjWarpEnv):
         action_strength=1.0,
         early_termination=True,
         njmax=512,
+        use_fd_jacobian=False,
+        tape_per_substep=False,
         **kwargs,
     ):
         num_obs = 37
@@ -46,6 +48,8 @@ class AntEnv(MjWarpEnv):
             no_grad=no_grad,
             substeps=substeps,
             njmax=njmax,
+            use_fd_jacobian=use_fd_jacobian,
+            tape_per_substep=tape_per_substep,
         )
 
         self.stochastic_init = stochastic_init
@@ -54,7 +58,7 @@ class AntEnv(MjWarpEnv):
 
         self.termination_height = 0.27
         self.joint_vel_obs_scaling = 0.1
-        self.action_penalty = 0.0
+        self.action_penalty = -0.001
 
         # DOF layout: free joint (7 qpos / 6 qvel) + 8 hinge joints
         self.num_joint_q = 15
@@ -158,12 +162,12 @@ class AntEnv(MjWarpEnv):
         forward_vel = obs[:, 5]        # lin_vel_x
         up_reward = 0.1 * obs[:, 27]   # up-vector z-component
         heading_reward = obs[:, 28]     # heading alignment
-        height_reward = height - 0.27
+        height_reward = 0.5
 
         reward = (
             forward_vel
             + up_reward
-            + heading_reward
+            + 0.2 * heading_reward
             + height_reward
             + action_penalty * (actions ** 2).sum(dim=-1)
         )
@@ -228,12 +232,6 @@ class AntEnv(MjWarpEnv):
             qpos_out = qpos_out.clamp(-100.0, 100.0)
             qvel_out = qvel_out.clamp(-100.0, 100.0)
 
-            # NaN-to-zero gradient hooks to prevent stray NaN from poisoning the batch
-            if qpos_out.requires_grad:
-                qpos_out.register_hook(lambda g: torch.nan_to_num(g, 0.0, 0.0, 0.0))
-            if qvel_out.requires_grad:
-                qvel_out.register_hook(lambda g: torch.nan_to_num(g, 0.0, 0.0, 0.0))
-
             self.obs_buf = self._compute_obs(
                 qpos_out, qvel_out, actions,
                 self.targets, self.up_vec, self.heading_vec,
@@ -246,8 +244,9 @@ class AntEnv(MjWarpEnv):
 
         # Early termination: height below threshold
         if self.early_termination:
+            too_low = self.obs_buf[:, 0] < self.termination_height
             self.termination_buf = torch.where(
-                self.obs_buf[:, 0] < self.termination_height,
+                too_low,
                 torch.ones_like(self.termination_buf),
                 torch.zeros_like(self.termination_buf),
             )
