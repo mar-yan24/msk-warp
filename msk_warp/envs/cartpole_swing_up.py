@@ -126,7 +126,7 @@ class CartPoleSwingUpEnv(MjWarpEnv):
         """
         actions = actions.view(self.num_envs, self.num_actions)
         actions = torch.clamp(actions, -1.0, 1.0)
-        self.actions = actions
+        self.actions = actions.detach().clone()
 
         # Scale actions to ctrl
         ctrl = actions * self.action_strength

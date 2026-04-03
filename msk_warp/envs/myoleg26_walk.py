@@ -11,6 +11,8 @@ Key differences from AntEnv:
   - Action space maps tanh[-1,1] -> muscle activation [0,1].
 """
 
+import logging
+
 import mujoco
 import numpy as np
 import torch
@@ -54,7 +56,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         num_obs = 1 + 4 + 3 + 3 + n_joint_q + n_joint_v + 1 + 1 + nu
         num_act = nu
 
-        print(f'MyoLeg26 model: nq={nq}, nv={nv}, nu={nu}, num_obs={num_obs}')
+        logging.info(f'MyoLeg26 model: nq={nq}, nv={nv}, nu={nu}, num_obs={num_obs}')
         del _mjm
 
         super().__init__(
@@ -285,6 +287,9 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             qpos_out = qpos_out.clamp(-100.0, 100.0)
             qvel_out = qvel_out.clamp(-100.0, 100.0)
 
+            # Sanitize gradients flowing INTO bridge backward from downstream
+            # obs/reward computation. (bridge._sanitize_and_clamp handles
+            # gradients flowing OUT of bridge backward from the Warp tape.)
             if qpos_out.requires_grad:
                 qpos_out.register_hook(lambda g: torch.nan_to_num(g, 0.0, 0.0, 0.0))
             if qvel_out.requires_grad:
