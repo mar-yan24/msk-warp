@@ -104,11 +104,24 @@ class SHAC:
         self.truncate_grad = cfg['params']['config']['truncate_grads']
         self.grad_norm = cfg['params']['config']['grad_norm']
 
-        # Per-step observation gradient clipping for BPTT stability.
-        # Set to 0 (disabled) by default to match DiffRL. The custom MuJoCo
-        # Warp build provides full dynamics gradients via tape-all backward,
-        # so aggressive clipping is no longer needed. Enable (e.g., 0.5) only
-        # if gradient explosion is observed during training.
+        # State BPTT: propagate gradients through the state (qpos/qvel) chain
+        # across simulation steps. Enable for environments where multi-step
+        # planning through dynamics is beneficial (e.g., locomotion with
+        # contacts). Disable for simpler environments (e.g., cartpole) where
+        # single-step ctrl gradients suffice and BPTT causes gradient explosion.
+        self.state_bptt = cfg['params']['config'].get('state_bptt', True)
+
+        # Per-step state gradient clipping for BPTT stability.
+        # When state_bptt is True, clips gradient norms on the state tensors
+        # (qpos, qvel) at each step boundary. This controls BPTT explosion
+        # through BOTH the observation path (obs → actor) AND the reward
+        # accumulation path (rew → state chain). Set to 0 to disable.
+        # Note: the old obs_grad_clip only clipped the observation path,
+        # leaving the reward path unchecked — causing gradient norms of 1e6+.
+        self.state_grad_clip = cfg['params']['config'].get('state_grad_clip', 0.0)
+
+        # Legacy obs_grad_clip: kept for backward compatibility but state_grad_clip
+        # is preferred as it clips all BPTT paths, not just the obs path.
         self.obs_grad_clip = cfg['params']['config'].get('obs_grad_clip', 0.0)
 
         self.log_dir = cfg['params']['general']['logdir']
@@ -256,13 +269,29 @@ class SHAC:
                 qpos = qpos_new
                 qvel = qvel_new
 
+            # Optionally detach state to disable BPTT through dynamics.
+            # When disabled, only single-step ctrl gradients flow through
+            # WarpSimStep — sufficient for simple environments (cartpole).
+            if not self.state_bptt:
+                qpos = qpos.detach()
+                qvel = qvel.detach()
+
+            # Clip gradient norm on STATE tensors at step boundaries to
+            # prevent BPTT explosion. This clips all gradient paths through
+            # the state chain: both the obs path (obs → actor) and the
+            # reward accumulation path (rew_acc → rew → state).
+            if self.state_grad_clip > 0 and qpos.requires_grad:
+                _mn = self.state_grad_clip
+                def _state_clip_hook(grad, mn=_mn):
+                    gn = grad.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+                    return grad * (mn / gn).clamp(max=1.0)
+                qpos.register_hook(_state_clip_hook)
+                qvel.register_hook(_state_clip_hook)
+
             # Compute obs from tracked state (always differentiable for non-reset envs)
             obs = self.env.compute_obs(qpos, qvel)
 
-            # Clip gradient norm at step boundaries to prevent BPTT explosion.
-            # Norm-based (not per-element) to preserve gradient direction —
-            # per-element clamp selectively suppresses the forward velocity
-            # signal and causes a standing-still local optimum.
+            # Legacy obs-level gradient clipping (prefer state_grad_clip instead).
             if obs.requires_grad and self.obs_grad_clip > 0:
                 _max_norm = self.obs_grad_clip
                 def _norm_clip_hook(grad, mn=_max_norm):

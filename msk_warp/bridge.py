@@ -21,6 +21,14 @@ import mujoco_warp as mjw
 _GRAD_DIAG = bool(int(os.environ.get("MSK_GRAD_DIAG", "0")))
 _grad_diag_count = 0
 
+# Set MSK_SKIP_BACKWARD_RERUN=1 to skip redundant _restore_and_rerun after
+# each backward call. Each backward already restores from its own checkpoint,
+# and SHAC's actor_closure saves/restores post-rollout state, so the rerun is
+# wasted work (steps_num * substeps extra mjw.step calls per epoch).
+# Default OFF (safe); enable for ~1.5-2x backward speedup after verifying
+# training curves match.
+_SKIP_BACKWARD_RERUN = bool(int(os.environ.get("MSK_SKIP_BACKWARD_RERUN", "0")))
+
 
 def _log_grad_diag(mode, incoming_qpos, incoming_qvel, raw_ctrl, raw_qpos, raw_qvel):
     """Print gradient magnitudes and NaN counts for debugging."""
@@ -241,55 +249,56 @@ class WarpSimStep(torch.autograd.Function):
         grad_qpos_wp = wp.from_torch(grad_qpos_torch.contiguous())
         grad_qvel_wp = wp.from_torch(grad_qvel_torch.contiguous())
 
-        # 3. Zero existing .grad fields
-        d.qpos.grad = wp.zeros_like(d.qpos)
-        d.qvel.grad = wp.zeros_like(d.qvel)
-        d.ctrl.grad = wp.zeros_like(d.ctrl)
-        if ctx.saved_act is not None:
-            d.act.grad = wp.zeros_like(d.act)
+        # 3. Let the tape manage .grad arrays — do NOT replace them with
+        # new arrays, as this disconnects them from the tape's internal
+        # gradient routing.  tape.zero() (called at the end of backward)
+        # handles cleanup between calls.
 
         # 4. Tape through all substeps + VJP kernel
         loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
         tape = wp.Tape()
-        with tape:
-            for _ in range(substeps):
-                mjw.step(m, d)
-            wp.launch(
-                _vjp_state_kernel,
-                dim=(ctx.nworld, max(ctx.nq, ctx.nv)),
-                inputs=[d.qpos, d.qvel, grad_qpos_wp, grad_qvel_wp, loss],
+        try:
+            with tape:
+                for _ in range(substeps):
+                    mjw.step(m, d)
+                wp.launch(
+                    _vjp_state_kernel,
+                    dim=(ctx.nworld, max(ctx.nq, ctx.nv)),
+                    inputs=[d.qpos, d.qvel, grad_qpos_wp, grad_qvel_wp, loss],
+                )
+
+            # 5. Backward through tape
+            tape.backward(loss=loss)
+            wp.synchronize()
+
+            # 6. Extract gradients
+            grad_ctrl = wp.to_torch(d.ctrl.grad).clone()
+            grad_qpos_in = wp.to_torch(d.qpos.grad).clone()
+            grad_qvel_in = wp.to_torch(d.qvel.grad).clone()
+
+            # Diagnostic: log raw gradient magnitudes before sanitization
+            if _GRAD_DIAG:
+                _log_grad_diag(
+                    "tape-all", grad_qpos_torch, grad_qvel_torch,
+                    grad_ctrl, grad_qpos_in, grad_qvel_in,
+                )
+
+            # 7. Sanitize: NaN-to-zero and clamp extreme outliers.
+            # No tight per-element clamp — clip_grad_norm_ in SHAC handles magnitude.
+            grad_ctrl, grad_qpos_in, grad_qvel_in = _sanitize_and_clamp(
+                grad_ctrl, grad_qpos_in, grad_qvel_in
             )
+        finally:
+            # 8. Clean up tape (even if backward throws)
+            tape.zero()
+            del tape
 
-        # 5. Backward through tape
-        tape.backward(loss=loss)
-        wp.synchronize()
-
-        # 6. Extract gradients
-        grad_ctrl = wp.to_torch(d.ctrl.grad).clone()
-        grad_qpos_in = wp.to_torch(d.qpos.grad).clone()
-        grad_qvel_in = wp.to_torch(d.qvel.grad).clone()
-
-        # Diagnostic: log raw gradient magnitudes before sanitization
-        if _GRAD_DIAG:
-            _log_grad_diag(
-                "tape-all", grad_qpos_torch, grad_qvel_torch,
-                grad_ctrl, grad_qpos_in, grad_qvel_in,
+        # 9. Restore to post-step state (skippable — see _SKIP_BACKWARD_RERUN)
+        if not _SKIP_BACKWARD_RERUN:
+            _restore_and_rerun(
+                m, d, ctx.saved_qpos, ctx.saved_qvel, ctx.saved_time,
+                ctx.saved_act, ctrl_wp, substeps,
             )
-
-        # 7. Sanitize: NaN-to-zero and clamp extreme outliers.
-        # No tight per-element clamp — clip_grad_norm_ in SHAC handles magnitude.
-        grad_ctrl, grad_qpos_in, grad_qvel_in = _sanitize_and_clamp(
-            grad_ctrl, grad_qpos_in, grad_qvel_in
-        )
-
-        # 8. Clean up tape
-        tape.zero()
-
-        # 9. Restore to post-step state
-        _restore_and_rerun(
-            m, d, ctx.saved_qpos, ctx.saved_qvel, ctx.saved_time,
-            ctx.saved_act, ctrl_wp, substeps,
-        )
 
         return grad_ctrl, grad_qpos_in, grad_qvel_in, None
 
@@ -344,43 +353,41 @@ class WarpSimStep(torch.autograd.Function):
             grad_qpos_wp = wp.from_torch(g_qpos.contiguous())
             grad_qvel_wp = wp.from_torch(g_qvel.contiguous())
 
-            # Zero .grad fields
-            d.qpos.grad = wp.zeros_like(d.qpos)
-            d.qvel.grad = wp.zeros_like(d.qvel)
-            d.ctrl.grad = wp.zeros_like(d.ctrl)
-            if has_act:
-                d.act.grad = wp.zeros_like(d.act)
+            # Let the tape manage .grad arrays — do NOT replace them.
 
             # Tape one substep + VJP
             loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
             tape = wp.Tape()
-            with tape:
-                mjw.step(m, d)
-                wp.launch(
-                    _vjp_state_kernel,
-                    dim=(ctx.nworld, max(ctx.nq, ctx.nv)),
-                    inputs=[d.qpos, d.qvel, grad_qpos_wp, grad_qvel_wp, loss],
-                )
-            tape.backward(loss=loss)
-            wp.synchronize()
+            try:
+                with tape:
+                    mjw.step(m, d)
+                    wp.launch(
+                        _vjp_state_kernel,
+                        dim=(ctx.nworld, max(ctx.nq, ctx.nv)),
+                        inputs=[d.qpos, d.qvel, grad_qpos_wp, grad_qvel_wp, loss],
+                    )
+                tape.backward(loss=loss)
+                wp.synchronize()
 
-            # Accumulate ctrl grad and chain state grads
-            total_grad_ctrl += wp.to_torch(d.ctrl.grad).clone()
-            g_qpos = wp.to_torch(d.qpos.grad).clone()
-            g_qvel = wp.to_torch(d.qvel.grad).clone()
-
-            tape.zero()
+                # Accumulate ctrl grad and chain state grads
+                total_grad_ctrl += wp.to_torch(d.ctrl.grad).clone()
+                g_qpos = wp.to_torch(d.qpos.grad).clone()
+                g_qvel = wp.to_torch(d.qvel.grad).clone()
+            finally:
+                tape.zero()
+                del tape
 
         # 5. Sanitize: NaN-to-zero and clamp extreme outliers.
         total_grad_ctrl, g_qpos, g_qvel = _sanitize_and_clamp(
             total_grad_ctrl, g_qpos, g_qvel
         )
 
-        # 6. Restore to post-step state
-        _restore_and_rerun(
-            m, d, ctx.saved_qpos, ctx.saved_qvel, ctx.saved_time,
-            ctx.saved_act, ctrl_wp, substeps,
-        )
+        # 6. Restore to post-step state (skippable — see _SKIP_BACKWARD_RERUN)
+        if not _SKIP_BACKWARD_RERUN:
+            _restore_and_rerun(
+                m, d, ctx.saved_qpos, ctx.saved_qvel, ctx.saved_time,
+                ctx.saved_act, ctrl_wp, substeps,
+            )
 
         return total_grad_ctrl, g_qpos, g_qvel, None
 
@@ -399,15 +406,12 @@ class WarpSimStep(torch.autograd.Function):
         substeps = env.substeps
 
         dt = wp.to_torch(m.opt.timestep).item()
-        fd_eps = 1e-4
-        fd_max_dqacc = 1.0
-        # Per-substep gradient clamp. The FD Jacobian can have entries up to
-        # fd_max_dqacc/fd_eps = 1e4. Over 16 substeps the amplification factor
-        # is ~(1e4 * nv * dt) per substep ≈ 140x, causing exponential blowup
-        # unless clamped tightly. A value of 1.0 keeps state gradients bounded
-        # while preserving gradient direction (the correct single-step gradient
-        # magnitude is O(0.01-0.1)).
-        substep_grad_max = 1.0
+        fd_eps = 1e-3  # Larger eps for better float32 SNR
+        fd_max_dqacc = 10.0  # Allow larger Jacobian entries
+        # Per-substep gradient norm clip. Uses norm-based clipping (not per-element)
+        # to preserve gradient direction while bounding magnitude. The value is
+        # chosen to allow useful signal through 16 substeps without explosion.
+        substep_grad_max = 10.0
 
         # Restore to initial state
         wp.copy(d.qpos, ctx.saved_qpos)
@@ -511,35 +515,41 @@ class WarpSimStep(torch.autograd.Function):
 
             loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
             tape = wp.Tape()
-            with tape:
-                mjw.fwd_actuation(m, d)
-                wp.launch(
-                    _vjp_qfrc_kernel,
-                    dim=(nworld, nv),
-                    inputs=[d.qfrc_actuator, grad_qfrc_wp, loss],
-                )
-            tape.backward(loss=loss)
-            wp.synchronize()
+            try:
+                with tape:
+                    mjw.fwd_actuation(m, d)
+                    wp.launch(
+                        _vjp_qfrc_kernel,
+                        dim=(nworld, nv),
+                        inputs=[d.qfrc_actuator, grad_qfrc_wp, loss],
+                    )
+                tape.backward(loss=loss)
+                wp.synchronize()
 
-            total_grad_ctrl += wp.to_torch(d.ctrl.grad).clone()
+                total_grad_ctrl += wp.to_torch(d.ctrl.grad).clone()
 
-            # 6. Propagate gradients
-            g_qpos_prev = g_qpos.clone() + fd_g_qpos
-            g_qvel_prev = g_qvel + g_qvel_from_qpos + fd_g_qvel
-            g_qpos = g_qpos_prev.clamp(-substep_grad_max, substep_grad_max)
-            g_qvel = g_qvel_prev.clamp(-substep_grad_max, substep_grad_max)
-
-            tape.zero()
+                # 6. Propagate gradients with norm-based clip (preserves direction)
+                g_qpos_prev = g_qpos.clone() + fd_g_qpos
+                g_qvel_prev = g_qvel + g_qvel_from_qpos + fd_g_qvel
+                # Norm-based clip per environment (preserves direction unlike per-element clamp)
+                gn_q = g_qpos_prev.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+                g_qpos = g_qpos_prev * (substep_grad_max / gn_q).clamp(max=1.0)
+                gn_v = g_qvel_prev.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+                g_qvel = g_qvel_prev * (substep_grad_max / gn_v).clamp(max=1.0)
+            finally:
+                tape.zero()
+                del tape
 
         # Sanitize and clamp (consistent with tape-all mode)
         total_grad_ctrl, grad_qpos_in, grad_qvel_in = _sanitize_and_clamp(
             total_grad_ctrl, g_qpos, g_qvel
         )
 
-        # Restore to post-step state
-        _restore_and_rerun(
-            m, d, ctx.saved_qpos, ctx.saved_qvel, ctx.saved_time,
-            ctx.saved_act, wp.from_torch(ctx.ctrl_torch.contiguous()), substeps,
-        )
+        # Restore to post-step state (skippable — see _SKIP_BACKWARD_RERUN)
+        if not _SKIP_BACKWARD_RERUN:
+            _restore_and_rerun(
+                m, d, ctx.saved_qpos, ctx.saved_qvel, ctx.saved_time,
+                ctx.saved_act, wp.from_torch(ctx.ctrl_torch.contiguous()), substeps,
+            )
 
         return total_grad_ctrl, grad_qpos_in, grad_qvel_in, None

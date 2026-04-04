@@ -1,8 +1,13 @@
+# Experiment: FD Jacobian bridge (fixed norm-based clipping)
+# Hypothesis: FD provides more accurate ctrl gradients for contact-rich dynamics
+#   than the tape-per-substep mode (which has 7x attenuation + direction errors)
+# Trade-off: ~20x slower per backward (31 forward calls per substep)
+# Baseline comparison: configs/ant_shac.yaml (tape-per-substep)
 params:
   general:
     seed: 42
     device: cuda:0
-    logdir: logs/ant
+    logdir: logs/exp_fd_bridge
 
   env:
     name: Ant
@@ -13,8 +18,8 @@ params:
     substeps: 16
     action_strength: 1.0
     early_termination: true
-    use_fd_jacobian: false
-    tape_per_substep: true
+    use_fd_jacobian: true
+    tape_per_substep: false
 
   network:
     actor: ActorStochasticMLP
@@ -27,7 +32,7 @@ params:
       activation: elu
 
   config:
-    name: ant_shac
+    name: ant_fd_bridge
     gamma: 0.99
     steps_num: 32
     max_epochs: 2000

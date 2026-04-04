@@ -8,6 +8,7 @@ should be verified before full training. The FD Jacobian cost scales with DOF co
 making training significantly slower than simpler environments.
 """
 
+import logging
 import os
 
 import mujoco
@@ -51,7 +52,7 @@ class MyoLegWalkEnv(MjWarpEnv):
         num_obs = 1 + 4 + 3 + 3 + (nq - 7) + (nv - 6) + 1
         num_act = nu
 
-        print(f'MyoLeg model: nq={nq}, nv={nv}, nu={nu}, num_obs={num_obs}')
+        logging.info(f'MyoLeg model: nq={nq}, nv={nv}, nu={nu}, num_obs={num_obs}')
         del _mjm
 
         super().__init__(
@@ -183,7 +184,7 @@ class MyoLegWalkEnv(MjWarpEnv):
         """Run one control step."""
         actions = actions.view(self.num_envs, self.num_actions)
         actions = torch.clamp(actions, -1.0, 1.0)
-        self.actions = actions.detach()
+        self.actions = actions.detach().clone()
 
         # Remap tanh output [-1,1] to muscle activation [0,1]
         activation = 0.5 * (actions + 1.0)

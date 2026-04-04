@@ -2,23 +2,24 @@ params:
   general:
     seed: 42
     device: cuda:0
-    logdir: logs/cartpole
+    logdir: logs/ant_nobptt
 
   env:
-    name: CartPoleSwingUp
-    model_path: assets/cartpole.xml
+    name: Ant
+    model_path: assets/ant.xml
     num_actors: 64
-    episode_length: 240
+    episode_length: 1000
     stochastic_init: true
-    substeps: 4
-    action_strength: 100.0
-    use_fd_jacobian: true
-    tape_per_substep: false
+    substeps: 16
+    action_strength: 1.0
+    early_termination: true
+    use_fd_jacobian: false
+    tape_per_substep: true
 
   network:
     actor: ActorStochasticMLP
     actor_mlp:
-      units: [64, 64]
+      units: [128, 64, 32]
       activation: elu
     critic: CriticMLP
     critic_mlp:
@@ -26,12 +27,12 @@ params:
       activation: elu
 
   config:
-    name: cartpole_shac
+    name: ant_shac_nobptt
     gamma: 0.99
     steps_num: 32
-    max_epochs: 1000
-    actor_learning_rate: 1e-2
-    critic_learning_rate: 1e-3
+    max_epochs: 300
+    actor_learning_rate: 2e-3
+    critic_learning_rate: 2e-3
     lr_schedule: linear
     betas: [0.7, 0.95]
     target_critic_alpha: 0.2
@@ -44,7 +45,7 @@ params:
     num_actors: 64
     truncate_grads: true
     grad_norm: 1.0
-    state_bptt: true
-    state_grad_clip: 1.0
+    state_bptt: false
+    state_grad_clip: 0.0
     obs_grad_clip: 0.0
-    save_interval: 100
+    save_interval: 400

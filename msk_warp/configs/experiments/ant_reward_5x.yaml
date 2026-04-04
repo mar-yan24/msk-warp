@@ -1,8 +1,11 @@
+# Experiment: 5x forward velocity reward weight
+# Hypothesis: Larger reward gradient for locomotion overcomes small ctrl gradients
+# Baseline comparison: configs/ant_shac.yaml (forward_vel_weight=1.0)
 params:
   general:
     seed: 42
     device: cuda:0
-    logdir: logs/ant
+    logdir: logs/exp_reward_5x
 
   env:
     name: Ant
@@ -15,6 +18,7 @@ params:
     early_termination: true
     use_fd_jacobian: false
     tape_per_substep: true
+    forward_vel_weight: 5.0
 
   network:
     actor: ActorStochasticMLP
@@ -27,7 +31,7 @@ params:
       activation: elu
 
   config:
-    name: ant_shac
+    name: ant_reward_5x
     gamma: 0.99
     steps_num: 32
     max_epochs: 2000

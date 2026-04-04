@@ -1,12 +1,16 @@
+# Experiment: Softer contact parameters for larger gradient magnitudes
+# Hypothesis: Softer contacts (solref=[0.05,1]) produce larger d(force)/d(position)
+#   gradients through the Newton solver, making single-step ctrl gradients more useful
+# Baseline comparison: configs/ant_shac.yaml (default hard contacts)
 params:
   general:
     seed: 42
     device: cuda:0
-    logdir: logs/ant
+    logdir: logs/exp_soft_contacts
 
   env:
     name: Ant
-    model_path: assets/ant.xml
+    model_path: assets/ant_soft.xml
     num_actors: 64
     episode_length: 1000
     stochastic_init: true
@@ -27,7 +31,7 @@ params:
       activation: elu
 
   config:
-    name: ant_shac
+    name: ant_soft_contacts
     gamma: 0.99
     steps_num: 32
     max_epochs: 2000
