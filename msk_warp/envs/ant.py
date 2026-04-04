@@ -33,6 +33,10 @@ class AntEnv(MjWarpEnv):
         njmax=512,
         use_fd_jacobian=False,
         tape_per_substep=False,
+        forward_vel_weight=1.0,
+        heading_weight=1.0,
+        up_weight=0.1,
+        height_weight=1.0,
         **kwargs,
     ):
         num_obs = 37
@@ -55,6 +59,10 @@ class AntEnv(MjWarpEnv):
         self.stochastic_init = stochastic_init
         self.action_strength = action_strength
         self.early_termination = early_termination
+        self.forward_vel_weight = forward_vel_weight
+        self.heading_weight = heading_weight
+        self.up_weight = up_weight
+        self.height_weight = height_weight
 
         self.termination_height = 0.27
         self.joint_vel_obs_scaling = 0.1
@@ -152,23 +160,26 @@ class AntEnv(MjWarpEnv):
         return obs
 
     @staticmethod
-    def _compute_reward(obs, actions, action_penalty):
+    def _compute_reward(obs, actions, action_penalty,
+                        forward_vel_weight=1.0, heading_weight=1.0,
+                        up_weight=0.1, height_weight=1.0):
         """Compute reward from observation tensor (differentiable in PyTorch).
 
-        Matches DiffRL's ant reward:
+        Default matches DiffRL's ant reward:
           forward_vel + 0.1 * up + heading + (height - 0.27) + action_penalty
+        Weights can be adjusted to change the reward landscape.
         """
         height = obs[:, 0]
         forward_vel = obs[:, 5]        # lin_vel_x
-        up_reward = 0.1 * obs[:, 27]   # up-vector z-component
-        heading_reward = obs[:, 28]     # heading alignment
+        up_reward = obs[:, 27]         # up-vector z-component
+        heading_reward = obs[:, 28]    # heading alignment
         height_reward = height - 0.27
 
         reward = (
-            forward_vel
-            + up_reward
-            + heading_reward
-            + height_reward
+            forward_vel_weight * forward_vel
+            + up_weight * up_reward
+            + heading_weight * heading_reward
+            + height_weight * height_reward
             + action_penalty * (actions ** 2).sum(dim=-1)
         )
         return reward
@@ -217,7 +228,10 @@ class AntEnv(MjWarpEnv):
                 self.targets, self.up_vec, self.heading_vec,
                 self.joint_vel_obs_scaling,
             )
-            self.rew_buf = self._compute_reward(self.obs_buf, actions, self.action_penalty)
+            self.rew_buf = self._compute_reward(
+                self.obs_buf, actions, self.action_penalty,
+                self.forward_vel_weight, self.heading_weight,
+                self.up_weight, self.height_weight)
             qpos_out, qvel_out = None, None
         else:
             # Differentiable path: state flows through WarpSimStep
@@ -237,7 +251,10 @@ class AntEnv(MjWarpEnv):
                 self.targets, self.up_vec, self.heading_vec,
                 self.joint_vel_obs_scaling,
             )
-            self.rew_buf = self._compute_reward(self.obs_buf, actions, self.action_penalty)
+            self.rew_buf = self._compute_reward(
+                self.obs_buf, actions, self.action_penalty,
+                self.forward_vel_weight, self.heading_weight,
+                self.up_weight, self.height_weight)
 
         self.reset_buf = torch.zeros_like(self.reset_buf)
         self.progress_buf += 1

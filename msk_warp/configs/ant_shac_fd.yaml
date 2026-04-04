@@ -2,7 +2,7 @@ params:
   general:
     seed: 42
     device: cuda:0
-    logdir: logs/ant
+    logdir: logs/ant_fd
 
   env:
     name: Ant
@@ -13,8 +13,8 @@ params:
     substeps: 16
     action_strength: 1.0
     early_termination: true
-    use_fd_jacobian: false
-    tape_per_substep: true
+    use_fd_jacobian: true
+    tape_per_substep: false
 
   network:
     actor: ActorStochasticMLP
@@ -27,10 +27,10 @@ params:
       activation: elu
 
   config:
-    name: ant_shac
+    name: ant_shac_fd
     gamma: 0.99
     steps_num: 32
-    max_epochs: 2000
+    max_epochs: 300
     actor_learning_rate: 2e-3
     critic_learning_rate: 2e-3
     lr_schedule: linear

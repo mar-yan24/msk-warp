@@ -2,7 +2,7 @@ params:
   general:
     seed: 42
     device: cuda:0
-    logdir: logs/ant
+    logdir: logs/ant_nobptt
 
   env:
     name: Ant
@@ -27,10 +27,10 @@ params:
       activation: elu
 
   config:
-    name: ant_shac
+    name: ant_shac_nobptt
     gamma: 0.99
     steps_num: 32
-    max_epochs: 2000
+    max_epochs: 300
     actor_learning_rate: 2e-3
     critic_learning_rate: 2e-3
     lr_schedule: linear
@@ -45,7 +45,7 @@ params:
     num_actors: 64
     truncate_grads: true
     grad_norm: 1.0
-    state_bptt: true
-    state_grad_clip: 5.0
+    state_bptt: false
+    state_grad_clip: 0.0
     obs_grad_clip: 0.0
     save_interval: 400

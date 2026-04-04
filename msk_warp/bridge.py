@@ -406,15 +406,12 @@ class WarpSimStep(torch.autograd.Function):
         substeps = env.substeps
 
         dt = wp.to_torch(m.opt.timestep).item()
-        fd_eps = 1e-4
-        fd_max_dqacc = 1.0
-        # Per-substep gradient clamp. The FD Jacobian can have entries up to
-        # fd_max_dqacc/fd_eps = 1e4. Over 16 substeps the amplification factor
-        # is ~(1e4 * nv * dt) per substep ≈ 140x, causing exponential blowup
-        # unless clamped tightly. A value of 1.0 keeps state gradients bounded
-        # while preserving gradient direction (the correct single-step gradient
-        # magnitude is O(0.01-0.1)).
-        substep_grad_max = 1.0
+        fd_eps = 1e-3  # Larger eps for better float32 SNR
+        fd_max_dqacc = 10.0  # Allow larger Jacobian entries
+        # Per-substep gradient norm clip. Uses norm-based clipping (not per-element)
+        # to preserve gradient direction while bounding magnitude. The value is
+        # chosen to allow useful signal through 16 substeps without explosion.
+        substep_grad_max = 10.0
 
         # Restore to initial state
         wp.copy(d.qpos, ctx.saved_qpos)
@@ -531,11 +528,14 @@ class WarpSimStep(torch.autograd.Function):
 
                 total_grad_ctrl += wp.to_torch(d.ctrl.grad).clone()
 
-                # 6. Propagate gradients
+                # 6. Propagate gradients with norm-based clip (preserves direction)
                 g_qpos_prev = g_qpos.clone() + fd_g_qpos
                 g_qvel_prev = g_qvel + g_qvel_from_qpos + fd_g_qvel
-                g_qpos = g_qpos_prev.clamp(-substep_grad_max, substep_grad_max)
-                g_qvel = g_qvel_prev.clamp(-substep_grad_max, substep_grad_max)
+                # Norm-based clip per environment (preserves direction unlike per-element clamp)
+                gn_q = g_qpos_prev.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+                g_qpos = g_qpos_prev * (substep_grad_max / gn_q).clamp(max=1.0)
+                gn_v = g_qvel_prev.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+                g_qvel = g_qvel_prev * (substep_grad_max / gn_v).clamp(max=1.0)
             finally:
                 tape.zero()
                 del tape

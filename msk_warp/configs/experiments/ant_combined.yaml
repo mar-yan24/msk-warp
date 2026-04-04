@@ -1,12 +1,15 @@
+# Experiment: Combined reward shaping + soft contacts
+# Hypothesis: Both changes together provide maximum gradient signal improvement
+# Baseline comparison: configs/ant_shac.yaml
 params:
   general:
     seed: 42
     device: cuda:0
-    logdir: logs/ant
+    logdir: logs/exp_combined
 
   env:
     name: Ant
-    model_path: assets/ant.xml
+    model_path: assets/ant_soft.xml
     num_actors: 64
     episode_length: 1000
     stochastic_init: true
@@ -15,6 +18,7 @@ params:
     early_termination: true
     use_fd_jacobian: false
     tape_per_substep: true
+    forward_vel_weight: 5.0
 
   network:
     actor: ActorStochasticMLP
@@ -27,7 +31,7 @@ params:
       activation: elu
 
   config:
-    name: ant_shac
+    name: ant_combined
     gamma: 0.99
     steps_num: 32
     max_epochs: 2000

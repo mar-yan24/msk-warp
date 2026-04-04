@@ -1,8 +1,13 @@
+# Experiment: Pure forward velocity reward (no standing-still basin)
+# Hypothesis: Removing heading/height/up per-step rewards eliminates the local
+#   optimum at standing. Early termination provides implicit "stay upright" signal.
+#   Standing reward = 0, walking at 1 m/s = 1.0/step -> strong gradient for locomotion
+# Baseline comparison: configs/ant_shac.yaml
 params:
   general:
     seed: 42
     device: cuda:0
-    logdir: logs/ant
+    logdir: logs/exp_pure_vel
 
   env:
     name: Ant
@@ -15,6 +20,10 @@ params:
     early_termination: true
     use_fd_jacobian: false
     tape_per_substep: true
+    forward_vel_weight: 1.0
+    heading_weight: 0.0
+    up_weight: 0.0
+    height_weight: 0.0
 
   network:
     actor: ActorStochasticMLP
@@ -27,7 +36,7 @@ params:
       activation: elu
 
   config:
-    name: ant_shac
+    name: ant_pure_vel
     gamma: 0.99
     steps_num: 32
     max_epochs: 2000
