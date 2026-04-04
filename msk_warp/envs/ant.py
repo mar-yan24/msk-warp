@@ -58,7 +58,7 @@ class AntEnv(MjWarpEnv):
 
         self.termination_height = 0.27
         self.joint_vel_obs_scaling = 0.1
-        self.action_penalty = -0.001
+        self.action_penalty = 0.0
 
         # DOF layout: free joint (7 qpos / 6 qvel) + 8 hinge joints
         self.num_joint_q = 15
@@ -162,12 +162,12 @@ class AntEnv(MjWarpEnv):
         forward_vel = obs[:, 5]        # lin_vel_x
         up_reward = 0.1 * obs[:, 27]   # up-vector z-component
         heading_reward = obs[:, 28]     # heading alignment
-        height_reward = 0.5
+        height_reward = height - 0.27
 
         reward = (
             forward_vel
             + up_reward
-            + 0.2 * heading_reward
+            + heading_reward
             + height_reward
             + action_penalty * (actions ** 2).sum(dim=-1)
         )

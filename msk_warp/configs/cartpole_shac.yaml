@@ -12,7 +12,7 @@ params:
     stochastic_init: true
     substeps: 4
     action_strength: 100.0
-    use_fd_jacobian: false
+    use_fd_jacobian: true
     tape_per_substep: false
 
   network:
@@ -44,6 +44,7 @@ params:
     num_actors: 64
     truncate_grads: true
     grad_norm: 1.0
-    state_bptt: false
+    state_bptt: true
+    state_grad_clip: 1.0
     obs_grad_clip: 0.0
     save_interval: 100

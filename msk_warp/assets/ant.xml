@@ -1,8 +1,7 @@
 <mujoco model="ant">
   <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
-  <option timestep="0.00104167" gravity="0 0 -9.81" solver="Newton" jacobian="dense">
-    <flag eulerdamp="disable"/>
-  </option>
+  <option timestep="0.00104167" gravity="0 0 -9.81" solver="Newton" jacobian="dense"/>
+
   <size njmax="4096" nconmax="1024"/>
 
   <default>

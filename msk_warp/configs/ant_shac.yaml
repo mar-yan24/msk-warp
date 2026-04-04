@@ -7,14 +7,14 @@ params:
   env:
     name: Ant
     model_path: assets/ant.xml
-    num_actors: 256
+    num_actors: 64
     episode_length: 1000
     stochastic_init: true
     substeps: 16
     action_strength: 1.0
-    early_termination: false
+    early_termination: true
     use_fd_jacobian: false
-    tape_per_substep: false
+    tape_per_substep: true
 
   network:
     actor: ActorStochasticMLP
@@ -35,15 +35,17 @@ params:
     critic_learning_rate: 2e-3
     lr_schedule: linear
     betas: [0.7, 0.95]
-    target_critic_alpha: 0.4
+    target_critic_alpha: 0.2
     obs_rms: true
     ret_rms: false
     critic_iterations: 16
     critic_method: td-lambda
     lambda: 0.95
     num_batch: 4
-    num_actors: 256
+    num_actors: 64
     truncate_grads: true
     grad_norm: 1.0
+    state_bptt: true
+    state_grad_clip: 0.0
     obs_grad_clip: 0.0
     save_interval: 400
