@@ -39,6 +39,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         njmax=1000,
         use_fd_jacobian=False,
         tape_per_substep=False,
+        solver=None,
         **kwargs,
     ):
         # Pre-load model to discover dimensions
@@ -71,6 +72,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             njmax=njmax,
             use_fd_jacobian=use_fd_jacobian,
             tape_per_substep=tape_per_substep,
+            solver=solver,
         )
 
         self.stochastic_init = stochastic_init
@@ -322,13 +324,12 @@ class MyoLeg26WalkEnv(MjWarpEnv):
                 self.reset_buf,
             )
 
-        # Save obs before reset for critic bootstrap
-        if not self.no_grad:
-            self.obs_buf_before_reset = self.obs_buf.clone()
-            self.extras = {
-                'obs_before_reset': self.obs_buf_before_reset,
-                'episode_end': self.termination_buf,
-            }
+        # Save obs before reset for value bootstrapping (needed by both SHAC and PPO)
+        self.obs_buf_before_reset = self.obs_buf.clone()
+        self.extras = {
+            'obs_before_reset': self.obs_buf_before_reset,
+            'episode_end': self.termination_buf,
+        }
 
         # Episode length termination
         self.reset_buf = torch.where(
