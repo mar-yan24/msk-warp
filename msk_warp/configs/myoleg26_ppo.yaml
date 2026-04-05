@@ -1,0 +1,47 @@
+params:
+  general:
+    seed: 42
+    device: cuda:0
+    logdir: logs/myoleg26_ppo
+
+  env:
+    name: MyoLeg26Walk
+    model_path: assets/myoleg/myoLeg26_BASELINE.xml
+    num_actors: 64
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    early_termination: true
+    njmax: 1000
+    solver: 1  # CG solver (0=PGS, 1=CG, 2=Newton) — Newton needs sm_70+
+
+  network:
+    actor: ActorStochasticMLP
+    actor_mlp:
+      units: [256, 128, 64]
+      activation: elu
+    actor_logstd_init: -1.0
+    critic: CriticMLP
+    critic_mlp:
+      units: [256, 128, 64]
+      activation: elu
+
+  config:
+    name: myoleg26_ppo
+    gamma: 0.99
+    lambda: 0.95
+    steps_num: 64
+    max_epochs: 5000
+    learning_rate: 3e-4
+    lr_schedule: linear
+    betas: [0.9, 0.999]
+    obs_rms: true
+    clip_ratio: 0.2
+    entropy_coef: 0.01
+    value_coef: 0.5
+    ppo_epochs: 4
+    num_mini_batches: 8
+    max_grad_norm: 0.5
+    save_interval: 200
+    num_actors: 64
