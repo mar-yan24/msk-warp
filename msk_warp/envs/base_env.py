@@ -25,6 +25,7 @@ class MjWarpEnv:
         njmax=None,
         use_fd_jacobian=False,
         tape_per_substep=False,
+        solver=None,
     ):
         self.device = device
         self.num_environments = num_envs
@@ -39,6 +40,10 @@ class MjWarpEnv:
         # Load MuJoCo model
         model_path = resolve_model_path(model_path)
         self.mjm = mujoco.MjModel.from_xml_path(model_path)
+
+        # Override solver if specified (e.g. CG for GPUs without Cholesky support)
+        if solver is not None:
+            self.mjm.opt.solver = solver
 
         # Determine njmax for contact constraint buffers (per world)
         self._njmax = njmax
