@@ -37,10 +37,17 @@ class AntEnv(MjWarpEnv):
         heading_weight=1.0,
         up_weight=0.1,
         height_weight=1.0,
+        joint_vel_penalty=0.0,
+        push_reward_weight=0.0,
         **kwargs,
     ):
         num_obs = 37
         num_act = 8
+
+        # Extract smooth adjoint params from kwargs before passing to super
+        smooth_adjoint = kwargs.pop('smooth_adjoint', False)
+        smooth_friction_viscosity = kwargs.pop('smooth_friction_viscosity', 10.0)
+        smooth_friction_scale = kwargs.pop('smooth_friction_scale', 0.01)
 
         super().__init__(
             num_envs=num_envs,
@@ -54,6 +61,9 @@ class AntEnv(MjWarpEnv):
             njmax=njmax,
             use_fd_jacobian=use_fd_jacobian,
             tape_per_substep=tape_per_substep,
+            smooth_adjoint=smooth_adjoint,
+            smooth_friction_viscosity=smooth_friction_viscosity,
+            smooth_friction_scale=smooth_friction_scale,
         )
 
         self.stochastic_init = stochastic_init
@@ -63,6 +73,8 @@ class AntEnv(MjWarpEnv):
         self.heading_weight = heading_weight
         self.up_weight = up_weight
         self.height_weight = height_weight
+        self.joint_vel_penalty = joint_vel_penalty
+        self.push_reward_weight = push_reward_weight
 
         self.termination_height = 0.27
         self.joint_vel_obs_scaling = 0.1
@@ -162,12 +174,16 @@ class AntEnv(MjWarpEnv):
     @staticmethod
     def _compute_reward(obs, actions, action_penalty,
                         forward_vel_weight=1.0, heading_weight=1.0,
-                        up_weight=0.1, height_weight=1.0):
+                        up_weight=0.1, height_weight=1.0,
+                        joint_vel_penalty=0.0, push_reward_weight=0.0):
         """Compute reward from observation tensor (differentiable in PyTorch).
 
         Default matches DiffRL's ant reward:
           forward_vel + 0.1 * up + heading + (height - 0.27) + action_penalty
         Weights can be adjusted to change the reward landscape.
+
+        joint_vel_penalty adds a viscous friction-like term: -kf * sum(joint_vel^2).
+        push_reward_weight adds a shaping reward for forward-pushing actions.
         """
         height = obs[:, 0]
         forward_vel = obs[:, 5]        # lin_vel_x
@@ -182,6 +198,26 @@ class AntEnv(MjWarpEnv):
             + height_weight * height_reward
             + action_penalty * (actions ** 2).sum(dim=-1)
         )
+
+        # Viscous friction penalty: penalizes joint velocity
+        if joint_vel_penalty != 0.0:
+            joint_vel = obs[:, 19:27] * 10.0
+            reward = reward - joint_vel_penalty * (joint_vel ** 2).sum(dim=-1)
+
+        # Push shaping: reward actions that push the ant forward.
+        # Bypasses the constraint solver gradient entirely — provides
+        # a direct gradient from actions to reward for locomotion.
+        # Action layout: [hip4, ank4, hip1, ank1, hip2, ank2, hip3, ank3]
+        # Ant leg geometry (z-up, forward = +x):
+        #   hip4 (back-right at +x,-y): -torque → forward push
+        #   hip1 (front-left at +x,+y): -torque → forward push
+        #   hip2 (front-right at -x,+y): +torque → forward push
+        #   hip3 (back-left at -x,-y): +torque → forward push
+        if push_reward_weight != 0.0:
+            push = (-actions[:, 0] - actions[:, 2]
+                    + actions[:, 4] + actions[:, 6])
+            reward = reward + push_reward_weight * push
+
         return reward
 
     def compute_obs(self, qpos, qvel):
@@ -231,7 +267,8 @@ class AntEnv(MjWarpEnv):
             self.rew_buf = self._compute_reward(
                 self.obs_buf, actions, self.action_penalty,
                 self.forward_vel_weight, self.heading_weight,
-                self.up_weight, self.height_weight)
+                self.up_weight, self.height_weight,
+                self.joint_vel_penalty, self.push_reward_weight)
             qpos_out, qvel_out = None, None
         else:
             # Differentiable path: state flows through WarpSimStep
@@ -254,7 +291,8 @@ class AntEnv(MjWarpEnv):
             self.rew_buf = self._compute_reward(
                 self.obs_buf, actions, self.action_penalty,
                 self.forward_vel_weight, self.heading_weight,
-                self.up_weight, self.height_weight)
+                self.up_weight, self.height_weight,
+                self.joint_vel_penalty, self.push_reward_weight)
 
         self.reset_buf = torch.zeros_like(self.reset_buf)
         self.progress_buf += 1
