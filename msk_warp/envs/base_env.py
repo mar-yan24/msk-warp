@@ -25,6 +25,9 @@ class MjWarpEnv:
         njmax=None,
         use_fd_jacobian=False,
         tape_per_substep=False,
+        smooth_adjoint=False,
+        smooth_friction_viscosity=10.0,
+        smooth_friction_scale=0.01,
     ):
         self.device = device
         self.num_environments = num_envs
@@ -35,6 +38,9 @@ class MjWarpEnv:
         self.substeps = substeps
         self.use_fd_jacobian = use_fd_jacobian
         self.tape_per_substep = tape_per_substep
+        self.smooth_adjoint = smooth_adjoint
+        self.smooth_friction_viscosity = smooth_friction_viscosity
+        self.smooth_friction_scale = smooth_friction_scale
 
         # Load MuJoCo model
         model_path = resolve_model_path(model_path)
@@ -49,6 +55,12 @@ class MjWarpEnv:
         # Create Warp model and data
         self.warp_model = mjw.put_model(self.mjm)
         self.warp_data = mjw.make_diff_data(self.mjm, nworld=num_envs, **diff_data_kwargs)
+        if self.smooth_adjoint:
+            mjw.enable_smooth_adjoint(
+                self.warp_data,
+                friction_viscosity=self.smooth_friction_viscosity,
+                friction_scale=self.smooth_friction_scale,
+            )
         mjw.reset_data(self.warp_model, self.warp_data)
 
         # Run kinematics once to initialize derived quantities
@@ -95,6 +107,12 @@ class MjWarpEnv:
         if self._njmax is not None:
             diff_data_kwargs['njmax'] = self._njmax
         self.warp_data = mjw.make_diff_data(self.mjm, nworld=self.num_environments, **diff_data_kwargs)
+        if self.smooth_adjoint:
+            mjw.enable_smooth_adjoint(
+                self.warp_data,
+                friction_viscosity=self.smooth_friction_viscosity,
+                friction_scale=self.smooth_friction_scale,
+            )
         mjw.reset_data(self.warp_model, self.warp_data)
 
         # Restore state

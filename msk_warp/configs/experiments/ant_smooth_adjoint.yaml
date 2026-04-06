@@ -1,0 +1,67 @@
+# Experiment: Smooth constraint adjoint for friction gradient signal
+#
+# Motivation: The Coulomb friction cone creates a gradient dead zone at zero
+# tangential velocity, causing SHAC to plateau at standing still (~1300 reward).
+# The smooth adjoint modifies only the backward pass to reduce friction constraint
+# stiffness in the Hessian, providing ~2x larger forward-velocity gradients.
+#
+# Changes from ant_substeps4:
+#   smooth_adjoint: true
+#   smooth_friction_viscosity: 10.0  (D for SATISFIED friction constraints)
+#   smooth_friction_scale: 0.01     (D scale for QUADRATIC friction constraints)
+#
+# Baseline: configs/experiments/ant_substeps4.yaml
+params:
+  general:
+    seed: 42
+    device: cuda:0
+    logdir: logs/exp_smooth_adjoint
+
+  env:
+    name: Ant
+    model_path: assets/ant_substeps4.xml
+    num_actors: 64
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    early_termination: true
+    use_fd_jacobian: false
+    tape_per_substep: true
+    smooth_adjoint: true
+    smooth_friction_viscosity: 10.0
+    smooth_friction_scale: 0.01
+
+  network:
+    actor: ActorStochasticMLP
+    actor_mlp:
+      units: [128, 64, 32]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [64, 64]
+      activation: elu
+
+  config:
+    name: ant_smooth_adjoint
+    gamma: 0.99
+    steps_num: 32
+    max_epochs: 2000
+    actor_learning_rate: 2e-3
+    critic_learning_rate: 2e-3
+    lr_schedule: linear
+    betas: [0.7, 0.95]
+    target_critic_alpha: 0.2
+    obs_rms: true
+    ret_rms: false
+    critic_iterations: 16
+    critic_method: td-lambda
+    lambda: 0.95
+    num_batch: 4
+    num_actors: 64
+    truncate_grads: true
+    grad_norm: 1.0
+    state_bptt: true
+    state_grad_clip: 5.0
+    obs_grad_clip: 0.0
+    save_interval: 100
