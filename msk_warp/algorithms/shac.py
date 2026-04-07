@@ -120,6 +120,13 @@ class SHAC:
         # leaving the reward path unchecked — causing gradient norms of 1e6+.
         self.state_grad_clip = cfg['params']['config'].get('state_grad_clip', 0.0)
 
+        # Per-step state gradient decay for stable BPTT.
+        # Multiplies state gradients by this factor at each step boundary.
+        # Prevents BPTT explosion while preserving gradient DIRECTION (unlike
+        # clipping). Mimics dflex's natural gradient decay through soft contacts.
+        # 0.0 = disabled, 0.5 = 4-5 step effective horizon, 0.9 = ~20 steps.
+        self.state_grad_decay = cfg['params']['config'].get('state_grad_decay', 0.0)
+
         # Legacy obs_grad_clip: kept for backward compatibility but state_grad_clip
         # is preferred as it clips all BPTT paths, not just the obs path.
         self.obs_grad_clip = cfg['params']['config'].get('obs_grad_clip', 0.0)
@@ -276,17 +283,25 @@ class SHAC:
                 qpos = qpos.detach()
                 qvel = qvel.detach()
 
-            # Clip gradient norm on STATE tensors at step boundaries to
-            # prevent BPTT explosion. This clips all gradient paths through
-            # the state chain: both the obs path (obs → actor) and the
-            # reward accumulation path (rew_acc → rew → state).
-            if self.state_grad_clip > 0 and qpos.requires_grad:
-                _mn = self.state_grad_clip
-                def _state_clip_hook(grad, mn=_mn):
-                    gn = grad.norm(dim=-1, keepdim=True).clamp(min=1e-8)
-                    return grad * (mn / gn).clamp(max=1.0)
-                qpos.register_hook(_state_clip_hook)
-                qvel.register_hook(_state_clip_hook)
+            # State gradient control at step boundaries for BPTT stability.
+            if qpos.requires_grad:
+                if self.state_grad_decay > 0:
+                    # Multiplicative decay: preserves direction, prevents explosion.
+                    # Mimics dflex's natural gradient decay through soft contacts.
+                    _d = self.state_grad_decay
+                    def _state_decay_hook(grad, d=_d):
+                        return grad * d
+                    qpos.register_hook(_state_decay_hook)
+                    qvel.register_hook(_state_decay_hook)
+                elif self.state_grad_clip > 0:
+                    # Norm clipping: rescales if too large, preserves direction
+                    # when norm < threshold but destroys it under heavy clipping.
+                    _mn = self.state_grad_clip
+                    def _state_clip_hook(grad, mn=_mn):
+                        gn = grad.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+                        return grad * (mn / gn).clamp(max=1.0)
+                    qpos.register_hook(_state_clip_hook)
+                    qvel.register_hook(_state_clip_hook)
 
             # Compute obs from tracked state (always differentiable for non-reset envs)
             obs = self.env.compute_obs(qpos, qvel)
