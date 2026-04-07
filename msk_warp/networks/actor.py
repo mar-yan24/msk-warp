@@ -40,13 +40,9 @@ class ActorStochasticMLP(nn.Module):
         self.device = device
         self.layer_dims = [obs_dim] + cfg_network['actor_mlp']['units'] + [action_dim]
 
-        init_ = lambda m: model_utils.init(
-            m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), np.sqrt(2)
-        )
-
         modules = []
         for i in range(len(self.layer_dims) - 1):
-            modules.append(init_(nn.Linear(self.layer_dims[i], self.layer_dims[i + 1])))
+            modules.append(nn.Linear(self.layer_dims[i], self.layer_dims[i + 1]))
             if i < len(self.layer_dims) - 2:
                 modules.append(model_utils.get_activation_func(cfg_network['actor_mlp']['activation']))
                 modules.append(nn.LayerNorm(self.layer_dims[i + 1]))
