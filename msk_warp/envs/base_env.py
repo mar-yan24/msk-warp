@@ -28,6 +28,9 @@ class MjWarpEnv:
         smooth_adjoint=False,
         smooth_friction_viscosity=10.0,
         smooth_friction_scale=0.01,
+        friction_bypass_kf=0.0,
+        free_body_adjoint=False,
+        penalty_damping_alpha=0.0,
     ):
         self.device = device
         self.num_environments = num_envs
@@ -41,6 +44,9 @@ class MjWarpEnv:
         self.smooth_adjoint = smooth_adjoint
         self.smooth_friction_viscosity = smooth_friction_viscosity
         self.smooth_friction_scale = smooth_friction_scale
+        self.friction_bypass_kf = friction_bypass_kf
+        self.free_body_adjoint = free_body_adjoint
+        self.penalty_damping_alpha = penalty_damping_alpha
 
         # Load MuJoCo model
         model_path = resolve_model_path(model_path)
@@ -60,6 +66,9 @@ class MjWarpEnv:
                 self.warp_data,
                 friction_viscosity=self.smooth_friction_viscosity,
                 friction_scale=self.smooth_friction_scale,
+                friction_bypass_kf=self.friction_bypass_kf,
+                free_body_adjoint=self.free_body_adjoint,
+                penalty_damping_alpha=self.penalty_damping_alpha,
             )
         mjw.reset_data(self.warp_model, self.warp_data)
 
@@ -112,6 +121,9 @@ class MjWarpEnv:
                 self.warp_data,
                 friction_viscosity=self.smooth_friction_viscosity,
                 friction_scale=self.smooth_friction_scale,
+                friction_bypass_kf=self.friction_bypass_kf,
+                free_body_adjoint=self.free_body_adjoint,
+                penalty_damping_alpha=self.penalty_damping_alpha,
             )
         mjw.reset_data(self.warp_model, self.warp_data)
 
