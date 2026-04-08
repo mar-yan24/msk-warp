@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--logdir', type=str, default=None)
     parser.add_argument('--seed', type=int, default=None)
     parser.add_argument('--device', type=str, default=None)
+    parser.add_argument('--max-epochs', type=int, default=None)
     args = parser.parse_args()
 
     # Resolve config path: check package first, then CWD
@@ -37,6 +38,8 @@ def main():
         cfg['params']['general']['seed'] = args.seed
     if args.device is not None:
         cfg['params']['general']['device'] = args.device
+    if args.max_epochs is not None:
+        cfg['params']['config']['max_epochs'] = args.max_epochs
 
     shac = SHAC(cfg)
     shac.train()

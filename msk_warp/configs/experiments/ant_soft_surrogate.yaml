@@ -1,0 +1,59 @@
+# Soft-contact ant with explicit friction-surrogate adjoint.
+# Forward physics stays on MuJoCo Warp's Newton solve; backward keeps the
+# smooth/Newton baseline for normal contacts and replaces only friction-face
+# projections with damped free-body targets.
+params:
+  general:
+    seed: 42
+    device: cuda:0
+    logdir: logs/exp_soft_surrogate
+
+  env:
+    name: Ant
+    model_path: assets/ant_soft.xml
+    num_actors: 64
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    early_termination: true
+    use_fd_jacobian: false
+    tape_per_substep: true
+    smooth_adjoint: true
+    friction_surrogate_adjoint: true
+    friction_surrogate_alpha: 0.9
+
+  network:
+    actor: ActorStochasticMLP
+    actor_mlp:
+      units: [128, 64, 32]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [64, 64]
+      activation: elu
+
+  config:
+    name: ant_soft_surrogate
+    gamma: 0.99
+    steps_num: 32
+    max_epochs: 200
+    actor_learning_rate: 2e-3
+    critic_learning_rate: 2e-3
+    lr_schedule: constant
+    betas: [0.7, 0.95]
+    target_critic_alpha: 0.2
+    obs_rms: true
+    ret_rms: false
+    critic_iterations: 16
+    critic_method: td-lambda
+    lambda: 0.95
+    num_batch: 4
+    num_actors: 64
+    truncate_grads: true
+    grad_norm: 20.0
+    state_bptt: true
+    state_grad_clip: 0.0
+    state_grad_decay: 0.0
+    obs_grad_clip: 0.0
+    save_interval: 50

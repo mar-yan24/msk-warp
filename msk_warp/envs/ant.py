@@ -48,6 +48,11 @@ class AntEnv(MjWarpEnv):
         smooth_adjoint = kwargs.pop('smooth_adjoint', False)
         smooth_friction_viscosity = kwargs.pop('smooth_friction_viscosity', 10.0)
         smooth_friction_scale = kwargs.pop('smooth_friction_scale', 0.01)
+        friction_bypass_kf = kwargs.pop('friction_bypass_kf', 0.0)
+        free_body_adjoint = kwargs.pop('free_body_adjoint', False)
+        penalty_damping_alpha = kwargs.pop('penalty_damping_alpha', 0.0)
+        friction_surrogate_adjoint = kwargs.pop('friction_surrogate_adjoint', False)
+        friction_surrogate_alpha = kwargs.pop('friction_surrogate_alpha', 0.0)
 
         super().__init__(
             num_envs=num_envs,
@@ -64,6 +69,11 @@ class AntEnv(MjWarpEnv):
             smooth_adjoint=smooth_adjoint,
             smooth_friction_viscosity=smooth_friction_viscosity,
             smooth_friction_scale=smooth_friction_scale,
+            friction_bypass_kf=friction_bypass_kf,
+            free_body_adjoint=free_body_adjoint,
+            penalty_damping_alpha=penalty_damping_alpha,
+            friction_surrogate_adjoint=friction_surrogate_adjoint,
+            friction_surrogate_alpha=friction_surrogate_alpha,
         )
 
         self.stochastic_init = stochastic_init
