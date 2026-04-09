@@ -12,6 +12,11 @@ Three environments are implemented, progressing from simple validation to muscul
 - **Ant** (15 DOF, contact-rich) -- 4-legged locomotion with ground contact. 37D obs, 8D action (hip+ankle motors), 64 parallel worlds. Full contact dynamics gradients flow via smooth autodiff through the custom MuJoCo Warp build. Currently under active development -- see [Known Issues](#known-issues).
 - **MyoLeg26** (14 DOF, musculoskeletal) -- bilateral human gait with 26 Hill-type muscle actuators, pelvis uses slide+hinge joints, terrain config support. Early development.
 
+Active scope is intentionally narrow:
+- Core training and visualization entrypoints (`scripts/train.py`, `scripts/visualize.py`)
+- Active envs: `CartPoleSwingUp`, `Ant`, `MyoLeg26Walk`
+- Lean Ant research surface (branch-core configs, parity diagnostics, convergence harness)
+
 ## Architecture
 
 ### Gradient Bridge
@@ -61,7 +66,6 @@ msk-warp/
       base_env.py               # MjWarpEnv base class
       cartpole_swing_up.py      # CartPole swing-up (2 DOF)
       ant.py                    # Ant locomotion (15 DOF, contacts)
-      myoleg_walk.py            # MyoLeg via myosuite (auto-discovered model)
       myoleg26_walk.py          # MyoLeg26 bilateral gait (26 muscles, 14 DOF)
     algorithms/
       shac.py                   # SHAC training algorithm
@@ -74,9 +78,8 @@ msk-warp/
       ant_shac.yaml             # Ant training config (tape-per-substep)
       ant_shac_fd.yaml          # Ant with FD Jacobian backward
       ant_shac_nobptt.yaml      # Ant without state BPTT
-      myoleg_shac.yaml          # MyoLeg training config
       myoleg26_shac.yaml        # MyoLeg26 training config
-      experiments/              # Ablation configs (reward shaping, soft contacts, etc.)
+      experiments/              # Active Ant branch-core research configs
     utils/
       torch_utils.py            # Quaternion ops, grad_norm (@torch.jit.script)
       running_mean_std.py       # Observation normalization
@@ -91,6 +94,8 @@ msk-warp/
     test_gradient.py            # Gradient verification suite (6 test variants)
     test_ant_gradient.py        # Ant-specific gradient tests
     test_grad_chain.py          # Backprop chain validation
+  docs/                         # Canonical tracked docs (scope, playbook, test matrix)
+  archive/                      # Local-only archive for legacy/iteration artifacts
 ```
 
 ## Setup
@@ -148,13 +153,13 @@ tensorboard --logdir logs/ant/log
 
 ```bash
 # Interactive MuJoCo viewer
-python scripts/visualize.py --policy logs/cartpole/best_policy.pt
+python scripts/visualize.py --cfg logs/cartpole/cfg.yaml --policy logs/cartpole/best_policy.pt
 
 # Headless with stats only
-python scripts/visualize.py --policy logs/cartpole/best_policy.pt --no-render --episodes 10
+python scripts/visualize.py --cfg logs/cartpole/cfg.yaml --policy logs/cartpole/best_policy.pt --no-render --episodes 10
 
 # Save rendered frames to disk
-python scripts/visualize.py --policy logs/cartpole/best_policy.pt --save-frames outputs/frames
+python scripts/visualize.py --cfg logs/cartpole/cfg.yaml --policy logs/cartpole/best_policy.pt --save-frames outputs/frames
 ```
 
 ### Verify Gradients

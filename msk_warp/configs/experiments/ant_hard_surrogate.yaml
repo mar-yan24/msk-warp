@@ -1,25 +1,26 @@
-# Experiment: Higher learning rate + relaxed grad clipping
-# Hypothesis: BPTT gradient IS directionally useful (pure_vel proved this), but
-#   effective learning rate is too small (lr=2e-3, grad_norm=50 -> effective 4e-5).
-#   Increase lr to 1e-2 and grad_norm clip to 5.0 for ~25x larger updates.
-# Baseline comparison: configs/ant_shac.yaml (lr=2e-3, grad_norm=1.0)
+# Hard-contact ant with the friction-surrogate adjoint on the fixed diff path.
+# Uses the 4-substep hard-contact asset and moderate optimizer settings so the
+# run tests the corrected contact gradient rather than reward shaping.
 params:
   general:
     seed: 42
     device: cuda:0
-    logdir: logs/exp_high_lr
+    logdir: logs/exp_hard_surrogate
 
   env:
     name: Ant
-    model_path: assets/ant.xml
+    model_path: assets/ant_substeps4.xml
     num_actors: 64
     episode_length: 1000
     stochastic_init: true
-    substeps: 16
+    substeps: 4
     action_strength: 1.0
     early_termination: true
     use_fd_jacobian: false
     tape_per_substep: true
+    smooth_adjoint: true
+    friction_surrogate_adjoint: true
+    friction_surrogate_alpha: 0.9
 
   network:
     actor: ActorStochasticMLP
@@ -32,13 +33,13 @@ params:
       activation: elu
 
   config:
-    name: ant_high_lr
+    name: ant_hard_surrogate
     gamma: 0.99
     steps_num: 32
-    max_epochs: 2000
-    actor_learning_rate: 1e-2
+    max_epochs: 200
+    actor_learning_rate: 2e-3
     critic_learning_rate: 2e-3
-    lr_schedule: linear
+    lr_schedule: constant
     betas: [0.7, 0.95]
     target_critic_alpha: 0.2
     obs_rms: true
@@ -49,8 +50,8 @@ params:
     num_batch: 4
     num_actors: 64
     truncate_grads: true
-    grad_norm: 5.0
+    grad_norm: 20.0
     state_bptt: true
     state_grad_clip: 5.0
     obs_grad_clip: 0.0
-    save_interval: 400
+    save_interval: 50

@@ -31,8 +31,15 @@ outputs/
 .DS_Store
 Thumbs.db
 
-# Session docs
-docs/
+# Local archive (intentionally not versioned)
+archive/
+
+# Docs policy: only canonical docs are versioned
+docs/*
+!docs/README.md
+!docs/project_scope.md
+!docs/ant_research_playbook.md
+!docs/testing_matrix.md
 
 # Claude
 .claude/
