@@ -5,6 +5,7 @@ contact state and compares Warp AD against centered finite differences.
 """
 
 import argparse
+import json
 import os
 import sys
 import warnings
@@ -252,6 +253,7 @@ def rollout_snapshot(cfg_path, policy_path, num_envs, rollout_steps):
 def compare_branch(
     branch_name,
     model_name,
+    branch_specs,
     num_envs,
     fd_eps,
     settle_steps,
@@ -259,7 +261,7 @@ def compare_branch(
     snapshot_qpos=None,
     snapshot_qvel=None,
 ):
-    branch_kwargs = dict(BRANCH_SPECS[branch_name])
+    branch_kwargs = dict(branch_specs[branch_name])
     model_spec = MODEL_SPECS[model_name]
 
     print(f"\n{'=' * 78}")
@@ -293,7 +295,8 @@ def compare_branch(
         wp.synchronize()
         state_label = "rollout"
 
-    print_contact_state(summarize_contact_state(env), state_label)
+    contact_summary = summarize_contact_state(env)
+    print_contact_state(contact_summary, state_label)
 
     env.clear_grad()
     qpos0 = wp.to_torch(env.warp_data.qpos).clone()
@@ -377,20 +380,28 @@ def compare_branch(
         "heading": env.heading_weight * obs_components[:, 28],
         "height": env.height_weight * (obs_components[:, 0] - 0.27),
     }
+    component_norms = {}
+    component_grads = {}
     for name, component in components.items():
         if ctrl_components.grad is not None:
             ctrl_components.grad.zero_()
         component[0].backward(retain_graph=True)
         grad = ctrl_components.grad[0].detach().cpu().numpy()
+        component_norms[name] = float(np.linalg.norm(grad))
+        component_grads[name] = grad.tolist()
         print(f"  {name:>11}: norm={np.linalg.norm(grad):.6e} grad={grad}")
 
     return {
         "model": model_name,
         "branch": branch_name,
+        "state_label": state_label,
         "tape_norm": tape_norm,
         "fd_norm": fd_norm,
         "ratio": ratio,
         "cosine": cosine,
+        "contact_summary": contact_summary,
+        "reward_component_norms_env0": component_norms,
+        "reward_component_grads_env0": component_grads,
     }
 
 
@@ -432,11 +443,31 @@ def parse_args():
         default=64,
         help="Number of deterministic policy rollout steps before capturing state",
     )
+    parser.add_argument(
+        "--surrogate-alpha",
+        type=float,
+        default=None,
+        help="Optional override for surrogate branch friction_surrogate_alpha",
+    )
+    parser.add_argument(
+        "--output-json",
+        type=str,
+        default=None,
+        help="Optional path to write machine-readable summary output",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    branch_specs = {
+        name: dict(spec)
+        for name, spec in BRANCH_SPECS.items()
+    }
+    if args.surrogate_alpha is not None:
+        if args.surrogate_alpha < 0.0 or args.surrogate_alpha > 1.0:
+            raise ValueError("--surrogate-alpha must be in [0, 1]")
+        branch_specs["surrogate"]["friction_surrogate_alpha"] = args.surrogate_alpha
 
     print("Reward Gradient Variant Diagnostic")
     print("=================================")
@@ -448,6 +479,8 @@ def main():
     )
     if (args.rollout_cfg is None) != (args.policy is None):
         raise ValueError("--rollout-cfg and --policy must be provided together")
+    if args.surrogate_alpha is not None:
+        print(f"surrogate_alpha_override={args.surrogate_alpha}")
 
     snapshot_qpos = None
     snapshot_qvel = None
@@ -470,6 +503,7 @@ def main():
                 compare_branch(
                     branch_name=branch_name,
                     model_name=model_name,
+                    branch_specs=branch_specs,
                     num_envs=args.num_envs,
                     fd_eps=args.fd_eps,
                     settle_steps=args.settle_steps,
@@ -489,6 +523,27 @@ def main():
             f"{row['tape_norm']:>12.6e} {row['fd_norm']:>12.6e} "
             f"{row['ratio']:>10.4f} {row['cosine']:>10.4f}"
         )
+
+    if args.output_json is not None:
+        out_path = os.path.abspath(args.output_json)
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        payload = {
+            "models": args.models,
+            "branches": args.branches,
+            "num_envs": args.num_envs,
+            "fd_eps": args.fd_eps,
+            "settle_steps": args.settle_steps,
+            "ctrl_scale": args.ctrl_scale,
+            "rollout_cfg": args.rollout_cfg,
+            "policy": args.policy,
+            "rollout_steps": args.rollout_steps,
+            "surrogate_alpha_override": args.surrogate_alpha,
+            "branch_specs": branch_specs,
+            "results": results,
+        }
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        print(f"\nWrote JSON summary to: {out_path}")
 
 
 if __name__ == "__main__":

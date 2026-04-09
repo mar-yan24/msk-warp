@@ -18,6 +18,7 @@ Usage:
 """
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -52,7 +53,13 @@ class AntDiagAdapter:
         self.early_termination = env_cfg.get('early_termination', True)
         self.termination_height = 0.27
         self.vel_scale = 0.1
-        self.action_penalty = -0.001
+        self.action_penalty = env_cfg.get('action_penalty', 0.0)
+        self.forward_vel_weight = env_cfg.get('forward_vel_weight', 1.0)
+        self.heading_weight = env_cfg.get('heading_weight', 1.0)
+        self.up_weight = env_cfg.get('up_weight', 0.1)
+        self.height_weight = env_cfg.get('height_weight', 1.0)
+        self.joint_vel_penalty = env_cfg.get('joint_vel_penalty', 0.0)
+        self.push_reward_weight = env_cfg.get('push_reward_weight', 0.0)
         self.device = device
 
         self.targets = torch.tensor([[10000.0, 0.0, 0.0]], device=device, dtype=torch.float32)
@@ -99,19 +106,43 @@ class AntDiagAdapter:
         return obs
 
     def decompose_reward(self, obs, action_np):
-        """Return individual reward components (matches current AntEnv._compute_reward)."""
-        forward_vel = obs[0, 5].item()
-        up_reward = 0.1 * obs[0, 27].item()
-        heading_reward = 0.2 * obs[0, 28].item()
-        height_reward = 0.5
-        action_cost = self.action_penalty * float(np.sum(action_np ** 2))
-        total = forward_vel + up_reward + heading_reward + height_reward + action_cost
+        """Return weighted reward components matching AntEnv._compute_reward."""
+        forward_vel_raw = obs[0, 5].item()
+        up_raw = obs[0, 27].item()
+        heading_raw = obs[0, 28].item()
+        height_raw = obs[0, 0].item()
+        joint_vel = (obs[0, 19:27] * 10.0).detach().cpu().numpy()
+
+        action_arr = np.asarray(action_np, dtype=np.float32)
+
+        forward_vel = self.forward_vel_weight * forward_vel_raw
+        up_reward = self.up_weight * up_raw
+        heading_reward = self.heading_weight * heading_raw
+        height_reward = self.height_weight * (height_raw - 0.27)
+        action_cost = self.action_penalty * float(np.sum(action_arr ** 2))
+        joint_vel_cost = -self.joint_vel_penalty * float(np.sum(joint_vel ** 2))
+        push_reward = 0.0
+        if self.push_reward_weight != 0.0 and action_arr.shape[0] >= 7:
+            push = (-action_arr[0] - action_arr[2] + action_arr[4] + action_arr[6])
+            push_reward = self.push_reward_weight * float(push)
+
+        total = (
+            forward_vel
+            + up_reward
+            + heading_reward
+            + height_reward
+            + action_cost
+            + joint_vel_cost
+            + push_reward
+        )
         return {
             'forward_vel': forward_vel,
             'up_reward': up_reward,
             'heading_reward': heading_reward,
             'height_reward': height_reward,
             'action_cost': action_cost,
+            'joint_vel_cost': joint_vel_cost,
+            'push_reward': push_reward,
             'total': total,
         }
 
@@ -182,7 +213,8 @@ def run_rollout_diagnostics(args, cfg):
     all_max_fwd_vel = []
     all_step_components = {
         'forward_vel': [], 'up_reward': [], 'heading_reward': [],
-        'height_reward': [], 'action_cost': [], 'total': [],
+        'height_reward': [], 'action_cost': [], 'joint_vel_cost': [],
+        'push_reward': [], 'total': [],
     }
 
     for ep in range(args.episodes):
@@ -253,6 +285,7 @@ def run_rollout_diagnostics(args, cfg):
     final_xs = np.array(all_final_x)
     max_fvs = np.array(all_max_fwd_vel)
     fell_pct = sum(1 for r in all_termination_reasons if r == 'fell') / len(all_termination_reasons) * 100
+    timeout_pct = 100.0 - fell_pct
 
     print()
     print("=" * 70)
@@ -274,9 +307,16 @@ def run_rollout_diagnostics(args, cfg):
     print()
 
     print("--- Reward Component Means (per step) ---")
-    for key in ['forward_vel', 'up_reward', 'heading_reward', 'height_reward', 'action_cost', 'total']:
-        vals = np.array(all_step_components[key])
-        print(f"  {key:<18s} {vals.mean():+8.4f} +/- {vals.std():7.4f}")
+    component_means = {
+        key: float(np.array(all_step_components[key]).mean())
+        for key in all_step_components
+    }
+    component_stds = {
+        key: float(np.array(all_step_components[key]).std())
+        for key in all_step_components
+    }
+    for key in ['forward_vel', 'up_reward', 'heading_reward', 'height_reward', 'action_cost', 'joint_vel_cost', 'push_reward', 'total']:
+        print(f"  {key:<18s} {component_means[key]:+8.4f} +/- {component_stds[key]:7.4f}")
     print()
 
     # Auto-diagnosis
@@ -289,11 +329,20 @@ def run_rollout_diagnostics(args, cfg):
     if fell_pct > 50 and ep_lengths.mean() < 500:
         issues.append("INSTABILITY: {:.0f}% of episodes end in falls (mean length {:.0f}). "
                        "Policy attempts to move but can't stay upright.".format(fell_pct, ep_lengths.mean()))
-    # Updated standing baseline with new reward: 0 + 0.1 + 0.2 + 0.5 = 0.8/step * 1000 = 800
-    standing_baseline = 800.0
-    if abs(ep_rewards.mean() - standing_baseline) / standing_baseline < 0.15:
-        issues.append("LOCAL OPTIMUM: Total reward ({:.0f}) is within 15% of standing-still "
-                       "baseline (~800). Policy is stuck.".format(ep_rewards.mean()))
+    # Estimate a standing-local-optimum baseline from non-locomotion terms on
+    # the current policy rollouts. This avoids hardcoding torso-height priors.
+    standing_step = (
+        component_means['up_reward']
+        + component_means['heading_reward']
+        + component_means['height_reward']
+    )
+    standing_baseline = standing_step * float(ep_lengths.mean())
+    if standing_baseline > 1e-6:
+        if abs(ep_rewards.mean() - standing_baseline) / standing_baseline < 0.15:
+            issues.append(
+                "LOCAL OPTIMUM: Total reward ({:.0f}) is within 15% of standing-still "
+                "baseline (~{:.0f}). Policy is stuck.".format(ep_rewards.mean(), standing_baseline)
+            )
     if np.array(all_step_components['heading_reward']).mean() < 0.16:
         issues.append("ORIENTATION: Mean heading_reward ({:.2f}) suggests ant is not "
                        "facing forward consistently.".format(
@@ -309,7 +358,37 @@ def run_rollout_diagnostics(args, cfg):
         print("  [OK] No obvious issues detected. Policy appears to be walking.")
     print()
 
-    return ep_rewards, ep_lengths
+    summary = {
+        'policy': None if args.random else args.policy,
+        'episodes': int(args.episodes),
+        'episode_length_mean': float(ep_lengths.mean()),
+        'episode_length_std': float(ep_lengths.std()),
+        'reward_mean': float(ep_rewards.mean()),
+        'reward_std': float(ep_rewards.std()),
+        'final_x_disp_mean': float(final_xs.mean()),
+        'final_x_disp_std': float(final_xs.std()),
+        'max_forward_vel_mean': float(max_fvs.mean()),
+        'max_forward_vel_std': float(max_fvs.std()),
+        'forward_vel_mean': float(np.array(all_step_components['forward_vel']).mean()),
+        'fall_rate': float(fell_pct / 100.0),
+        'timeout_rate': float(timeout_pct / 100.0),
+        'standing_baseline_reward': float(standing_baseline),
+        'issue_count': int(len(issues)),
+        'issues': issues,
+        'component_means': component_means,
+        'component_stds': component_stds,
+        'reward_weights': {
+            'forward_vel_weight': float(adapter.forward_vel_weight),
+            'heading_weight': float(adapter.heading_weight),
+            'up_weight': float(adapter.up_weight),
+            'height_weight': float(adapter.height_weight),
+            'action_penalty': float(adapter.action_penalty),
+            'joint_vel_penalty': float(adapter.joint_vel_penalty),
+            'push_reward_weight': float(adapter.push_reward_weight),
+        },
+    }
+
+    return summary
 
 
 def run_gradient_diagnostics(args, cfg):
@@ -526,6 +605,8 @@ def main():
                         help='Device for policy inference (default: cpu)')
     parser.add_argument('--random', action='store_true',
                         help='Use random actions instead of a policy')
+    parser.add_argument('--json-out', type=str, default=None,
+                        help='Optional path to write a JSON summary report')
     args = parser.parse_args()
 
     if not args.random and args.policy is None:
@@ -541,7 +622,7 @@ def main():
 
     # --- Rollout diagnostics (always runs) ---
     print("--- Running rollout episodes ---")
-    run_rollout_diagnostics(args, cfg)
+    rollout_summary = run_rollout_diagnostics(args, cfg)
 
     # --- Gradient diagnostics (optional, needs CUDA) ---
     if args.grad:
@@ -549,6 +630,18 @@ def main():
             print("NOTE: Switching to cuda:0 for gradient diagnostics")
             args.device = 'cuda:0'
         run_gradient_diagnostics(args, cfg)
+
+    if args.json_out:
+        os.makedirs(os.path.dirname(os.path.abspath(args.json_out)), exist_ok=True)
+        payload = {
+            'cfg': args.cfg,
+            'policy': None if args.random else args.policy,
+            'rollout': rollout_summary,
+            'grad_enabled': bool(args.grad),
+        }
+        with open(args.json_out, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, indent=2)
+        print(f"Wrote JSON report to: {args.json_out}")
 
     print("=" * 70)
     print("DIAGNOSTIC COMPLETE")
