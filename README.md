@@ -91,9 +91,9 @@ msk-warp/
     visualize.py                # Policy visualization in MuJoCo viewer
     visualize_progression.py    # Training progression grid
   tests/
-    test_gradient.py            # Gradient verification suite (6 test variants)
     test_ant_gradient.py        # Ant-specific gradient tests
-    test_grad_chain.py          # Backprop chain validation
+    test_ant_smooth_adjoint_wiring.py  # Smooth-adjoint friction surrogate wiring
+    test_shac_grad_controls.py  # Gradient control helpers
   docs/                         # Canonical tracked docs (scope, playbook, test matrix)
   archive/                      # Local-only archive for legacy/iteration artifacts
 ```
@@ -165,10 +165,10 @@ python scripts/visualize.py --cfg logs/cartpole/cfg.yaml --policy logs/cartpole/
 ### Verify Gradients
 
 ```bash
-pytest tests/test_gradient.py -v
+pytest tests/test_ant_gradient.py -v
 ```
 
-Runs 6 test variants covering CartPole and Ant: single-step AD vs float64 FD, network-in-loop gradient checks, tape-vs-FD comparison, and tape-per-substep vs tape-all consistency. Tolerance is <10% relative error (relaxed to 50% for contact-rich models).
+Runs ant-specific gradient checks: single-step AD vs float64 FD for forward_vel gradients with tape-all and FD-jacobian backward modes. Tolerance is <10% relative error (relaxed to 50% for contact-rich models).
 
 ## Training Configuration
 

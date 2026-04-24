@@ -47,7 +47,7 @@ python scripts/visualize.py --policy logs/cartpole/best_policy.pt --episodes 5
 pytest tests/
 
 # Run a single test
-pytest tests/test_gradient.py::test_single_step -v
+pytest tests/test_ant_gradient.py::test_forward_vel_gradient_tape -v
 ```
 
 Config files live in `msk_warp/configs/` (cartpole_shac.yaml, ant_shac.yaml, myoleg_shac.yaml).

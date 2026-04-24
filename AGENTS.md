@@ -40,7 +40,7 @@ Run the full test suite or a focused gradient test:
 
 ```bash
 pytest tests/
-pytest tests/test_gradient.py::test_single_step -v
+pytest tests/test_ant_gradient.py::test_forward_vel_gradient_tape -v
 ```
 
 ## Coding Style & Naming Conventions
