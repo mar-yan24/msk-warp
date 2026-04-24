@@ -1,14 +1,17 @@
 """Compare ant reward-gradient quality across smooth-adjoint variants.
 
-Measures the actual SHAC training signal d(reward)/d(ctrl) on a settled ant
-contact state and compares Warp AD against centered finite differences.
+Measures the actual SHAC training signal on settled states or policy-visited
+rollout snapshots and compares Warp AD against centered finite differences.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
 import os
 import sys
 import warnings
+from typing import Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 warnings.filterwarnings("ignore")
@@ -16,15 +19,15 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import torch
 import warp as wp
-import yaml
 
 wp._src.utils.warn = lambda *a, **k: None
 
 import mujoco_warp as mjw
 
-from msk_warp import PACKAGE_ROOT
 from msk_warp.bridge import WarpSimStep
 from msk_warp.envs.ant import AntEnv
+from msk_warp.utils.ant_rollout import capture_rollout_snapshots
+from msk_warp.utils.ant_rollout import normalize_snapshot_steps
 
 
 DEVICE = "cuda:0"
@@ -32,6 +35,7 @@ DEFAULT_NUM_ENVS = 4
 DEFAULT_FD_EPS = 1e-4
 DEFAULT_SETTLE_STEPS = 200
 DEFAULT_CTRL_SCALE = 0.3
+OBJECTIVE_NAMES = ("reward", "forward_vel", "state_probe")
 
 
 BRANCH_SPECS = {
@@ -66,7 +70,7 @@ MODEL_SPECS = {
 }
 
 
-def cosine_sim(a, b):
+def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
     na = np.linalg.norm(a)
     nb = np.linalg.norm(b)
     if na < 1e-10 or nb < 1e-10:
@@ -74,18 +78,42 @@ def cosine_sim(a, b):
     return float(np.dot(a.ravel(), b.ravel()) / (na * nb))
 
 
-def settle_env(env, steps, ctrl_val):
+def make_probe_vector(
+    length: int,
+    *,
+    device: str | torch.device = "cpu",
+    dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    """Return a deterministic normalized probe vector."""
+    idx = torch.arange(length, device=device, dtype=dtype)
+    vec = torch.sin(0.37 + 0.73 * idx) + 0.5 * torch.cos(1.13 + 0.29 * idx)
+    return vec / vec.norm().clamp(min=torch.finfo(dtype).eps)
+
+
+def compute_state_probe(qpos: torch.Tensor, qvel: torch.Tensor) -> torch.Tensor:
+    qpos_probe = make_probe_vector(qpos.shape[1], device=qpos.device, dtype=qpos.dtype)
+    qvel_probe = make_probe_vector(qvel.shape[1], device=qvel.device, dtype=qvel.dtype)
+    return qpos @ qpos_probe + qvel @ qvel_probe
+
+
+def settle_env(env: AntEnv, steps: int, ctrl_val: float) -> None:
     with torch.no_grad():
         ctrl = torch.full((env.num_envs, env.num_actions), ctrl_val, device=DEVICE)
         ctrl_wp = wp.from_torch(ctrl.contiguous())
         for _ in range(steps):
             wp.copy(env.warp_data.ctrl, ctrl_wp)
             wp.synchronize()
-            mjw.step(env.warp_model, env.warp_data)
+            for _ in range(env.substeps):
+                mjw.step(env.warp_model, env.warp_data)
         wp.synchronize()
 
 
-def reward_from_state(env, qpos, qvel, actions):
+def reward_from_state(
+    env: AntEnv,
+    qpos: torch.Tensor,
+    qvel: torch.Tensor,
+    actions: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
     obs = AntEnv._compute_obs(
         qpos,
         qvel,
@@ -109,16 +137,34 @@ def reward_from_state(env, qpos, qvel, actions):
     return obs, rew
 
 
-def reward_from_step(env, ctrl_torch, qpos0, qvel0):
+def objectives_from_state(
+    env: AntEnv,
+    qpos: torch.Tensor,
+    qvel: torch.Tensor,
+) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+    actions = torch.zeros(env.num_envs, env.num_actions, device=qpos.device)
+    obs, rew = reward_from_state(env, qpos, qvel, actions)
+    return {
+        "reward": rew,
+        "forward_vel": obs[:, 5],
+        "state_probe": compute_state_probe(qpos, qvel),
+    }, obs
+
+
+def step_objectives(
+    env: AntEnv,
+    ctrl_torch: torch.Tensor,
+    qpos0: torch.Tensor,
+    qvel0: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor], torch.Tensor]:
     qpos_out, qvel_out = WarpSimStep.apply(ctrl_torch, qpos0, qvel0, env)
     qpos_out = qpos_out.clamp(-100.0, 100.0)
     qvel_out = qvel_out.clamp(-100.0, 100.0)
-    actions = torch.zeros(env.num_envs, env.num_actions, device=DEVICE)
-    obs, rew = reward_from_state(env, qpos_out, qvel_out, actions)
-    return obs, rew
+    objectives, obs = objectives_from_state(env, qpos_out, qvel_out)
+    return qpos_out, qvel_out, objectives, obs
 
 
-def _constraint_state_name(state):
+def _constraint_state_name(state: int) -> str:
     return {
         0: "SATISFIED",
         1: "QUADRATIC",
@@ -128,7 +174,23 @@ def _constraint_state_name(state):
     }.get(int(state), f"STATE_{int(state)}")
 
 
-def summarize_contact_state(env):
+def _contact_row_count(condim: int, cone_type: int) -> int:
+    if condim <= 1:
+        return 1
+    if cone_type == 0:
+        return 2 * (condim - 1)
+    return condim
+
+
+def _row_kind(condim: int, cone_type: int, row_local_idx: int) -> str:
+    if condim <= 1:
+        return "normal"
+    if cone_type == 0:
+        return "pyramid"
+    return "normal" if row_local_idx == 0 else "friction"
+
+
+def summarize_contact_state(env: AntEnv) -> dict[str, Any]:
     data = env.warp_data
     nacon = int(data.nacon.numpy()[0])
     if nacon == 0:
@@ -137,10 +199,13 @@ def summarize_contact_state(env):
             "active_contacts": 0,
             "normal_states": {},
             "friction_states": {},
+            "pyramid_states": {},
             "mean_abs_normal_force": 0.0,
             "mean_abs_friction_force": 0.0,
+            "mean_abs_pyramid_force": 0.0,
         }
 
+    cone_type = int(env.mjm.opt.cone)
     contact_dim = data.contact.dim.numpy()
     contact_type = data.contact.type.numpy()
     contact_worldid = data.contact.worldid.numpy()
@@ -148,10 +213,12 @@ def summarize_contact_state(env):
     efc_state = data.efc.state.numpy()
     efc_force = data.efc.force.numpy()
 
-    normal_states = {}
-    friction_states = {}
-    normal_forces = []
-    friction_forces = []
+    normal_states: dict[str, int] = {}
+    friction_states: dict[str, int] = {}
+    pyramid_states: dict[str, int] = {}
+    normal_forces: list[float] = []
+    friction_forces: list[float] = []
+    pyramid_forces: list[float] = []
     constraint_contacts = 0
     active_contacts = 0
 
@@ -159,39 +226,52 @@ def summarize_contact_state(env):
         if not (int(contact_type[conid]) & 1):
             continue
 
-        constraint_contacts += 1
         condim = int(contact_dim[conid])
+        row_count = _contact_row_count(condim, cone_type)
         worldid = int(contact_worldid[conid])
         row0 = int(contact_efc_address[conid, 0])
-        if row0 >= 0:
-            normal_state = _constraint_state_name(efc_state[worldid, row0])
-            normal_states[normal_state] = normal_states.get(normal_state, 0) + 1
-            normal_forces.append(abs(float(efc_force[worldid, row0])))
-            if normal_state != "SATISFIED":
-                active_contacts += 1
-
-        if condim == 1:
+        if row0 < 0:
             continue
 
-        for dimid in range(1, 2 * (condim - 1)):
-            row = int(contact_efc_address[conid, dimid])
+        constraint_contacts += 1
+        contact_active = False
+        for j in range(row_count):
+            row = int(contact_efc_address[conid, j]) if j < contact_efc_address.shape[1] else -1
             if row < 0:
                 continue
-            friction_state = _constraint_state_name(efc_state[worldid, row])
-            friction_states[friction_state] = friction_states.get(friction_state, 0) + 1
-            friction_forces.append(abs(float(efc_force[worldid, row])))
+            state = _constraint_state_name(efc_state[worldid, row])
+            force_abs = abs(float(efc_force[worldid, row]))
+            kind = _row_kind(condim, cone_type, j)
+
+            if state != "SATISFIED":
+                contact_active = True
+
+            if kind == "normal":
+                normal_states[state] = normal_states.get(state, 0) + 1
+                normal_forces.append(force_abs)
+            elif kind == "friction":
+                friction_states[state] = friction_states.get(state, 0) + 1
+                friction_forces.append(force_abs)
+            else:
+                pyramid_states[state] = pyramid_states.get(state, 0) + 1
+                pyramid_forces.append(force_abs)
+
+        if contact_active:
+            active_contacts += 1
 
     return {
         "constraint_contacts": constraint_contacts,
         "active_contacts": active_contacts,
         "normal_states": normal_states,
         "friction_states": friction_states,
+        "pyramid_states": pyramid_states,
         "mean_abs_normal_force": float(np.mean(normal_forces)) if normal_forces else 0.0,
         "mean_abs_friction_force": float(np.mean(friction_forces)) if friction_forces else 0.0,
+        "mean_abs_pyramid_force": float(np.mean(pyramid_forces)) if pyramid_forces else 0.0,
     }
 
 
-def print_contact_state(summary, label):
+def print_contact_state(summary: dict[str, Any], label: str) -> None:
     print(f"\ncontact state summary ({label}):")
     print(
         f"  constraint_contacts={summary['constraint_contacts']} "
@@ -205,75 +285,104 @@ def print_contact_state(summary, label):
     print(f"  friction states: {summary['friction_states']}")
 
 
-def _resolve_cfg_path(cfg_path):
-    if cfg_path is None:
-        return None
-    if os.path.isabs(cfg_path):
-        return cfg_path
-    pkg_path = PACKAGE_ROOT / cfg_path
-    if pkg_path.exists():
-        return str(pkg_path)
-    return cfg_path
+def summarize_gradient_match(
+    tape_grad: np.ndarray,
+    fd_grad: np.ndarray,
+) -> dict[str, Any]:
+    tape_mean = tape_grad.mean(axis=0)
+    fd_mean = fd_grad.mean(axis=0)
+    tape_norm = float(np.linalg.norm(tape_mean))
+    fd_norm = float(np.linalg.norm(fd_mean))
+    ratio = tape_norm / (fd_norm + 1e-10)
+    return {
+        "tape_norm": tape_norm,
+        "fd_norm": fd_norm,
+        "ratio": float(ratio),
+        "cosine": cosine_sim(tape_mean, fd_mean),
+        "tape_mean": tape_mean.tolist(),
+        "fd_mean": fd_mean.tolist(),
+        "per_env": [
+            {
+                "env": int(env_idx),
+                "tape_norm": float(np.linalg.norm(tape_grad[env_idx])),
+                "fd_norm": float(np.linalg.norm(fd_grad[env_idx])),
+                "cosine": cosine_sim(tape_grad[env_idx], fd_grad[env_idx]),
+            }
+            for env_idx in range(tape_grad.shape[0])
+        ],
+    }
 
 
-def rollout_snapshot(cfg_path, policy_path, num_envs, rollout_steps):
-    cfg_path = _resolve_cfg_path(cfg_path)
-    with open(cfg_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+def _finite_difference_gradients(
+    env: AntEnv,
+    ctrl_base: torch.Tensor,
+    qpos0: torch.Tensor,
+    qvel0: torch.Tensor,
+    fd_eps: float,
+) -> dict[str, np.ndarray]:
+    fd_grads = {
+        name: np.zeros((env.num_envs, env.num_actions), dtype=np.float32)
+        for name in OBJECTIVE_NAMES
+    }
 
-    torch.manual_seed(cfg["params"]["general"].get("seed", 42))
+    for act_idx in range(env.num_actions):
+        plus_values: dict[str, np.ndarray] = {}
+        minus_values: dict[str, np.ndarray] = {}
+        for sign in (1.0, -1.0):
+            env.clear_grad()
+            wp.copy(env.warp_data.qpos, wp.from_torch(qpos0.contiguous()))
+            wp.copy(env.warp_data.qvel, wp.from_torch(qvel0.contiguous()))
+            wp.synchronize()
 
-    env_kwargs = dict(cfg["params"]["env"])
-    env_kwargs.pop("name", None)
-    env_kwargs.pop("num_actors", None)
-    env_kwargs["num_envs"] = num_envs
-    env_kwargs["device"] = DEVICE
-    env_kwargs["no_grad"] = False
+            ctrl_shifted = ctrl_base.clone()
+            ctrl_shifted[:, act_idx] += sign * fd_eps
+            wp.copy(env.warp_data.ctrl, wp.from_torch(ctrl_shifted.contiguous()))
+            wp.synchronize()
+            for _ in range(env.substeps):
+                mjw.step(env.warp_model, env.warp_data)
+            wp.synchronize()
 
-    env = AntEnv(**env_kwargs)
-    checkpoint = torch.load(policy_path, weights_only=False)
-    actor = checkpoint[0].to(DEVICE)
-    obs_rms = checkpoint[3]
-    if obs_rms is not None:
-        obs_rms = obs_rms.to(DEVICE)
+            qp = wp.to_torch(env.warp_data.qpos).clone()
+            qv = wp.to_torch(env.warp_data.qvel).clone()
+            objective_values, _ = objectives_from_state(env, qp, qv)
+            stash = plus_values if sign > 0 else minus_values
+            for name, values in objective_values.items():
+                stash[name] = values.detach().cpu().numpy()
 
-    obs = env.reset()
-    with torch.no_grad():
-        for _ in range(rollout_steps):
-            obs_in = obs_rms.normalize(obs) if obs_rms is not None else obs
-            actions = torch.tanh(actor(obs_in, deterministic=True))
-            obs, _, _, _, _, _ = env.step(actions)
+        for name in OBJECTIVE_NAMES:
+            fd_grads[name][:, act_idx] = (plus_values[name] - minus_values[name]) / (2.0 * fd_eps)
 
-    return (
-        wp.to_torch(env.warp_data.qpos).clone(),
-        wp.to_torch(env.warp_data.qvel).clone(),
-    )
+    return fd_grads
+
+
+def _snapshot_state_label(snapshot: dict[str, Any] | None) -> str:
+    if snapshot is None:
+        return "settled"
+    return f"{snapshot['source']}_step_{int(snapshot['step'])}"
 
 
 def compare_branch(
-    branch_name,
-    model_name,
-    branch_specs,
-    num_envs,
-    fd_eps,
-    settle_steps,
-    ctrl_scale,
-    snapshot_qpos=None,
-    snapshot_qvel=None,
-):
+    branch_name: str,
+    model_name: str,
+    branch_specs: dict[str, dict[str, Any]],
+    num_envs: int,
+    fd_eps: float,
+    settle_steps: int,
+    ctrl_scale: float,
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     branch_kwargs = dict(branch_specs[branch_name])
     model_spec = MODEL_SPECS[model_name]
+    state_label = _snapshot_state_label(snapshot)
 
     print(f"\n{'=' * 78}")
     print(
         f"{model_name} | branch={branch_name} | model={model_spec['model_path']} "
-        f"| substeps={model_spec['substeps']}"
+        f"| substeps={model_spec['substeps']} | state={state_label}"
     )
     print(f"{'=' * 78}")
 
     torch.manual_seed(42)
-    ctrl_base = torch.randn(num_envs, 8, device=DEVICE) * ctrl_scale
-
     env = AntEnv(
         num_envs=num_envs,
         device=DEVICE,
@@ -285,15 +394,19 @@ def compare_branch(
         **branch_kwargs,
     )
     env.reset()
-    if snapshot_qpos is None or snapshot_qvel is None:
+
+    if snapshot is None:
         settle_env(env, steps=settle_steps, ctrl_val=ctrl_scale)
-        state_label = "settled"
+        state_info = {"source": "settled", "settle_steps": int(settle_steps)}
     else:
-        wp.copy(env.warp_data.qpos, wp.from_torch(snapshot_qpos.contiguous()))
-        wp.copy(env.warp_data.qvel, wp.from_torch(snapshot_qvel.contiguous()))
+        wp.copy(env.warp_data.qpos, wp.from_torch(snapshot["qpos"].contiguous()))
+        wp.copy(env.warp_data.qvel, wp.from_torch(snapshot["qvel"].contiguous()))
         mjw.forward(env.warp_model, env.warp_data)
         wp.synchronize()
-        state_label = "rollout"
+        state_info = {
+            "source": snapshot["source"],
+            "step": int(snapshot["step"]),
+        }
 
     contact_summary = summarize_contact_state(env)
     print_contact_state(contact_summary, state_label)
@@ -301,116 +414,49 @@ def compare_branch(
     env.clear_grad()
     qpos0 = wp.to_torch(env.warp_data.qpos).clone()
     qvel0 = wp.to_torch(env.warp_data.qvel).clone()
+    ctrl_base = torch.randn(num_envs, env.num_actions, device=DEVICE) * ctrl_scale
 
     ctrl = ctrl_base.clone().requires_grad_(True)
-    obs, rew = reward_from_step(env, ctrl, qpos0, qvel0)
-    rew.mean().backward()
-    tape_grad = ctrl.grad.detach().cpu().numpy()
+    _, _, objectives, _ = step_objectives(env, ctrl, qpos0, qvel0)
+    tape_grads: dict[str, np.ndarray] = {}
+    objective_names = list(OBJECTIVE_NAMES)
+    for idx, name in enumerate(objective_names):
+        if ctrl.grad is not None:
+            ctrl.grad.zero_()
+        objectives[name].sum().backward(retain_graph=idx < len(objective_names) - 1)
+        tape_grads[name] = ctrl.grad.detach().cpu().numpy().copy()
 
-    fd_grad = np.zeros((num_envs, env.num_actions), dtype=np.float32)
-    for act_idx in range(env.num_actions):
-        for sign in (1.0, -1.0):
-            env.clear_grad()
-            wp.copy(env.warp_data.qpos, wp.from_torch(qpos0.contiguous()))
-            wp.copy(env.warp_data.qvel, wp.from_torch(qvel0.contiguous()))
-            wp.synchronize()
+    fd_grads = _finite_difference_gradients(env, ctrl_base, qpos0, qvel0, fd_eps)
 
-            ctrl_shifted = ctrl_base.clone()
-            ctrl_shifted[:, act_idx] += sign * fd_eps
-            ctrl_wp = wp.from_torch(ctrl_shifted.contiguous())
-            wp.copy(env.warp_data.ctrl, ctrl_wp)
-            wp.synchronize()
-            for _ in range(model_spec["substeps"]):
-                mjw.step(env.warp_model, env.warp_data)
-            wp.synchronize()
-
-            qp = wp.to_torch(env.warp_data.qpos).clone()
-            qv = wp.to_torch(env.warp_data.qvel).clone()
-            actions = torch.zeros(num_envs, env.num_actions, device=DEVICE)
-            _, rew_fd = reward_from_state(env, qp, qv, actions)
-            rew_np = rew_fd.detach().cpu().numpy()
-            if sign > 0:
-                rew_plus = rew_np
-            else:
-                rew_minus = rew_np
-
-        fd_grad[:, act_idx] = (rew_plus - rew_minus) / (2.0 * fd_eps)
-
-    tape_mean = tape_grad.mean(axis=0)
-    fd_mean = fd_grad.mean(axis=0)
-    cosine = cosine_sim(tape_mean, fd_mean)
-    tape_norm = float(np.linalg.norm(tape_mean))
-    fd_norm = float(np.linalg.norm(fd_mean))
-    ratio = tape_norm / (fd_norm + 1e-10)
-
-    print(
-        f"mean grad norms: tape={tape_norm:.6e} fd={fd_norm:.6e} "
-        f"ratio={ratio:.4f} cosine={cosine:.4f}"
-    )
-
-    act_names = ["hip4", "ank4", "hip1", "ank1", "hip2", "ank2", "hip3", "ank3"]
-    print("\nper-actuator mean gradient:")
-    for act_name, tape_val, fd_val in zip(act_names, tape_mean, fd_mean):
-        local_ratio = float(tape_val / (fd_val + 1e-10))
+    objective_reports: dict[str, Any] = {}
+    for name in OBJECTIVE_NAMES:
+        report = summarize_gradient_match(tape_grads[name], fd_grads[name])
+        values = objectives[name].detach()
+        report["value_mean"] = float(values.mean().item())
+        report["value_std"] = float(values.std(unbiased=False).item()) if values.numel() > 1 else 0.0
+        objective_reports[name] = report
         print(
-            f"  {act_name:>5}: tape={tape_val:+.6e} fd={fd_val:+.6e} "
-            f"ratio={local_ratio:+.3f}"
+            f"{name:>12}: tape={report['tape_norm']:.6e} fd={report['fd_norm']:.6e} "
+            f"ratio={report['ratio']:.4f} cosine={report['cosine']:.4f} "
+            f"value_mean={report['value_mean']:.6e}"
         )
-
-    print("\nper-env gradient norms:")
-    for env_idx in range(num_envs):
-        env_tape = float(np.linalg.norm(tape_grad[env_idx]))
-        env_fd = float(np.linalg.norm(fd_grad[env_idx]))
-        env_cosine = cosine_sim(tape_grad[env_idx], fd_grad[env_idx])
-        print(
-            f"  env {env_idx}: tape={env_tape:.6e} fd={env_fd:.6e} cosine={env_cosine:.4f}"
-        )
-
-    print("\nreward component gradients (env 0):")
-    env.clear_grad()
-    wp.copy(env.warp_data.qpos, wp.from_torch(qpos0.contiguous()))
-    wp.copy(env.warp_data.qvel, wp.from_torch(qvel0.contiguous()))
-    wp.synchronize()
-
-    ctrl_components = ctrl_base.clone().requires_grad_(True)
-    obs_components, _ = reward_from_step(env, ctrl_components, qpos0, qvel0)
-    components = {
-        "forward_vel": obs_components[:, 5],
-        "up_reward": env.up_weight * obs_components[:, 27],
-        "heading": env.heading_weight * obs_components[:, 28],
-        "height": env.height_weight * (obs_components[:, 0] - 0.27),
-    }
-    component_norms = {}
-    component_grads = {}
-    for name, component in components.items():
-        if ctrl_components.grad is not None:
-            ctrl_components.grad.zero_()
-        component[0].backward(retain_graph=True)
-        grad = ctrl_components.grad[0].detach().cpu().numpy()
-        component_norms[name] = float(np.linalg.norm(grad))
-        component_grads[name] = grad.tolist()
-        print(f"  {name:>11}: norm={np.linalg.norm(grad):.6e} grad={grad}")
 
     return {
         "model": model_name,
         "branch": branch_name,
         "state_label": state_label,
-        "tape_norm": tape_norm,
-        "fd_norm": fd_norm,
-        "ratio": ratio,
-        "cosine": cosine,
+        "state": state_info,
         "contact_summary": contact_summary,
-        "reward_component_norms_env0": component_norms,
-        "reward_component_grads_env0": component_grads,
+        "objectives": objective_reports,
     }
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare ant reward gradients across adjoint variants")
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["ant16", "soft16"],
+        default=["soft4", "substeps4"],
         choices=sorted(MODEL_SPECS.keys()),
         help="Model/substep setups to evaluate",
     )
@@ -444,6 +490,13 @@ def parse_args():
         help="Number of deterministic policy rollout steps before capturing state",
     )
     parser.add_argument(
+        "--rollout-step-list",
+        nargs="+",
+        type=int,
+        default=None,
+        help="Optional list of rollout snapshot steps to evaluate",
+    )
+    parser.add_argument(
         "--surrogate-alpha",
         type=float,
         default=None,
@@ -458,12 +511,10 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
+    wp.init()
     args = parse_args()
-    branch_specs = {
-        name: dict(spec)
-        for name, spec in BRANCH_SPECS.items()
-    }
+    branch_specs = {name: dict(spec) for name, spec in BRANCH_SPECS.items()}
     if args.surrogate_alpha is not None:
         if args.surrogate_alpha < 0.0 or args.surrogate_alpha > 1.0:
             raise ValueError("--surrogate-alpha must be in [0, 1]")
@@ -482,46 +533,57 @@ def main():
     if args.surrogate_alpha is not None:
         print(f"surrogate_alpha_override={args.surrogate_alpha}")
 
-    snapshot_qpos = None
-    snapshot_qvel = None
+    snapshots: list[dict[str, Any] | None] = [None]
     if args.rollout_cfg is not None:
-        snapshot_qpos, snapshot_qvel = rollout_snapshot(
+        snapshot_steps = normalize_snapshot_steps(
+            args.rollout_step_list,
+            fallback_step=args.rollout_steps,
+        )
+        snapshots = capture_rollout_snapshots(
             args.rollout_cfg,
             args.policy,
-            args.num_envs,
-            args.rollout_steps,
+            device=DEVICE,
+            snapshot_steps=snapshot_steps,
+            num_envs=args.num_envs,
         )
         print(
-            f"rollout snapshot captured from cfg={args.rollout_cfg} "
-            f"policy={args.policy} steps={args.rollout_steps}"
+            f"rollout snapshots captured from cfg={args.rollout_cfg} "
+            f"policy={args.policy} steps={snapshot_steps}"
         )
 
     results = []
-    for model_name in args.models:
-        for branch_name in args.branches:
-            results.append(
-                compare_branch(
-                    branch_name=branch_name,
-                    model_name=model_name,
-                    branch_specs=branch_specs,
-                    num_envs=args.num_envs,
-                    fd_eps=args.fd_eps,
-                    settle_steps=args.settle_steps,
-                    ctrl_scale=args.ctrl_scale,
-                    snapshot_qpos=snapshot_qpos,
-                    snapshot_qvel=snapshot_qvel,
+    for snapshot in snapshots:
+        for model_name in args.models:
+            for branch_name in args.branches:
+                results.append(
+                    compare_branch(
+                        branch_name=branch_name,
+                        model_name=model_name,
+                        branch_specs=branch_specs,
+                        num_envs=args.num_envs,
+                        fd_eps=args.fd_eps,
+                        settle_steps=args.settle_steps,
+                        ctrl_scale=args.ctrl_scale,
+                        snapshot=snapshot,
+                    )
                 )
-            )
 
-    print(f"\n{'=' * 78}")
+    print(f"\n{'=' * 108}")
     print("Summary")
-    print(f"{'=' * 78}")
-    print(f"{'model':<12} {'branch':<12} {'tape_norm':>12} {'fd_norm':>12} {'ratio':>10} {'cosine':>10}")
+    print(f"{'=' * 108}")
+    print(
+        f"{'state':<18} {'model':<12} {'branch':<12} "
+        f"{'reward_cos':>10} {'fwd_cos':>10} {'probe_cos':>10} "
+        f"{'reward_ratio':>12} {'probe_ratio':>12}"
+    )
     for row in results:
+        reward = row["objectives"]["reward"]
+        forward = row["objectives"]["forward_vel"]
+        probe = row["objectives"]["state_probe"]
         print(
-            f"{row['model']:<12} {row['branch']:<12} "
-            f"{row['tape_norm']:>12.6e} {row['fd_norm']:>12.6e} "
-            f"{row['ratio']:>10.4f} {row['cosine']:>10.4f}"
+            f"{row['state_label']:<18} {row['model']:<12} {row['branch']:<12} "
+            f"{reward['cosine']:>10.4f} {forward['cosine']:>10.4f} {probe['cosine']:>10.4f} "
+            f"{reward['ratio']:>12.4f} {probe['ratio']:>12.4f}"
         )
 
     if args.output_json is not None:
@@ -537,6 +599,7 @@ def main():
             "rollout_cfg": args.rollout_cfg,
             "policy": args.policy,
             "rollout_steps": args.rollout_steps,
+            "rollout_step_list": args.rollout_step_list,
             "surrogate_alpha_override": args.surrogate_alpha,
             "branch_specs": branch_specs,
             "results": results,

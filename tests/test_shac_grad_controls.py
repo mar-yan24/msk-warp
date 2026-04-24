@@ -6,6 +6,7 @@ import torch
 
 from msk_warp.algorithms.shac import apply_state_grad_control
 from msk_warp.algorithms.shac import compute_actor_clip_threshold
+from msk_warp.algorithms.shac import compute_linear_schedule
 
 
 def test_apply_state_grad_control_decay_only():
@@ -46,3 +47,13 @@ def test_compute_actor_clip_threshold_no_schedule():
     assert compute_actor_clip_threshold(
         epoch=5, target_clip=40.0, init_clip=200.0, warmup_epochs=0
     ) == 40.0
+
+
+def test_compute_linear_schedule_anneals_to_target():
+    assert compute_linear_schedule(epoch=0, start=0.25, end=0.0, anneal_epochs=50) == 0.25
+    assert compute_linear_schedule(epoch=25, start=0.25, end=0.0, anneal_epochs=50) == 0.125
+    assert compute_linear_schedule(epoch=50, start=0.25, end=0.0, anneal_epochs=50) == 0.0
+
+
+def test_compute_linear_schedule_without_anneal_uses_end():
+    assert compute_linear_schedule(epoch=0, start=0.25, end=0.0, anneal_epochs=0) == 0.0

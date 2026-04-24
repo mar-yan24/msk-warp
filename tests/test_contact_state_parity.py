@@ -71,6 +71,37 @@ def test_mismatch_detector_flags_quadratic_skew():
     assert any("friction_state_l1" in msg for msg in verdict["mismatches"])
 
 
+def test_one_step_state_metrics_capture_delta_error():
+    mod = _load_module()
+    qpos0 = np.array([[1.0, 2.0]], dtype=np.float64)
+    qvel0 = np.array([[0.5, -0.5]], dtype=np.float64)
+    warp_qpos1 = np.array([[1.2, 2.3]], dtype=np.float64)
+    warp_qvel1 = np.array([[0.8, -0.4]], dtype=np.float64)
+    native_qpos1 = np.array([[1.1, 2.1]], dtype=np.float64)
+    native_qvel1 = np.array([[0.7, -0.1]], dtype=np.float64)
+
+    metrics = mod.compute_one_step_state_metrics(
+        qpos0, qvel0, warp_qpos1, warp_qvel1, native_qpos1, native_qvel1
+    )
+
+    assert metrics["qpos_delta_l1_sum"] == pytest.approx(0.3)
+    assert metrics["qvel_delta_l1_sum"] == pytest.approx(0.4)
+    assert metrics["state_delta_l1_sum"] == pytest.approx(0.7)
+    assert metrics["state_delta_l1_mean"] == pytest.approx(0.175)
+    assert metrics["state_delta_linf"] == pytest.approx(0.3)
+
+
+def test_step_state_mismatch_detector_threshold():
+    mod = _load_module()
+    verdict = mod.detect_step_state_mismatches(
+        {"state_delta_l1_mean": 0.03, "state_delta_linf": 0.04},
+        max_step_state_delta_mean=0.02,
+    )
+    assert verdict["ok"] is False
+    assert verdict["mismatch_count"] == 1
+    assert "one_step_state_delta_l1_mean" in verdict["mismatches"][0]
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for Warp parity diagnostic")
 def test_contact_state_parity_smoke_report():
     mod = _load_module()
@@ -85,10 +116,13 @@ def test_contact_state_parity_smoke_report():
         max_contact_delta=50,
         max_state_l1=1.0,
         max_force_ratio_factor=100.0,
+        max_step_state_delta_mean=1.0,
     )
 
     assert report["state"]["source"] == "settled"
     assert "warp" in report and "native" in report and "parity" in report
+    assert "one_step" in report and "overall" in report
     assert report["warp"]["summary"]["constraint_contacts"] >= 0
     assert report["native"]["summary"]["constraint_contacts"] >= 0
     assert isinstance(report["parity"]["mismatches"], list)
+    assert isinstance(report["one_step"]["state_delta"]["metrics"]["state_delta_l1_mean"], float)

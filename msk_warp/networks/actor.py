@@ -70,6 +70,15 @@ class ActorStochasticMLP(nn.Module):
         dist = Normal(mu, std)
         return dist.rsample()
 
+    def evaluate_actions(self, obs, actions):
+        """Return (log_prob, entropy) for given obs/action pairs. Used by PPO."""
+        mu = self.mu_net(obs)
+        std = self.logstd.exp()
+        dist = Normal(mu, std)
+        log_prob = dist.log_prob(actions).sum(dim=-1)
+        entropy = dist.entropy().sum(dim=-1)
+        return log_prob, entropy
+
     def forward_with_dist(self, obs, deterministic=False):
         mu = self.mu_net(obs)
         std = self.logstd.exp()

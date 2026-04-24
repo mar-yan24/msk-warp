@@ -1,7 +1,7 @@
-"""Compare Warp vs native MuJoCo contact/constraint state on a matched ant state.
+"""Compare Warp vs native MuJoCo contact/constraint state on matched ant states.
 
-This diagnostic exists to isolate friction/contact representation drift that can
-poison SHAC reward gradients under contact-heavy locomotion.
+This diagnostic exists to isolate forward/contact solver drift that can poison
+SHAC reward gradients under contact-heavy locomotion.
 """
 
 from __future__ import annotations
@@ -10,19 +10,21 @@ import argparse
 import json
 import math
 import os
-from pathlib import Path
 from typing import Any
 
 import mujoco
 import numpy as np
 import torch
 import warp as wp
-import yaml
 
 import mujoco_warp as mjw
 
-from msk_warp import PACKAGE_ROOT, resolve_model_path
+from msk_warp import resolve_model_path
 from msk_warp.envs.ant import AntEnv
+from msk_warp.utils.ant_rollout import capture_rollout_snapshots
+from msk_warp.utils.ant_rollout import env_from_cfg
+from msk_warp.utils.ant_rollout import load_cfg
+from msk_warp.utils.ant_rollout import normalize_snapshot_steps
 
 
 STATE_NAMES = {
@@ -38,14 +40,6 @@ def _state_name(value: int) -> str:
     return STATE_NAMES.get(int(value), f"STATE_{int(value)}")
 
 
-def _cone_friction_rows(condim: int, cone_type: int) -> int:
-    if condim <= 1:
-        return 0
-    if cone_type == int(mujoco.mjtCone.mjCONE_PYRAMIDAL):
-        return 2 * (condim - 1)
-    return condim - 1
-
-
 def _contact_row_count(condim: int, cone_type: int) -> int:
     if condim <= 1:
         return 1
@@ -58,72 +52,8 @@ def _row_kind(condim: int, cone_type: int, row_local_idx: int) -> str:
     if condim <= 1:
         return "normal"
     if cone_type == int(mujoco.mjtCone.mjCONE_PYRAMIDAL):
-        # Pyramidal rows are opposing cone-edge constraints, not explicit
-        # normal/friction rows.
         return "pyramid"
     return "normal" if row_local_idx == 0 else "friction"
-
-
-def _resolve_cfg_path(cfg_path: str) -> str:
-    p = Path(cfg_path)
-    if p.is_absolute():
-        return str(p)
-    pkg_path = PACKAGE_ROOT / cfg_path
-    if pkg_path.exists():
-        return str(pkg_path)
-    return cfg_path
-
-
-def _load_cfg(cfg_path: str) -> dict[str, Any]:
-    with open(_resolve_cfg_path(cfg_path), "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def _env_from_cfg(cfg: dict[str, Any], device: str, no_grad: bool) -> AntEnv:
-    env_kwargs = dict(cfg["params"]["env"])
-    env_kwargs.pop("name", None)
-    env_kwargs.pop("num_actors", None)
-    env_kwargs["num_envs"] = 1
-    env_kwargs["device"] = device
-    env_kwargs["no_grad"] = no_grad
-    return AntEnv(**env_kwargs)
-
-
-def _snapshot_from_rollout(
-    cfg_path: str,
-    policy_path: str,
-    device: str,
-    rollout_steps: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
-    cfg = _load_cfg(cfg_path)
-    env = _env_from_cfg(cfg, device=device, no_grad=False)
-
-    checkpoint = torch.load(policy_path, weights_only=False)
-    actor = checkpoint[0].to(device)
-    obs_rms = checkpoint[3]
-    if obs_rms is not None:
-        obs_rms = obs_rms.to(device)
-    actor.eval()
-
-    obs = env.reset()
-    actions = torch.zeros((1, env.num_actions), dtype=torch.float32, device=device)
-    with torch.no_grad():
-        for _ in range(rollout_steps):
-            obs_in = obs_rms.normalize(obs) if obs_rms is not None else obs
-            actions = torch.tanh(actor(obs_in, deterministic=True))
-            obs, _, _, _, _, _ = env.step(actions)
-
-    return (
-        wp.to_torch(env.warp_data.qpos).detach().clone(),
-        wp.to_torch(env.warp_data.qvel).detach().clone(),
-        actions.detach().clone(),
-        {
-            "source": "rollout",
-            "rollout_cfg": cfg_path,
-            "policy": policy_path,
-            "rollout_steps": int(rollout_steps),
-        },
-    )
 
 
 def _snapshot_from_settle(
@@ -132,8 +62,8 @@ def _snapshot_from_settle(
     settle_steps: int,
     ctrl_val: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
-    cfg = _load_cfg(cfg_path)
-    env = _env_from_cfg(cfg, device=device, no_grad=True)
+    cfg = load_cfg(cfg_path)
+    env = env_from_cfg(cfg, device=device, no_grad=True, num_envs=1)
 
     actions = torch.full(
         (1, env.num_actions), float(ctrl_val), dtype=torch.float32, device=device
@@ -162,13 +92,109 @@ def _snapshot_from_settle(
     )
 
 
+def _tensor_world0_to_numpy(tensor: torch.Tensor) -> np.ndarray:
+    arr = tensor.detach().cpu().numpy().astype(np.float64)
+    if arr.ndim == 1:
+        return arr[np.newaxis, :]
+    return arr
+
+
+def _load_warp_state(
+    env: AntEnv,
+    qpos: torch.Tensor,
+    qvel: torch.Tensor,
+    ctrl: torch.Tensor,
+) -> None:
+    wp.copy(env.warp_data.qpos, wp.from_torch(qpos.contiguous()))
+    wp.copy(env.warp_data.qvel, wp.from_torch(qvel.contiguous()))
+    wp.copy(env.warp_data.ctrl, wp.from_torch(ctrl.contiguous()))
+    wp.synchronize()
+
+
+def _load_native_state(
+    mjm: mujoco.MjModel,
+    mjd: mujoco.MjData,
+    qpos: np.ndarray,
+    qvel: np.ndarray,
+    ctrl: np.ndarray,
+) -> None:
+    mujoco.mj_resetData(mjm, mjd)
+    mjd.qpos[:] = qpos[0]
+    mjd.qvel[:] = qvel[0]
+    mjd.ctrl[:] = 0.0
+    mjd.ctrl[: ctrl.shape[1]] = ctrl[0]
+
+
+def compute_one_step_state_metrics(
+    qpos0: np.ndarray,
+    qvel0: np.ndarray,
+    warp_qpos1: np.ndarray,
+    warp_qvel1: np.ndarray,
+    native_qpos1: np.ndarray,
+    native_qvel1: np.ndarray,
+) -> dict[str, float]:
+    """Compare Warp/native next-state deltas from the same matched state."""
+    qpos0 = np.asarray(qpos0, dtype=np.float64)
+    qvel0 = np.asarray(qvel0, dtype=np.float64)
+    warp_qpos1 = np.asarray(warp_qpos1, dtype=np.float64)
+    warp_qvel1 = np.asarray(warp_qvel1, dtype=np.float64)
+    native_qpos1 = np.asarray(native_qpos1, dtype=np.float64)
+    native_qvel1 = np.asarray(native_qvel1, dtype=np.float64)
+
+    warp_qpos_delta = warp_qpos1 - qpos0
+    warp_qvel_delta = warp_qvel1 - qvel0
+    native_qpos_delta = native_qpos1 - qpos0
+    native_qvel_delta = native_qvel1 - qvel0
+
+    qpos_delta_diff = warp_qpos_delta - native_qpos_delta
+    qvel_delta_diff = warp_qvel_delta - native_qvel_delta
+    next_qpos_diff = warp_qpos1 - native_qpos1
+    next_qvel_diff = warp_qvel1 - native_qvel1
+
+    state_delta_diff = np.concatenate([qpos_delta_diff.ravel(), qvel_delta_diff.ravel()])
+    next_state_diff = np.concatenate([next_qpos_diff.ravel(), next_qvel_diff.ravel()])
+
+    return {
+        "qpos_delta_l1_sum": float(np.abs(qpos_delta_diff).sum()),
+        "qvel_delta_l1_sum": float(np.abs(qvel_delta_diff).sum()),
+        "state_delta_l1_sum": float(np.abs(state_delta_diff).sum()),
+        "qpos_delta_l1_mean": float(np.abs(qpos_delta_diff).mean()),
+        "qvel_delta_l1_mean": float(np.abs(qvel_delta_diff).mean()),
+        "state_delta_l1_mean": float(np.abs(state_delta_diff).mean()),
+        "qpos_delta_linf": float(np.abs(qpos_delta_diff).max(initial=0.0)),
+        "qvel_delta_linf": float(np.abs(qvel_delta_diff).max(initial=0.0)),
+        "state_delta_linf": float(np.abs(state_delta_diff).max(initial=0.0)),
+        "next_state_l1_sum": float(np.abs(next_state_diff).sum()),
+        "next_state_l1_mean": float(np.abs(next_state_diff).mean()),
+        "next_state_linf": float(np.abs(next_state_diff).max(initial=0.0)),
+    }
+
+
+def detect_step_state_mismatches(
+    metrics: dict[str, float],
+    *,
+    max_step_state_delta_mean: float,
+) -> dict[str, Any]:
+    mismatches: list[str] = []
+    if metrics["state_delta_l1_mean"] > float(max_step_state_delta_mean):
+        mismatches.append(
+            "one_step_state_delta_l1_mean="
+            f"{metrics['state_delta_l1_mean']:.4f} exceeds {max_step_state_delta_mean}"
+        )
+    return {
+        "ok": len(mismatches) == 0,
+        "mismatch_count": len(mismatches),
+        "mismatches": mismatches,
+        "metrics": metrics,
+    }
+
+
 def _count_dict_add(counter: dict[str, int], key: str) -> None:
     counter[key] = counter.get(key, 0) + 1
 
 
 def _native_efc_state_view(mjd: mujoco.MjData) -> tuple[np.ndarray, str]:
     nefc = int(mjd.nefc)
-    # MuJoCo islanded solves keep authoritative per-constraint states in iefc_state.
     if hasattr(mjd, "iefc_state"):
         island_state = np.asarray(mjd.iefc_state)
         if island_state.shape[0] >= nefc:
@@ -221,19 +247,19 @@ def summarize_warp_contact_state(
         worldid = int(contact_worldid[conid])
         geom1 = int(contact_geom[conid][0])
         geom2 = int(contact_geom[conid][1])
-
         row0 = int(contact_efc_address[conid, 0])
         if row0 < 0:
             continue
 
         constraint_contacts += 1
         contact_rows: list[dict[str, Any]] = []
-
         contact_has_active_row = False
+
         for j in range(row_count):
             row = int(contact_efc_address[conid, j]) if j < contact_efc_address.shape[1] else -1
             if row < 0:
                 continue
+
             state = _state_name(int(efc_state[worldid, row]))
             force_abs = abs(float(efc_force[worldid, row]))
             kind = _row_kind(condim, cone_type, j)
@@ -340,24 +366,24 @@ def summarize_native_contact_state(
     efc_state, state_source = _native_efc_state_view(mjd)
 
     for conid in range(ncon):
-        c = mjd.contact[conid]
-        row0 = int(c.efc_address)
+        contact = mjd.contact[conid]
+        row0 = int(contact.efc_address)
         if row0 < 0 or row0 >= nefc:
             continue
 
-        condim = int(c.dim)
+        condim = int(contact.dim)
         row_count = _contact_row_count(condim, cone_type)
-        geom1 = int(c.geom1)
-        geom2 = int(c.geom2)
-
+        geom1 = int(contact.geom1)
+        geom2 = int(contact.geom2)
         constraint_contacts += 1
         contact_rows: list[dict[str, Any]] = []
-
         contact_has_active_row = False
+
         for j in range(row_count):
             row = row0 + j
             if row >= nefc:
                 break
+
             state = _state_name(int(efc_state[row]))
             force_abs = abs(float(mjd.efc_force[row]))
             kind = _row_kind(condim, cone_type, j)
@@ -530,6 +556,191 @@ def detect_contact_parity_mismatches(
     }
 
 
+def _snapshot_info_from_rollout(
+    rollout_cfg: str,
+    policy_path: str,
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "source": snapshot["source"],
+        "rollout_cfg": rollout_cfg,
+        "policy": policy_path,
+        "rollout_steps": int(snapshot["step"]),
+        "step": int(snapshot["step"]),
+    }
+
+
+def _build_single_report(
+    *,
+    cfg_path: str,
+    device: str,
+    qpos: torch.Tensor,
+    qvel: torch.Tensor,
+    actions: torch.Tensor,
+    state_info: dict[str, Any],
+    max_contact_delta: int,
+    max_state_l1: float,
+    max_force_ratio_factor: float,
+    max_step_state_delta_mean: float,
+) -> dict[str, Any]:
+    cfg = load_cfg(cfg_path)
+    model_path = resolve_model_path(cfg["params"]["env"]["model_path"])
+    warp_env = env_from_cfg(cfg, device=device, no_grad=True, num_envs=1)
+    ctrl = actions * float(warp_env.action_strength)
+
+    _load_warp_state(warp_env, qpos, qvel, ctrl)
+    mjw.forward(warp_env.warp_model, warp_env.warp_data)
+    wp.synchronize()
+    warp_summary, warp_contacts = summarize_warp_contact_state(warp_env)
+
+    mjm = mujoco.MjModel.from_xml_path(model_path)
+    mjd = mujoco.MjData(mjm)
+    qpos_np = _tensor_world0_to_numpy(qpos)
+    qvel_np = _tensor_world0_to_numpy(qvel)
+    ctrl_np = _tensor_world0_to_numpy(ctrl)
+    _load_native_state(mjm, mjd, qpos_np, qvel_np, ctrl_np)
+    mujoco.mj_forward(mjm, mjd)
+    native_summary, native_contacts = summarize_native_contact_state(mjm, mjd)
+
+    parity = detect_contact_parity_mismatches(
+        warp_summary,
+        native_summary,
+        max_contact_delta=max_contact_delta,
+        max_state_l1=max_state_l1,
+        max_force_ratio_factor=max_force_ratio_factor,
+    )
+
+    _load_warp_state(warp_env, qpos, qvel, ctrl)
+    for _ in range(warp_env.substeps):
+        mjw.step(warp_env.warp_model, warp_env.warp_data)
+    wp.synchronize()
+    warp_qpos1 = _tensor_world0_to_numpy(wp.to_torch(warp_env.warp_data.qpos))
+    warp_qvel1 = _tensor_world0_to_numpy(wp.to_torch(warp_env.warp_data.qvel))
+    warp_step_summary, warp_step_contacts = summarize_warp_contact_state(warp_env)
+
+    _load_native_state(mjm, mjd, qpos_np, qvel_np, ctrl_np)
+    for _ in range(warp_env.substeps):
+        mujoco.mj_step(mjm, mjd)
+    native_qpos1 = np.asarray(mjd.qpos, dtype=np.float64)[np.newaxis, :]
+    native_qvel1 = np.asarray(mjd.qvel, dtype=np.float64)[np.newaxis, :]
+    native_step_summary, native_step_contacts = summarize_native_contact_state(mjm, mjd)
+
+    one_step_parity = detect_contact_parity_mismatches(
+        warp_step_summary,
+        native_step_summary,
+        max_contact_delta=max_contact_delta,
+        max_state_l1=max_state_l1,
+        max_force_ratio_factor=max_force_ratio_factor,
+    )
+    state_delta = detect_step_state_mismatches(
+        compute_one_step_state_metrics(
+            qpos_np,
+            qvel_np,
+            warp_qpos1,
+            warp_qvel1,
+            native_qpos1,
+            native_qvel1,
+        ),
+        max_step_state_delta_mean=max_step_state_delta_mean,
+    )
+
+    overall_mismatches: list[str] = []
+    overall_mismatches.extend(f"pre_step:{msg}" for msg in parity["mismatches"])
+    overall_mismatches.extend(f"one_step_contact:{msg}" for msg in one_step_parity["mismatches"])
+    overall_mismatches.extend(f"one_step_state:{msg}" for msg in state_delta["mismatches"])
+
+    return {
+        "cfg_path": cfg_path,
+        "model_path": model_path,
+        "device": device,
+        "state": state_info,
+        "thresholds": {
+            "max_contact_delta": int(max_contact_delta),
+            "max_state_l1": float(max_state_l1),
+            "max_force_ratio_factor": float(max_force_ratio_factor),
+            "max_step_state_delta_mean": float(max_step_state_delta_mean),
+        },
+        "warp": {
+            "summary": warp_summary,
+            "contacts": warp_contacts,
+        },
+        "native": {
+            "summary": native_summary,
+            "contacts": native_contacts,
+        },
+        "parity": parity,
+        "one_step": {
+            "warp": {
+                "summary": warp_step_summary,
+                "contacts": warp_step_contacts,
+            },
+            "native": {
+                "summary": native_step_summary,
+                "contacts": native_step_contacts,
+            },
+            "parity": one_step_parity,
+            "state_delta": state_delta,
+        },
+        "overall": {
+            "ok": parity["ok"] and one_step_parity["ok"] and state_delta["ok"],
+            "mismatch_count": len(overall_mismatches),
+            "mismatches": overall_mismatches,
+        },
+    }
+
+
+def _gather_snapshots(
+    *,
+    cfg_path: str,
+    device: str,
+    settle_steps: int,
+    ctrl_val: float,
+    rollout_cfg: str | None,
+    policy_path: str | None,
+    rollout_steps: int,
+    rollout_step_list: list[int] | None,
+) -> list[dict[str, Any]]:
+    if (rollout_cfg is None) != (policy_path is None):
+        raise ValueError("--rollout-cfg and --policy must be provided together")
+
+    if rollout_cfg is None:
+        qpos, qvel, actions, state_info = _snapshot_from_settle(
+            cfg_path=cfg_path,
+            device=device,
+            settle_steps=settle_steps,
+            ctrl_val=ctrl_val,
+        )
+        return [
+            {
+                "qpos": qpos,
+                "qvel": qvel,
+                "actions": actions,
+                "state_info": state_info,
+            }
+        ]
+
+    steps = normalize_snapshot_steps(rollout_step_list, fallback_step=rollout_steps)
+    if not steps:
+        raise ValueError("rollout snapshot steps must contain at least one non-negative step")
+
+    snapshots = capture_rollout_snapshots(
+        rollout_cfg,
+        policy_path,
+        device=device,
+        snapshot_steps=steps,
+        num_envs=1,
+    )
+    return [
+        {
+            "qpos": snapshot["qpos"],
+            "qvel": snapshot["qvel"],
+            "actions": snapshot["actions"],
+            "state_info": _snapshot_info_from_rollout(rollout_cfg, policy_path, snapshot),
+        }
+        for snapshot in snapshots
+    ]
+
+
 def run_contact_state_parity(
     *,
     cfg_path: str,
@@ -542,83 +753,106 @@ def run_contact_state_parity(
     max_contact_delta: int,
     max_state_l1: float,
     max_force_ratio_factor: float,
+    max_step_state_delta_mean: float = 0.02,
 ) -> dict[str, Any]:
-    cfg = _load_cfg(cfg_path)
-    model_path = resolve_model_path(cfg["params"]["env"]["model_path"])
-
-    if (rollout_cfg is None) != (policy_path is None):
-        raise ValueError("--rollout-cfg and --policy must be provided together")
-
-    if rollout_cfg is not None and policy_path is not None:
-        qpos, qvel, actions, state_info = _snapshot_from_rollout(
-            cfg_path=rollout_cfg,
-            policy_path=policy_path,
-            device=device,
-            rollout_steps=rollout_steps,
-        )
-    else:
-        qpos, qvel, actions, state_info = _snapshot_from_settle(
-            cfg_path=cfg_path,
-            device=device,
-            settle_steps=settle_steps,
-            ctrl_val=ctrl_val,
-        )
-
-    # Warp summary at matched state
-    warp_env = _env_from_cfg(cfg, device=device, no_grad=True)
-    ctrl = actions * float(warp_env.action_strength)
-    with torch.no_grad():
-        wp.copy(warp_env.warp_data.qpos, wp.from_torch(qpos.contiguous()))
-        wp.copy(warp_env.warp_data.qvel, wp.from_torch(qvel.contiguous()))
-        wp.copy(warp_env.warp_data.ctrl, wp.from_torch(ctrl.contiguous()))
-        wp.synchronize()
-        mjw.forward(warp_env.warp_model, warp_env.warp_data)
-        wp.synchronize()
-    warp_summary, warp_contacts = summarize_warp_contact_state(warp_env)
-
-    # Native summary at same qpos/qvel/ctrl
-    mjm = mujoco.MjModel.from_xml_path(model_path)
-    mjd = mujoco.MjData(mjm)
-    mjd.qpos[:] = qpos[0].detach().cpu().numpy().astype(np.float64)
-    mjd.qvel[:] = qvel[0].detach().cpu().numpy().astype(np.float64)
-    ctrl_np = ctrl[0].detach().cpu().numpy().astype(np.float64)
-    mjd.ctrl[: ctrl_np.shape[0]] = ctrl_np
-    mujoco.mj_forward(mjm, mjd)
-    native_summary, native_contacts = summarize_native_contact_state(mjm, mjd)
-
-    parity = detect_contact_parity_mismatches(
-        warp_summary,
-        native_summary,
+    wp.init()
+    snapshots = _gather_snapshots(
+        cfg_path=cfg_path,
+        device=device,
+        settle_steps=settle_steps,
+        ctrl_val=ctrl_val,
+        rollout_cfg=rollout_cfg,
+        policy_path=policy_path,
+        rollout_steps=rollout_steps,
+        rollout_step_list=None,
+    )
+    snapshot = snapshots[0]
+    return _build_single_report(
+        cfg_path=cfg_path,
+        device=device,
+        qpos=snapshot["qpos"],
+        qvel=snapshot["qvel"],
+        actions=snapshot["actions"],
+        state_info=snapshot["state_info"],
         max_contact_delta=max_contact_delta,
         max_state_l1=max_state_l1,
         max_force_ratio_factor=max_force_ratio_factor,
+        max_step_state_delta_mean=max_step_state_delta_mean,
     )
+
+
+def run_contact_state_parity_series(
+    *,
+    cfg_path: str,
+    device: str,
+    settle_steps: int,
+    ctrl_val: float,
+    rollout_cfg: str,
+    policy_path: str,
+    rollout_steps: int,
+    rollout_step_list: list[int],
+    max_contact_delta: int,
+    max_state_l1: float,
+    max_force_ratio_factor: float,
+    max_step_state_delta_mean: float = 0.02,
+) -> dict[str, Any]:
+    wp.init()
+    snapshots = _gather_snapshots(
+        cfg_path=cfg_path,
+        device=device,
+        settle_steps=settle_steps,
+        ctrl_val=ctrl_val,
+        rollout_cfg=rollout_cfg,
+        policy_path=policy_path,
+        rollout_steps=rollout_steps,
+        rollout_step_list=rollout_step_list,
+    )
+    reports = [
+        _build_single_report(
+            cfg_path=cfg_path,
+            device=device,
+            qpos=snapshot["qpos"],
+            qvel=snapshot["qvel"],
+            actions=snapshot["actions"],
+            state_info=snapshot["state_info"],
+            max_contact_delta=max_contact_delta,
+            max_state_l1=max_state_l1,
+            max_force_ratio_factor=max_force_ratio_factor,
+            max_step_state_delta_mean=max_step_state_delta_mean,
+        )
+        for snapshot in snapshots
+    ]
+
+    overall_mismatches: list[str] = []
+    failed_steps: list[int] = []
+    for report in reports:
+        step = int(report["state"].get("step", -1))
+        if not report["overall"]["ok"]:
+            failed_steps.append(step)
+        overall_mismatches.extend(
+            f"step={step}:{msg}" for msg in report["overall"]["mismatches"]
+        )
 
     return {
         "cfg_path": cfg_path,
-        "model_path": model_path,
         "device": device,
-        "state": state_info,
-        "thresholds": {
-            "max_contact_delta": int(max_contact_delta),
-            "max_state_l1": float(max_state_l1),
-            "max_force_ratio_factor": float(max_force_ratio_factor),
+        "thresholds": reports[0]["thresholds"] if reports else {},
+        "rollout_cfg": rollout_cfg,
+        "policy": policy_path,
+        "steps": [int(report["state"].get("step", -1)) for report in reports],
+        "reports": reports,
+        "overall": {
+            "ok": all(report["overall"]["ok"] for report in reports),
+            "mismatch_count": len(overall_mismatches),
+            "mismatches": overall_mismatches,
+            "failed_steps": failed_steps,
         },
-        "warp": {
-            "summary": warp_summary,
-            "contacts": warp_contacts,
-        },
-        "native": {
-            "summary": native_summary,
-            "contacts": native_contacts,
-        },
-        "parity": parity,
     }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Compare Warp and native MuJoCo contact state on matched ant state"
+        description="Compare Warp and native MuJoCo contact state on matched ant states"
     )
     parser.add_argument(
         "--cfg",
@@ -632,85 +866,173 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rollout-cfg", type=str, default=None)
     parser.add_argument("--policy", type=str, default=None)
     parser.add_argument("--rollout-steps", type=int, default=64)
+    parser.add_argument(
+        "--rollout-step-list",
+        nargs="+",
+        type=int,
+        default=None,
+        help="Optional list of rollout snapshot steps for dynamic parity checks",
+    )
     parser.add_argument("--max-contact-delta", type=int, default=2)
     parser.add_argument("--max-state-l1", type=float, default=0.35)
     parser.add_argument("--max-force-ratio-factor", type=float, default=3.0)
+    parser.add_argument("--max-step-state-delta-mean", type=float, default=0.02)
     parser.add_argument("--assert-on-mismatch", action="store_true")
     parser.add_argument("--output-json", type=str, default=None)
     return parser.parse_args()
 
 
-def print_summary(report: dict[str, Any]) -> None:
+def _print_contact_block(label: str, summary: dict[str, Any]) -> None:
+    print(
+        f"{label}: contacts={summary['constraint_contacts']} active={summary['active_contacts']} "
+        f"normal_states={summary['normal_states']} friction_states={summary['friction_states']}"
+    )
+
+
+def _print_single_summary(report: dict[str, Any]) -> None:
     warp = report["warp"]["summary"]
     native = report["native"]["summary"]
     parity = report["parity"]
-    metrics = parity["metrics"]
+    parity_metrics = parity["metrics"]
+    one_step = report["one_step"]
+    step_parity = one_step["parity"]
+    state_delta = one_step["state_delta"]
 
     print("Contact State Parity Diagnostic")
     print("================================")
     print(f"model: {report['model_path']}")
     print(f"state source: {report['state']['source']}")
+    if "step" in report["state"]:
+        print(f"rollout step: {report['state']['step']}")
+    print()
+    _print_contact_block("warp pre-step", warp)
+    _print_contact_block("native pre-step", native)
     print()
     print(
-        "warp:   contacts={:d} active={:d} normal_states={} friction_states={}".format(
-            warp["constraint_contacts"],
-            warp["active_contacts"],
-            warp["normal_states"],
-            warp["friction_states"],
+        "pre-step force ratios: warp={:.4f}, native={:.4f}, factor={:.4f}".format(
+            parity_metrics["warp_force_ratio"],
+            parity_metrics["native_force_ratio"],
+            parity_metrics["force_ratio_factor"],
         )
     )
     print(
-        "native: contacts={:d} active={:d} normal_states={} friction_states={}".format(
-            native["constraint_contacts"],
-            native["active_contacts"],
-            native["normal_states"],
-            native["friction_states"],
-        )
-    )
-    if "state_source" in native:
-        print(f"native state source: {native['state_source']}")
-    print()
-    print(
-        "force ratios (friction/normal): warp={:.4f}, native={:.4f}, factor={:.4f}".format(
-            metrics["warp_force_ratio"],
-            metrics["native_force_ratio"],
-            metrics["force_ratio_factor"],
+        "pre-step state L1: normal={:.4f}, friction={:.4f}, row={:.4f}".format(
+            parity_metrics["normal_state_l1"],
+            parity_metrics["friction_state_l1"],
+            parity_metrics["row_state_l1"],
         )
     )
     print(
-        "state L1: normal={:.4f}, friction={:.4f}, row={:.4f}".format(
-            metrics["normal_state_l1"],
-            metrics["friction_state_l1"],
-            metrics["row_state_l1"],
+        "pre-step contact deltas: constraint={:d}, active={:d}".format(
+            parity_metrics["constraint_contact_delta"],
+            parity_metrics["active_contact_delta"],
         )
     )
-    print(
-        "contact deltas: constraint={:d}, active={:d}".format(
-            metrics["constraint_contact_delta"],
-            metrics["active_contact_delta"],
-        )
-    )
-    print()
-    print(f"parity_ok: {parity['ok']} (mismatches={parity['mismatch_count']})")
+    print(f"pre-step parity_ok: {parity['ok']} (mismatches={parity['mismatch_count']})")
     for msg in parity["mismatches"]:
         print(f"  - {msg}")
+
+    print()
+    _print_contact_block("warp one-step", one_step["warp"]["summary"])
+    _print_contact_block("native one-step", one_step["native"]["summary"])
+    print(
+        "one-step state delta: mean={:.6e} linf={:.6e} next_state_mean={:.6e}".format(
+            state_delta["metrics"]["state_delta_l1_mean"],
+            state_delta["metrics"]["state_delta_linf"],
+            state_delta["metrics"]["next_state_l1_mean"],
+        )
+    )
+    print(
+        f"one-step contact parity_ok: {step_parity['ok']} "
+        f"(mismatches={step_parity['mismatch_count']})"
+    )
+    for msg in step_parity["mismatches"]:
+        print(f"  - {msg}")
+    print(
+        f"one-step state parity_ok: {state_delta['ok']} "
+        f"(mismatches={state_delta['mismatch_count']})"
+    )
+    for msg in state_delta["mismatches"]:
+        print(f"  - {msg}")
+
+    print()
+    print(
+        f"overall_ok: {report['overall']['ok']} "
+        f"(mismatches={report['overall']['mismatch_count']})"
+    )
+
+
+def _print_series_summary(report: dict[str, Any]) -> None:
+    print("Contact State Parity Series Diagnostic")
+    print("======================================")
+    print(f"cfg: {report['cfg_path']}")
+    print(f"rollout cfg: {report['rollout_cfg']}")
+    print(f"policy: {report['policy']}")
+    print()
+    print(
+        f"{'step':>6} {'pre':>6} {'step_ct':>8} {'step_dx':>8} {'dx_mean':>12} {'overall':>8}"
+    )
+    for item in report["reports"]:
+        state_delta = item["one_step"]["state_delta"]["metrics"]["state_delta_l1_mean"]
+        print(
+            f"{item['state'].get('step', -1):>6d} "
+            f"{str(item['parity']['ok']):>6} "
+            f"{str(item['one_step']['parity']['ok']):>8} "
+            f"{str(item['one_step']['state_delta']['ok']):>8} "
+            f"{state_delta:>12.6e} "
+            f"{str(item['overall']['ok']):>8}"
+        )
+
+    print()
+    print(
+        f"overall_ok: {report['overall']['ok']} "
+        f"(failed_steps={report['overall']['failed_steps']})"
+    )
+    for msg in report["overall"]["mismatches"]:
+        print(f"  - {msg}")
+
+
+def print_summary(report: dict[str, Any]) -> None:
+    if "reports" in report:
+        _print_series_summary(report)
+        return
+    _print_single_summary(report)
 
 
 def main() -> None:
     args = parse_args()
 
-    report = run_contact_state_parity(
-        cfg_path=args.cfg,
-        device=args.device,
-        settle_steps=args.settle_steps,
-        ctrl_val=args.ctrl_val,
-        rollout_cfg=args.rollout_cfg,
-        policy_path=args.policy,
-        rollout_steps=args.rollout_steps,
-        max_contact_delta=args.max_contact_delta,
-        max_state_l1=args.max_state_l1,
-        max_force_ratio_factor=args.max_force_ratio_factor,
-    )
+    if args.rollout_step_list is not None:
+        if args.rollout_cfg is None or args.policy is None:
+            raise ValueError("--rollout-step-list requires --rollout-cfg and --policy")
+        report = run_contact_state_parity_series(
+            cfg_path=args.cfg,
+            device=args.device,
+            settle_steps=args.settle_steps,
+            ctrl_val=args.ctrl_val,
+            rollout_cfg=args.rollout_cfg,
+            policy_path=args.policy,
+            rollout_steps=args.rollout_steps,
+            rollout_step_list=args.rollout_step_list,
+            max_contact_delta=args.max_contact_delta,
+            max_state_l1=args.max_state_l1,
+            max_force_ratio_factor=args.max_force_ratio_factor,
+            max_step_state_delta_mean=args.max_step_state_delta_mean,
+        )
+    else:
+        report = run_contact_state_parity(
+            cfg_path=args.cfg,
+            device=args.device,
+            settle_steps=args.settle_steps,
+            ctrl_val=args.ctrl_val,
+            rollout_cfg=args.rollout_cfg,
+            policy_path=args.policy,
+            rollout_steps=args.rollout_steps,
+            max_contact_delta=args.max_contact_delta,
+            max_state_l1=args.max_state_l1,
+            max_force_ratio_factor=args.max_force_ratio_factor,
+            max_step_state_delta_mean=args.max_step_state_delta_mean,
+        )
     print_summary(report)
 
     if args.output_json is not None:
@@ -720,7 +1042,7 @@ def main() -> None:
             json.dump(report, f, indent=2)
         print(f"\nwrote JSON report to: {out_path}")
 
-    if args.assert_on_mismatch and not report["parity"]["ok"]:
+    if args.assert_on_mismatch and not report["overall"]["ok"]:
         raise SystemExit(2)
 
 

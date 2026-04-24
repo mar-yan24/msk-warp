@@ -28,6 +28,11 @@ def test_diagnose_reward_matches_antenv_formula():
         "substeps": 4,
         "episode_length": 1000,
         "early_termination": True,
+        "reward_curriculum": {
+            "enabled": False,
+            "anneal_epochs": 20,
+            "target_speed": 0.5,
+        },
         "forward_vel_weight": 1.7,
         "heading_weight": 0.4,
         "up_weight": 0.2,

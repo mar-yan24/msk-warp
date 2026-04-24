@@ -24,8 +24,8 @@ from typing import Any
 
 import numpy as np
 import yaml
-from tensorboard.backend.event_processing import event_accumulator
 
+from msk_warp.utils.ant_metrics import read_grad_metrics
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PYTHON = str(REPO_ROOT / ".venv" / "Scripts" / "python.exe")
@@ -175,55 +175,6 @@ def read_json(path: Path) -> dict[str, Any] | None:
         return None
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
-
-
-def read_grad_metrics(logdir: Path, grad_norm_target: float) -> dict[str, Any]:
-    event_dir = logdir / "log"
-    if not event_dir.exists():
-        return {}
-    try:
-        ea = event_accumulator.EventAccumulator(str(event_dir), size_guidance={"scalars": 0})
-        ea.Reload()
-    except Exception:
-        return {}
-
-    tags = ea.Tags().get("scalars", [])
-    if "grad_norm/before_clip" not in tags or "grad_norm/after_clip" not in tags:
-        return {}
-
-    before = np.array([s.value for s in ea.Scalars("grad_norm/before_clip")], dtype=np.float64)
-    after = np.array([s.value for s in ea.Scalars("grad_norm/after_clip")], dtype=np.float64)
-    if "grad_norm/actor_clip_threshold" in tags:
-        clip_target = np.array(
-            [s.value for s in ea.Scalars("grad_norm/actor_clip_threshold")],
-            dtype=np.float64,
-        )
-        n = int(min(len(before), len(after), len(clip_target)))
-        if n <= 0:
-            return {}
-        before = before[:n]
-        after = after[:n]
-        clip_target = clip_target[:n]
-    else:
-        clip_target = np.full_like(after, float(grad_norm_target), dtype=np.float64)
-
-    tol = np.maximum(1e-3, 1e-3 * np.maximum(1.0, np.abs(clip_target)))
-    clip_hits = np.abs(after - clip_target) <= tol
-    compression = before / np.maximum(after, 1e-12)
-    return {
-        "epochs_logged": int(len(after)),
-        "grad_before_min": float(np.min(before)),
-        "grad_before_median": float(np.median(before)),
-        "grad_before_max": float(np.max(before)),
-        "grad_after_min": float(np.min(after)),
-        "grad_after_median": float(np.median(after)),
-        "grad_after_max": float(np.max(after)),
-        "clip_target_min": float(np.min(clip_target)),
-        "clip_target_median": float(np.median(clip_target)),
-        "clip_target_max": float(np.max(clip_target)),
-        "clip_hit_rate": float(np.mean(clip_hits)),
-        "compression_median": float(np.median(compression)),
-    }
 
 
 def score_run(rollout: dict[str, Any] | None, grad_metrics: dict[str, Any]) -> float:

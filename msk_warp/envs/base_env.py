@@ -149,6 +149,10 @@ class MjWarpEnv:
         self.calculateObservations()
         return self.obs_buf
 
+    def begin_epoch(self, epoch: int, max_epochs: int) -> dict[str, float]:
+        """Optional epoch hook for env-specific schedules."""
+        return {}
+
     def step(self, actions):
         raise NotImplementedError
 

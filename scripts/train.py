@@ -1,4 +1,4 @@
-"""Entry point for SHAC training."""
+"""Entry point for training (SHAC or PPO)."""
 
 import argparse
 import os
@@ -10,15 +10,22 @@ wp.init()
 
 from msk_warp import PACKAGE_ROOT
 from msk_warp.algorithms.shac import SHAC
+from msk_warp.algorithms.ppo import PPO
+
+ALGO_MAP = {
+    'shac': SHAC,
+    'ppo': PPO,
+}
 
 
 def main():
-    parser = argparse.ArgumentParser(description='SHAC Training')
+    parser = argparse.ArgumentParser(description='RL Training')
     parser.add_argument('--cfg', type=str, default='configs/cartpole_shac.yaml')
     parser.add_argument('--logdir', type=str, default=None)
     parser.add_argument('--seed', type=int, default=None)
     parser.add_argument('--device', type=str, default=None)
     parser.add_argument('--max-epochs', type=int, default=None)
+    parser.add_argument('--init-policy', type=str, default=None)
     args = parser.parse_args()
 
     # Resolve config path: check package first, then CWD
@@ -40,9 +47,16 @@ def main():
         cfg['params']['general']['device'] = args.device
     if args.max_epochs is not None:
         cfg['params']['config']['max_epochs'] = args.max_epochs
+    if args.init_policy is not None:
+        cfg['params']['general']['init_policy'] = args.init_policy
 
-    shac = SHAC(cfg)
-    shac.train()
+    algo_name = cfg['params']['config'].get('algorithm', 'shac')
+    algo_cls = ALGO_MAP[algo_name]
+    algo = algo_cls(cfg)
+    init_policy = cfg['params']['general'].get('init_policy')
+    if init_policy is not None:
+        algo.load(init_policy, reset_optimizers=True)
+    algo.train()
 
 
 if __name__ == '__main__':

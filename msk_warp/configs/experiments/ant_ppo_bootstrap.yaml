@@ -1,0 +1,58 @@
+# PPO bootstrap for Ant locomotion: escapes the standing local minimum.
+# Heavily down-weights stability rewards and up-weights velocity so that
+# episode-level credit assignment discovers locomotion > standing.
+# Checkpoint is SHAC-compatible — hand off to ant_shac_from_ppo.yaml.
+params:
+  general:
+    seed: 42
+    device: cuda:0
+    logdir: logs/ant_ppo_bootstrap
+
+  env:
+    name: Ant
+    model_path: assets/ant_soft.xml
+    num_actors: 64
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    early_termination: true
+    forward_vel_weight: 3.0
+    heading_weight: 0.1
+    up_weight: 0.02
+    height_weight: 0.2
+
+  network:
+    actor: ActorStochasticMLP
+    actor_logstd_init: -1.0
+    actor_mlp:
+      units: [128, 64, 32]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [64, 64]
+      activation: elu
+
+  config:
+    algorithm: ppo
+    name: ant_ppo_bootstrap
+    gamma: 0.99
+    steps_num: 2048
+    max_epochs: 500
+    actor_learning_rate: 3e-4
+    critic_learning_rate: 3e-4
+    lr_schedule: constant
+    betas: [0.9, 0.999]
+    obs_rms: true
+    ret_rms: false
+    truncate_grads: true
+    max_grad_norm: 0.5
+    save_interval: 25
+    # PPO-specific
+    clip_range: 0.2
+    entropy_coef: 0.01
+    value_coef: 0.5
+    gae_lambda: 0.95
+    ppo_epochs: 10
+    num_minibatches: 32
+    normalize_advantages: true

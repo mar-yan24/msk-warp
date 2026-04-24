@@ -29,6 +29,7 @@ import mujoco
 import yaml
 
 from msk_warp import resolve_model_path
+from msk_warp.utils.ant_metrics import read_grad_metrics
 from msk_warp.utils.running_mean_std import RunningMeanStd
 import msk_warp.utils.torch_utils as tu
 
@@ -182,6 +183,26 @@ class AntDiagAdapter:
         if not self.early_termination:
             return False
         return obs[0, 0].item() < self.termination_height
+
+
+def infer_training_logdir(cfg_path, explicit_logdir=None):
+    """Infer a training logdir from an explicit arg or a cfg.yaml path."""
+    if explicit_logdir is not None:
+        return explicit_logdir
+    cfg_abs = os.path.abspath(cfg_path)
+    if os.path.basename(cfg_abs) == 'cfg.yaml':
+        return os.path.dirname(cfg_abs)
+    return None
+
+
+def load_grad_metrics(cfg, logdir):
+    """Load TensorBoard clip metrics for a training run when available."""
+    if logdir is None or not os.path.isdir(logdir):
+        return None
+    conf = cfg['params']['config']
+    clip_target = conf.get('actor_grad_norm', conf.get('grad_norm'))
+    metrics = read_grad_metrics(logdir, float(clip_target) if clip_target is not None else None)
+    return metrics or None
 
 
 def run_rollout_diagnostics(args, cfg):
@@ -607,6 +628,8 @@ def main():
                         help='Use random actions instead of a policy')
     parser.add_argument('--json-out', type=str, default=None,
                         help='Optional path to write a JSON summary report')
+    parser.add_argument('--logdir', type=str, default=None,
+                        help='Optional training logdir for TensorBoard grad metrics')
     args = parser.parse_args()
 
     if not args.random and args.policy is None:
@@ -623,6 +646,16 @@ def main():
     # --- Rollout diagnostics (always runs) ---
     print("--- Running rollout episodes ---")
     rollout_summary = run_rollout_diagnostics(args, cfg)
+    grad_metrics = load_grad_metrics(cfg, infer_training_logdir(args.cfg, args.logdir))
+    if grad_metrics is not None:
+        print("--- Gradient clip metrics ---")
+        print(f"  epochs logged:          {grad_metrics['epochs_logged']}")
+        print(f"  grad before median:     {grad_metrics['grad_before_median']:.4f}")
+        print(f"  grad after median:      {grad_metrics['grad_after_median']:.4f}")
+        print(f"  clip target median:     {grad_metrics['clip_target_median']:.4f}")
+        print(f"  clip hit rate:          {grad_metrics['clip_hit_rate']:.3f}")
+        print(f"  compression median:     {grad_metrics['compression_median']:.3f}")
+        print()
 
     # --- Gradient diagnostics (optional, needs CUDA) ---
     if args.grad:
@@ -637,6 +670,7 @@ def main():
             'cfg': args.cfg,
             'policy': None if args.random else args.policy,
             'rollout': rollout_summary,
+            'grad_metrics': grad_metrics,
             'grad_enabled': bool(args.grad),
         }
         with open(args.json_out, 'w', encoding='utf-8') as f:
