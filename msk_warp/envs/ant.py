@@ -206,6 +206,7 @@ class AntEnv(MjWarpEnv):
         penalty_damping_alpha = kwargs.pop('penalty_damping_alpha', 0.0)
         friction_surrogate_adjoint = kwargs.pop('friction_surrogate_adjoint', False)
         friction_surrogate_alpha = kwargs.pop('friction_surrogate_alpha', 0.0)
+        cfd_width = float(kwargs.pop('cfd_width', 0.0))
         reward_curriculum = normalize_reward_curriculum_cfg(
             kwargs.pop('reward_curriculum', None)
         )
@@ -233,6 +234,7 @@ class AntEnv(MjWarpEnv):
             penalty_damping_alpha=penalty_damping_alpha,
             friction_surrogate_adjoint=friction_surrogate_adjoint,
             friction_surrogate_alpha=friction_surrogate_alpha,
+            cfd_width=cfd_width,
         )
 
         self.stochastic_init = stochastic_init

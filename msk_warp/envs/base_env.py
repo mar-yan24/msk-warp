@@ -33,6 +33,7 @@ class MjWarpEnv:
         penalty_damping_alpha=0.0,
         friction_surrogate_adjoint=False,
         friction_surrogate_alpha=0.0,
+        cfd_width=0.0,
     ):
         self.device = device
         self.num_environments = num_envs
@@ -51,6 +52,7 @@ class MjWarpEnv:
         self.penalty_damping_alpha = penalty_damping_alpha
         self.friction_surrogate_adjoint = friction_surrogate_adjoint
         self.friction_surrogate_alpha = friction_surrogate_alpha
+        self.cfd_width = float(cfd_width)
 
         # Load MuJoCo model
         model_path = resolve_model_path(model_path)

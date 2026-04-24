@@ -177,6 +177,12 @@ class WarpSimStep(torch.autograd.Function):
         nq = d.qpos.shape[1]
         nv = d.qvel.shape[1]
 
+        # CFD: keep forward physics untouched (cfd_width must be 0 during forward).
+        # The backward path will toggle cfd_width on if env.cfd_width > 0.
+        cfd_width_value = float(getattr(env, 'cfd_width', 0.0))
+        if cfd_width_value > 0.0:
+            m.opt.cfd_width.fill_(0.0)
+
         # Copy input state to Warp data
         wp.copy(d.qpos, wp.from_torch(qpos_in_torch.detach().contiguous()))
         wp.copy(d.qvel, wp.from_torch(qvel_in_torch.detach().contiguous()))
@@ -211,6 +217,7 @@ class WarpSimStep(torch.autograd.Function):
         ctx.nworld = nworld
         ctx.nq = nq
         ctx.nv = nv
+        ctx.cfd_width = cfd_width_value
 
         return qpos_torch, qvel_torch
 
@@ -249,10 +256,11 @@ class WarpSimStep(torch.autograd.Function):
         grad_qpos_wp = wp.from_torch(grad_qpos_torch.contiguous())
         grad_qvel_wp = wp.from_torch(grad_qvel_torch.contiguous())
 
-        # 3. Let the tape manage .grad arrays — do NOT replace them with
-        # new arrays, as this disconnects them from the tape's internal
-        # gradient routing.  tape.zero() (called at the end of backward)
-        # handles cleanup between calls.
+        # 3. CFD: enable for the tape replay so impedance is non-zero for
+        # near-miss contacts during gradient computation. cfd_width is
+        # restored to 0 in the finally block to keep forward physics clean.
+        if ctx.cfd_width > 0.0:
+            m.opt.cfd_width.fill_(ctx.cfd_width)
 
         # 4. Tape through all substeps + VJP kernel
         loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
@@ -289,9 +297,11 @@ class WarpSimStep(torch.autograd.Function):
                 grad_ctrl, grad_qpos_in, grad_qvel_in
             )
         finally:
-            # 8. Clean up tape (even if backward throws)
+            # 8. Clean up tape (even if backward throws); reset cfd_width.
             tape.zero()
             del tape
+            if ctx.cfd_width > 0.0:
+                m.opt.cfd_width.fill_(0.0)
 
         # 9. Restore to post-step state (skippable — see _SKIP_BACKWARD_RERUN)
         if not _SKIP_BACKWARD_RERUN:
@@ -322,7 +332,9 @@ class WarpSimStep(torch.autograd.Function):
         wp.copy(d.ctrl, ctrl_wp)
         wp.synchronize()
 
-        # 2. Save intermediate states for all substeps
+        # 2. Capture intermediate states using REAL physics (cfd_width=0).
+        # The CFD-augmented physics only runs during the per-substep tape replays
+        # below, so the saved states match the forward trajectory.
         has_act = ctx.saved_act is not None
         states = []
         for s in range(substeps):
@@ -330,6 +342,10 @@ class WarpSimStep(torch.autograd.Function):
             states.append((wp.clone(d.qpos), wp.clone(d.qvel), wp.clone(d.time), act_snap))
             mjw.step(m, d)
         wp.synchronize()
+
+        # 2b. Now enable CFD for the per-substep tape replays.
+        if ctx.cfd_width > 0.0:
+            m.opt.cfd_width.fill_(ctx.cfd_width)
 
         # 3. Current gradients w.r.t. post-final-substep state
         g_qpos = grad_qpos_torch.clone()
@@ -382,7 +398,9 @@ class WarpSimStep(torch.autograd.Function):
             total_grad_ctrl, g_qpos, g_qvel
         )
 
-        # 6. Restore to post-step state (skippable — see _SKIP_BACKWARD_RERUN)
+        # 6. Restore CFD flag and post-step state (skippable — see _SKIP_BACKWARD_RERUN)
+        if ctx.cfd_width > 0.0:
+            m.opt.cfd_width.fill_(0.0)
         if not _SKIP_BACKWARD_RERUN:
             _restore_and_rerun(
                 m, d, ctx.saved_qpos, ctx.saved_qvel, ctx.saved_time,
