@@ -1,25 +1,25 @@
 <mujoco model="ant_soft">
   <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
-  <!-- Softer contacts: solref time constant 0.05s (default 0.02) = 2.5x softer.
-       This increases d(force)/d(penetration) gradient magnitude while keeping
-       physics qualitatively similar. solver="Newton" jacobian="dense" required
-       for tape-mode contact gradients. -->
-  <option timestep="0.00104167" gravity="0 0 -9.81" solver="Newton" jacobian="dense"/>
+  <!-- Soft contact variant for stable BPTT gradients.
+       solref: larger time constant (0.06 vs 0.02) reduces contact stiffness D ~9x
+       solimp: wider impedance transition for smoother contacts
+       damping: increased to 3 for more dissipative dynamics (bounded eigenvalues)
+       All other parameters match ant_substeps4.xml -->
+  <option timestep="0.00416667" gravity="0 0 -9.81" solver="Newton" jacobian="dense"/>
 
   <size njmax="4096" nconmax="1024"/>
 
   <default>
     <joint armature="0.05" damping="1" limited="true"/>
-    <!-- Softer contacts: solref=[0.05, 1] (2.5x softer than default [0.02, 1])
-         solimp=[0.9, 0.99, 0.001] (wider impedance range for smoother gradients) -->
     <geom condim="3" density="1000.0" friction="1.5 0.1 0.1" margin="0.01"
-          solref="0.05 1" solimp="0.9 0.99 0.001"
+          solref="0.06 1.2" solimp="0.95 0.99 0.001 0.5 2"
           rgba="0.97 0.38 0.06 1" contype="1" conaffinity="1"/>
   </default>
 
   <worldbody>
     <geom name="floor" type="plane" size="50 50 1" rgba="0.8 0.9 0.8 1"
-          contype="1" conaffinity="1" condim="3"/>
+          contype="1" conaffinity="1" condim="3"
+          solref="0.06 1.2" solimp="0.95 0.99 0.001 0.5 2"/>
 
     <body name="torso" pos="0 0 0.75">
       <geom name="torso_geom" pos="0 0 0" size="0.25" type="sphere"/>

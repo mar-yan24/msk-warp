@@ -35,7 +35,6 @@ class MjWarpEnv:
         self.substeps = substeps
         self.use_fd_jacobian = use_fd_jacobian
         self.tape_per_substep = tape_per_substep
-
         # Load MuJoCo model
         model_path = resolve_model_path(model_path)
         self.mjm = mujoco.MjModel.from_xml_path(model_path)
@@ -110,6 +109,10 @@ class MjWarpEnv:
         self.clear_grad()
         self.calculateObservations()
         return self.obs_buf
+
+    def begin_epoch(self, epoch: int, max_epochs: int) -> dict[str, float]:
+        """Optional epoch hook for env-specific schedules."""
+        return {}
 
     def step(self, actions):
         raise NotImplementedError

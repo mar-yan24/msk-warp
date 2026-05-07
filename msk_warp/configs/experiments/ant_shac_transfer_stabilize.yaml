@@ -1,0 +1,84 @@
+# SHAC transfer stage 1 for PPO-bootstrapped Ant locomotion.
+# Keeps the soft-surrogate branch, preserves the bootstrap gait with a
+# decaying action anchor, and anneals reward/reset curricula back toward the
+# canonical Ant objective.
+params:
+  general:
+    seed: 42
+    device: cuda:0
+    logdir: logs/ant_shac_transfer_stabilize
+    init_policy: null
+
+  env:
+    name: Ant
+    model_path: assets/ant_soft.xml
+    num_actors: 64
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    early_termination: true
+    use_fd_jacobian: false
+    tape_per_substep: true
+    forward_vel_weight: 1.0
+    heading_weight: 1.0
+    up_weight: 0.1
+    height_weight: 1.0
+    reward_curriculum:
+      enabled: true
+      anneal_epochs: 50
+      target_speed: 0.5
+      low_speed_penalty_weight_init: 0.5
+      forward_scale_init: 3.0
+      heading_scale_init: 0.1
+      height_scale_init: 0.2
+      up_scale_init: 0.2
+    reset_curriculum:
+      enabled: true
+      anneal_epochs: 50
+      canonical_prob_init: 0.5
+      x_vel_range: [0.3, 0.8]
+      y_vel_abs_max: 0.15
+      yaw_deg_abs_max: 12.0
+      yaw_rate_abs_max: 0.5
+
+  network:
+    actor: ActorStochasticMLP
+    actor_mlp:
+      units: [128, 64, 32]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [64, 64]
+      activation: elu
+
+  config:
+    name: ant_shac_transfer_stabilize
+    gamma: 0.99
+    steps_num: 8
+    max_epochs: 100
+    actor_learning_rate: 1e-3
+    critic_learning_rate: 2e-3
+    lr_schedule: constant
+    betas: [0.7, 0.95]
+    target_critic_alpha: 0.2
+    obs_rms: true
+    ret_rms: false
+    critic_iterations: 16
+    critic_method: td-lambda
+    lambda: 0.95
+    deterministic_actor_rollout: true
+    num_batch: 4
+    num_actors: 64
+    truncate_grads: true
+    grad_norm: 20.0
+    actor_grad_norm: 20.0
+    critic_grad_norm: 20.0
+    state_bptt: true
+    state_grad_clip: 2.0
+    state_grad_decay: 0.85
+    obs_grad_clip: 0.0
+    bootstrap_reg_coef_init: 0.25
+    bootstrap_reg_coef_final: 0.05
+    bootstrap_reg_anneal_epochs: 50
+    save_interval: 25
