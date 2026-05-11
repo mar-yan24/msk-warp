@@ -1,0 +1,796 @@
+[
+  {
+    "name": "cartpole_sanity",
+    "config": "cartpole_shac",
+    "n_directions": 20,
+    "eps": 0.001,
+    "n_params": 4865,
+    "theta_norm": 13.272415161132812,
+    "g_ad_norm": 239.28196716308594,
+    "cosine": 0.9999316571773834,
+    "cosine_ci_95": [
+      0.9998851673782643,
+      0.9999675780816232
+    ],
+    "permutation_p_cos_positive": 0.000999000999000999,
+    "ad_proj_mean": 0.0010217666625976563,
+    "ad_proj_std": 4.116319183641771,
+    "fd_proj_mean": 0.019598007202148438,
+    "fd_proj_std": 4.070691367816322,
+    "losses_center_mean": 17.44436264038086,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_random_init",
+    "config": "ant_shac_from_ppo (random actor init)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 17.408117294311523,
+    "g_ad_norm": 1.5879743099212646,
+    "cosine": 0.23492136285881646,
+    "cosine_ci_95": [
+      -0.27309689688469646,
+      0.6164931750170701
+    ],
+    "permutation_p_cos_positive": 0.11588411588411589,
+    "ad_proj_mean": 1.4895697434743245e-05,
+    "ad_proj_std": 0.009778634322589144,
+    "fd_proj_mean": -0.010073184967041016,
+    "fd_proj_std": 0.09212853898008355,
+    "losses_center_mean": -1.1939975023269653,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo",
+    "config": "ant_shac_from_ppo (loaded PPO walking checkpoint)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 14.479510307312012,
+    "cosine": -0.14043641092264533,
+    "cosine_ci_95": [
+      -0.3911805659008678,
+      0.04588406169374104
+    ],
+    "permutation_p_cos_positive": 0.7352647352647352,
+    "ad_proj_mean": -0.012948096419374147,
+    "ad_proj_std": 0.09363011154812846,
+    "fd_proj_mean": 1.6283830006917317,
+    "fd_proj_std": 7.142889163674635,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_H8",
+    "config": "ant_shac_from_ppo (PPO init, H=8)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 80.66600036621094,
+    "cosine": 0.3048773366509154,
+    "cosine_ci_95": [
+      -0.014086030885845282,
+      0.6181972377103236
+    ],
+    "permutation_p_cos_positive": 0.04895104895104895,
+    "ad_proj_mean": -0.002562730014324188,
+    "ad_proj_std": 0.42923340370843777,
+    "fd_proj_mean": -0.011571248372395834,
+    "fd_proj_std": 0.514895804409022,
+    "losses_center_mean": -58.938636779785156,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_H16",
+    "config": "ant_shac_from_ppo (PPO init, H=16)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 19.871768951416016,
+    "cosine": 0.32860118406978206,
+    "cosine_ci_95": [
+      -0.031517354619219645,
+      0.6435961333770029
+    ],
+    "permutation_p_cos_positive": 0.03996003996003996,
+    "ad_proj_mean": -0.0016350112234552701,
+    "ad_proj_std": 0.11785361043393608,
+    "fd_proj_mean": 0.0968615214029948,
+    "fd_proj_std": 0.6481664257538792,
+    "losses_center_mean": -30.952016830444336,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_H32",
+    "config": "ant_shac_from_ppo (PPO init, H=32)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 14.47949504852295,
+    "cosine": -0.1404338353060374,
+    "cosine_ci_95": [
+      -0.3912601454148791,
+      0.0459467996461541
+    ],
+    "permutation_p_cos_positive": 0.7352647352647352,
+    "ad_proj_mean": -0.01294811728099982,
+    "ad_proj_std": 0.0936301517534267,
+    "fd_proj_mean": 1.6284783681233723,
+    "fd_proj_std": 7.14260100200722,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_H64",
+    "config": "ant_shac_from_ppo (PPO init, H=64)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 15.373712539672852,
+    "cosine": 0.1779332041370649,
+    "cosine_ci_95": [
+      -0.062441729051455154,
+      0.6989659956468179
+    ],
+    "permutation_p_cos_positive": 0.24575424575424576,
+    "ad_proj_mean": 0.013794969829420248,
+    "ad_proj_std": 0.1076345666080799,
+    "fd_proj_mean": 8.374961217244467,
+    "fd_proj_std": 23.54807725648847,
+    "losses_center_mean": -6.832888603210449,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_eps1em02",
+    "config": "ant_shac_from_ppo (PPO init, eps=0.01)",
+    "n_directions": 30,
+    "eps": 0.01,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 14.479480743408203,
+    "cosine": 0.48328565628610126,
+    "cosine_ci_95": [
+      0.1092977529794055,
+      0.7100409900899088
+    ],
+    "permutation_p_cos_positive": 0.004995004995004995,
+    "ad_proj_mean": -0.012948125104109446,
+    "ad_proj_std": 0.09362998243317851,
+    "fd_proj_mean": 0.06535847981770833,
+    "fd_proj_std": 3.1785921579602157,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_eps1em03",
+    "config": "ant_shac_from_ppo (PPO init, eps=0.001)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 14.479508399963379,
+    "cosine": -0.14042850897910655,
+    "cosine_ci_95": [
+      -0.3911869895530332,
+      0.045917418634168025
+    ],
+    "permutation_p_cos_positive": 0.7352647352647352,
+    "ad_proj_mean": -0.012948090583086014,
+    "ad_proj_std": 0.09363006430222673,
+    "fd_proj_mean": 1.6283988952636719,
+    "fd_proj_std": 7.142874655104187,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_eps1em04",
+    "config": "ant_shac_from_ppo (PPO init, eps=0.0001)",
+    "n_directions": 30,
+    "eps": 0.0001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 14.479486465454102,
+    "cosine": -0.09763619435986837,
+    "cosine_ci_95": [
+      -0.4181480399519943,
+      0.1605919162431231
+    ],
+    "permutation_p_cos_positive": 0.6713286713286714,
+    "ad_proj_mean": -0.01294812789807717,
+    "ad_proj_std": 0.09363009680943012,
+    "fd_proj_mean": 0.2560615539550781,
+    "fd_proj_std": 1.6462161624599856,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_eps1em05",
+    "config": "ant_shac_from_ppo (PPO init, eps=1e-05)",
+    "n_directions": 30,
+    "eps": 1e-05,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 14.479466438293457,
+    "cosine": -0.03679011915549783,
+    "cosine_ci_95": [
+      -0.36439160138547677,
+      0.25241359871230756
+    ],
+    "permutation_p_cos_positive": 0.5614385614385614,
+    "ad_proj_mean": -0.012948121627171834,
+    "ad_proj_std": 0.09363007134937529,
+    "fd_proj_mean": 0.30676523844401044,
+    "fd_proj_std": 1.9463167815710989,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_eps1em06",
+    "config": "ant_shac_from_ppo (PPO init, eps=1e-06)",
+    "n_directions": 30,
+    "eps": 1e-06,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 14.479480743408203,
+    "cosine": -0.007731652393739938,
+    "cosine_ci_95": [
+      -0.44402762583206373,
+      0.3944522117164787
+    ],
+    "permutation_p_cos_positive": 0.4905094905094905,
+    "ad_proj_mean": -0.012948123179376126,
+    "ad_proj_std": 0.09363012859646247,
+    "fd_proj_mean": 1.2715657552083333,
+    "fd_proj_std": 7.936470301470198,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_clip0.0",
+    "config": "ant_shac_from_ppo (PPO init, state_grad_clip=0.0)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 14.47946834564209,
+    "cosine": -0.14041475649885174,
+    "cosine_ci_95": [
+      -0.3910059588259213,
+      0.04597495138615583
+    ],
+    "permutation_p_cos_positive": 0.7352647352647352,
+    "ad_proj_mean": -0.012948112562298775,
+    "ad_proj_std": 0.09363013826911541,
+    "fd_proj_mean": 1.628414789835612,
+    "fd_proj_std": 7.142959166521821,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_clip5.0",
+    "config": "ant_shac_from_ppo (PPO init, state_grad_clip=5.0)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 14.479479789733887,
+    "cosine": -0.14044300114208644,
+    "cosine_ci_95": [
+      -0.39120962868540715,
+      0.04595420074972768
+    ],
+    "permutation_p_cos_positive": 0.7352647352647352,
+    "ad_proj_mean": -0.012948142675062021,
+    "ad_proj_std": 0.09363008362670037,
+    "fd_proj_mean": 1.6286532084147136,
+    "fd_proj_std": 7.142995648127493,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_decay0.0",
+    "config": "ant_shac_from_ppo (PPO init, state_grad_decay=0.0, clip=0)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 852.8573608398438,
+    "cosine": -0.21403475543128314,
+    "cosine_ci_95": [
+      -0.7438392055532733,
+      -0.17204320957102395
+    ],
+    "permutation_p_cos_positive": 0.7912087912087912,
+    "ad_proj_mean": -0.6744597752888998,
+    "ad_proj_std": 5.815682275932409,
+    "fd_proj_mean": 1.6285896301269531,
+    "fd_proj_std": 7.1429366858897145,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_decay0.5",
+    "config": "ant_shac_from_ppo (PPO init, state_grad_decay=0.5, clip=0)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 0.802172839641571,
+    "cosine": 0.03286441780947074,
+    "cosine_ci_95": [
+      -0.31530563386698685,
+      0.2546333532936001
+    ],
+    "permutation_p_cos_positive": 0.2217782217782218,
+    "ad_proj_mean": -0.00226827742299065,
+    "ad_proj_std": 0.0049817157550554655,
+    "fd_proj_mean": 1.628430684407552,
+    "fd_proj_std": 7.1430342441684305,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_decay0.85",
+    "config": "ant_shac_from_ppo (PPO init, state_grad_decay=0.85, clip=0)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 14.479471206665039,
+    "cosine": -0.14043267904384427,
+    "cosine_ci_95": [
+      -0.3911407412373486,
+      0.045894183093629644
+    ],
+    "permutation_p_cos_positive": 0.7352647352647352,
+    "ad_proj_mean": -0.012948160308102767,
+    "ad_proj_std": 0.09363005169189142,
+    "fd_proj_mean": 1.628430684407552,
+    "fd_proj_std": 7.143040293216731,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_decay0_eps1em02",
+    "config": "ant_shac_from_ppo (PPO init, decay=0, eps=1e-2)",
+    "n_directions": 30,
+    "eps": 0.01,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 852.8563842773438,
+    "cosine": 0.2072995383449035,
+    "cosine_ci_95": [
+      -0.13217550237374576,
+      0.555355630089166
+    ],
+    "permutation_p_cos_positive": 0.12787212787212787,
+    "ad_proj_mean": -0.6744588414827982,
+    "ad_proj_std": 5.815680639427957,
+    "fd_proj_mean": 0.06537755330403645,
+    "fd_proj_std": 3.1785649469861545,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "ant_from_ppo_fd_jacobian",
+    "config": "ant_shac_from_ppo (PPO init, FD-JACOBIAN BACKWARD, decay=0)",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 534.736328125,
+    "cosine": -0.13871120632318976,
+    "cosine_ci_95": [
+      -0.3422055753226739,
+      0.425874297167348
+    ],
+    "permutation_p_cos_positive": 0.6663336663336663,
+    "ad_proj_mean": -0.4632417559623718,
+    "ad_proj_std": 3.1882414140975555,
+    "fd_proj_mean": 1.6286055246988933,
+    "fd_proj_std": 7.14321670093711,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "gate02_cartpole_euler",
+    "config": "cartpole_shac (EULER, tape AD)",
+    "n_directions": 20,
+    "eps": 0.001,
+    "n_params": 4865,
+    "theta_norm": 13.272415161132812,
+    "g_ad_norm": 253.4761505126953,
+    "cosine": 0.9985240000984346,
+    "cosine_ci_95": [
+      0.9975069552914844,
+      0.9992968440260411
+    ],
+    "permutation_p_cos_positive": 0.000999000999000999,
+    "ad_proj_mean": -0.06909534335136414,
+    "ad_proj_std": 4.357841356153407,
+    "fd_proj_mean": 0.019598007202148438,
+    "fd_proj_std": 4.070691367816322,
+    "losses_center_mean": 17.44436264038086,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "gate02_cartpole_rk4",
+    "config": "cartpole_shac (RK4, tape AD)",
+    "n_directions": 20,
+    "eps": 0.001,
+    "n_params": 4865,
+    "theta_norm": 13.272415161132812,
+    "g_ad_norm": 118084.0390625,
+    "cosine": 0.9971620100679746,
+    "cosine_ci_95": [
+      0.9953346049533581,
+      0.9985846817248539
+    ],
+    "permutation_p_cos_positive": 0.000999000999000999,
+    "ad_proj_mean": 60.814300537109375,
+    "ad_proj_std": 2031.6717046030008,
+    "fd_proj_mean": 0.0179290771484375,
+    "fd_proj_std": 4.072195580185109,
+    "losses_center_mean": 17.534578323364258,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "exp4_h1_ppo_theta",
+    "config": "Phase 2 Exp 4: PPO init, H=1, decay=0, eps=1e-3",
+    "n_directions": 30,
+    "eps": 0.001,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 28.716392517089844,
+    "cosine": -0.8203306065985341,
+    "cosine_ci_95": [
+      -0.9036677719785646,
+      -0.6686914238528292
+    ],
+    "permutation_p_cos_positive": 1.0,
+    "ad_proj_mean": -0.05068458765745163,
+    "ad_proj_std": 0.23161107315974697,
+    "fd_proj_mean": 0.0091552734375,
+    "fd_proj_std": 0.02990099783670872,
+    "losses_center_mean": -469.0869445800781,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "exp1_multi_seed_s0",
+    "config": "Phase 2 Exp 1: PPO init, H=32, decay=0, eps=1e-2, direction_seed=0",
+    "n_directions": 30,
+    "eps": 0.01,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 852.8538818359375,
+    "cosine": 0.2073054858025417,
+    "cosine_ci_95": [
+      -0.1321701014169632,
+      0.5553632432842384
+    ],
+    "permutation_p_cos_positive": 0.12787212787212787,
+    "ad_proj_mean": -0.6744582374890645,
+    "ad_proj_std": 5.8156606613561825,
+    "fd_proj_mean": 0.0653521219889323,
+    "fd_proj_std": 3.1786293886317085,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "exp1_multi_seed_s1",
+    "config": "Phase 2 Exp 1: PPO init, H=32, decay=0, eps=1e-2, direction_seed=1",
+    "n_directions": 30,
+    "eps": 0.01,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 852.8529663085938,
+    "cosine": -0.021697685041375207,
+    "cosine_ci_95": [
+      -0.34932125185342927,
+      0.38571008228369486
+    ],
+    "permutation_p_cos_positive": 0.6013986013986014,
+    "ad_proj_mean": 1.744541354974111,
+    "ad_proj_std": 5.414219931461314,
+    "fd_proj_mean": 0.23077964782714844,
+    "fd_proj_std": 3.6046593685794974,
+    "losses_center_mean": -15.211644172668457,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "exp1_multi_seed_s2",
+    "config": "Phase 2 Exp 1: PPO init, H=32, decay=0, eps=1e-2, direction_seed=2",
+    "n_directions": 30,
+    "eps": 0.01,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 852.8543090820312,
+    "cosine": -0.20026307429397847,
+    "cosine_ci_95": [
+      -0.4964379434997186,
+      0.18567261889572506
+    ],
+    "permutation_p_cos_positive": 0.7432567432567433,
+    "ad_proj_mean": -3.1970987796783445,
+    "ad_proj_std": 6.3482192761856755,
+    "fd_proj_mean": 0.6966543197631836,
+    "fd_proj_std": 3.4013374130468224,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "exp1_multi_seed_s3",
+    "config": "Phase 2 Exp 1: PPO init, H=32, decay=0, eps=1e-2, direction_seed=3",
+    "n_directions": 30,
+    "eps": 0.01,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 852.8546752929688,
+    "cosine": 0.09869020426175815,
+    "cosine_ci_95": [
+      -0.1787959179830633,
+      0.37064248395012706
+    ],
+    "permutation_p_cos_positive": 0.25074925074925075,
+    "ad_proj_mean": 1.407175354162852,
+    "ad_proj_std": 6.058547386193239,
+    "fd_proj_mean": -0.2929862340291341,
+    "fd_proj_std": 2.4897339436782318,
+    "losses_center_mean": -15.211644172668457,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "exp1_multi_seed_s4",
+    "config": "Phase 2 Exp 1: PPO init, H=32, decay=0, eps=1e-2, direction_seed=4",
+    "n_directions": 30,
+    "eps": 0.01,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 852.851806640625,
+    "cosine": -0.02120385330110567,
+    "cosine_ci_95": [
+      -0.31732542225901966,
+      0.3109321294000359
+    ],
+    "permutation_p_cos_positive": 0.6493506493506493,
+    "ad_proj_mean": -0.6932661890983581,
+    "ad_proj_std": 6.474000085054959,
+    "fd_proj_mean": -1.0507440567016602,
+    "fd_proj_std": 2.6092223847468627,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "exp1_pooled_decay0_eps1em2",
+    "config": "Phase 2 Exp 1 pooled across 5 direction seeds",
+    "n_directions": 150,
+    "eps": 0.01,
+    "n_seeds": 5,
+    "n_positive_seeds": 2,
+    "per_seed_cosines": [
+      0.2073054858025417,
+      -0.021697685041375207,
+      -0.20026307429397847,
+      0.09869020426175815,
+      -0.02120385330110567
+    ],
+    "cosine": -0.0038266523027065194,
+    "cosine_ci_95": [
+      -0.14773950334105004,
+      0.14359673318134655
+    ],
+    "permutation_p_cos_positive": 0.5204795204795205,
+    "g_ad_norm": 852.8535278320312
+  },
+  {
+    "name": "exp5_h_sweep_H8",
+    "config": "Phase 2 Exp 5: PPO init, H=8, decay=0, eps=1e-2",
+    "n_directions": 30,
+    "eps": 0.01,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 182.8328857421875,
+    "cosine": 0.1604424187422605,
+    "cosine_ci_95": [
+      -0.22620940697268638,
+      0.5704580048004414
+    ],
+    "permutation_p_cos_positive": 0.21978021978021978,
+    "ad_proj_mean": -0.05573992629845937,
+    "ad_proj_std": 0.8396750407823486,
+    "fd_proj_mean": -0.010509490966796875,
+    "fd_proj_std": 0.5137739522926812,
+    "losses_center_mean": -58.938636779785156,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "exp5_h_sweep_H16",
+    "config": "Phase 2 Exp 5: PPO init, H=16, decay=0, eps=1e-2",
+    "n_directions": 30,
+    "eps": 0.01,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 124.10972595214844,
+    "cosine": 0.5298895589078814,
+    "cosine_ci_95": [
+      0.2116718371044169,
+      0.788258841233578
+    ],
+    "permutation_p_cos_positive": 0.002997002997002997,
+    "ad_proj_mean": 0.01538640558719635,
+    "ad_proj_std": 0.6689712508977744,
+    "fd_proj_mean": 0.09668668111165364,
+    "fd_proj_std": 0.6489736098169715,
+    "losses_center_mean": -30.952016830444336,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "exp5_h_sweep_H32",
+    "config": "Phase 2 Exp 5: PPO init, H=32, decay=0, eps=1e-2",
+    "n_directions": 30,
+    "eps": 0.01,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 852.85205078125,
+    "cosine": 0.20730792743583815,
+    "cosine_ci_95": [
+      -0.13217297047384316,
+      0.555364034851164
+    ],
+    "permutation_p_cos_positive": 0.12787212787212787,
+    "ad_proj_mean": -0.6744569579760233,
+    "ad_proj_std": 5.815652908712556,
+    "fd_proj_mean": 0.06532669067382812,
+    "fd_proj_std": 3.1786134360827543,
+    "losses_center_mean": -15.21164321899414,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "exp5_h_sweep_H64",
+    "config": "Phase 2 Exp 5: PPO init, H=64, decay=0, eps=1e-2",
+    "n_directions": 30,
+    "eps": 0.01,
+    "n_params": 15912,
+    "theta_norm": 26.598133087158203,
+    "g_ad_norm": 29511.15625,
+    "cosine": -0.043287715350172194,
+    "cosine_ci_95": [
+      -0.3442211288009052,
+      0.3126746680425708
+    ],
+    "permutation_p_cos_positive": 0.6343656343656343,
+    "ad_proj_mean": 22.314451344807942,
+    "ad_proj_std": 200.8798515465763,
+    "fd_proj_mean": 1.1832928657531738,
+    "fd_proj_std": 6.145397451318709,
+    "losses_center_mean": -6.832880973815918,
+    "losses_center_std": 0.0
+  },
+  {
+    "name": "exp2_substep_bisection",
+    "config": "Phase 2 Exp 2: 8 snapshots x substeps in [8, 16, 32, 64], H=1, decay=0, PPO init",
+    "n_snapshots": 8,
+    "substeps_list": [
+      8,
+      16,
+      32,
+      64
+    ],
+    "H": 1,
+    "pairwise_cosines": {
+      "cos_8_to_16": {
+        "mean": 0.6098250215873122,
+        "std": 0.5990645952567416,
+        "values": [
+          0.9539622068405151,
+          0.9999812245368958,
+          0.879254162311554,
+          0.8365534543991089,
+          0.9989595413208008,
+          -0.6756688952445984,
+          -0.11249012500047684,
+          0.9980486035346985
+        ]
+      },
+      "cos_16_to_32": {
+        "mean": 0.18704499676823616,
+        "std": 0.7667776632703812,
+        "values": [
+          -0.0845804512500763,
+          0.9999672174453735,
+          -0.97716224193573,
+          0.9992820024490356,
+          0.9689211249351501,
+          -0.8702046275138855,
+          0.5625172853469849,
+          -0.10238033533096313
+        ]
+      },
+      "cos_32_to_64": {
+        "mean": 0.19838285446166992,
+        "std": 0.8564171405570313,
+        "values": [
+          -0.8309541940689087,
+          0.9995748400688171,
+          -0.9727426767349243,
+          0.9999679327011108,
+          0.476667582988739,
+          0.9959626793861389,
+          -0.854396402835846,
+          0.7729830741882324
+        ]
+      }
+    },
+    "final_pair_mean": 0.19838285446166992,
+    "monotonic_up": false,
+    "g_norms_per_snapshot": {
+      "0": {
+        "8": 271.02392578125,
+        "16": 638.650146484375,
+        "32": 1268.3541259765625,
+        "64": 3718.115966796875
+      },
+      "1": {
+        "8": 398.3201599121094,
+        "16": 550.1556396484375,
+        "32": 1560.241455078125,
+        "64": 2515.196533203125
+      },
+      "2": {
+        "8": 50.298011779785156,
+        "16": 165.53860473632812,
+        "32": 2446.910400390625,
+        "64": 15113.4345703125
+      },
+      "3": {
+        "8": 18.50223159790039,
+        "16": 1447.4813232421875,
+        "32": 2632.565673828125,
+        "64": 5271.98486328125
+      },
+      "4": {
+        "8": 56.212581634521484,
+        "16": 739.4812622070312,
+        "32": 3451.41748046875,
+        "64": 1784.2908935546875
+      },
+      "5": {
+        "8": 117.02727508544922,
+        "16": 319.0714111328125,
+        "32": 9259.1240234375,
+        "64": 11508.451171875
+      },
+      "6": {
+        "8": 444.71173095703125,
+        "16": 458.49163818359375,
+        "32": 1875.1116943359375,
+        "64": 71906.1796875
+      },
+      "7": {
+        "8": 59.24918746948242,
+        "16": 212.4755096435547,
+        "32": 2534.5068359375,
+        "64": 40052.24609375
+      }
+    }
+  },
+  {
+    "name": "exp3_gradnorm_trajectory",
+    "config": "Phase 2 Exp 3: 50 SHAC epochs from PPO init, decay=0, clip=0, seed=42",
+    "epochs": 50,
+    "seed": 42,
+    "n_logged_steps": 143,
+    "first5_mean_grad_norm_before_clip": 66.35773468017578,
+    "last5_mean_grad_norm_before_clip": 13.210239601135253,
+    "grad_norm_ratio_last5_to_first5": 0.1990761086828026,
+    "clip_saturation_rate": 0.42,
+    "verdict": "FAIL \u2014 grad norm stable or declining; H2 weaker",
+    "csv_path": "C:\\Projects\\msk-warp\\tests\\data\\phase2_exp3_gradnorm_trajectory.csv"
+  }
+]

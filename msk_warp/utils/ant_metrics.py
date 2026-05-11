@@ -6,7 +6,13 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from tensorboard.backend.event_processing import event_accumulator
+
+try:
+    from tensorboard.backend.event_processing import event_accumulator
+    _HAS_TENSORBOARD = True
+except ImportError:
+    event_accumulator = None
+    _HAS_TENSORBOARD = False
 
 
 def read_grad_metrics(
@@ -14,6 +20,8 @@ def read_grad_metrics(
     grad_norm_target: float | None = None,
 ) -> dict[str, Any]:
     """Read actor gradient clipping metrics from a TensorBoard log directory."""
+    if not _HAS_TENSORBOARD:
+        return {}
     event_dir = Path(logdir) / "log"
     if not event_dir.exists():
         return {}
