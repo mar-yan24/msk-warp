@@ -44,3 +44,7 @@ archive/
 
 # Stray PowerShell artifact (Windows)
 Microsoft/
+
+# Regenerated diagnostic plots (derived from tests/data/*.pkl
+# via scripts/plot_policy_gradient_diagnostic.py)
+tests/data/plots/
