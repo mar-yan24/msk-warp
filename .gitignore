@@ -6,6 +6,7 @@ __pycache__/
 *.egg
 dist/
 build/
+.pytest_cache/
 
 # Virtual environments
 .venv/
@@ -36,3 +37,10 @@ docs/
 
 # Claude
 .claude/
+
+# Local-only archive of abandoned experiments (preserved as
+# archive/shac-testing-2026-05-07 tag)
+archive/
+
+# Stray PowerShell artifact (Windows)
+Microsoft/
