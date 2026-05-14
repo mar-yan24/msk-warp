@@ -1,0 +1,52 @@
+params:
+  general:
+    seed: 42
+    device: cuda:0
+    logdir: logs/ant_phase3a_baseline
+
+  env:
+    name: Ant
+    # Baseline: original ant_soft.xml (solref="0.06 1.2"). Same other hyperparams as phase3a.
+    model_path: assets/ant_soft.xml
+    num_actors: 64
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    early_termination: true  # matched to DiffRL/phase3a — fair comparison
+    use_fd_jacobian: false
+    tape_per_substep: true
+
+  network:
+    actor: ActorStochasticMLP
+    actor_mlp:
+      units: [128, 64, 32]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [64, 64]
+      activation: elu
+
+  config:
+    name: ant_shac_phase3a_baseline
+    gamma: 0.99
+    steps_num: 32
+    max_epochs: 50
+    actor_learning_rate: 2e-3
+    critic_learning_rate: 2e-3
+    lr_schedule: linear
+    betas: [0.7, 0.95]
+    target_critic_alpha: 0.2
+    obs_rms: true
+    ret_rms: false
+    critic_iterations: 16
+    critic_method: td-lambda
+    lambda: 0.95
+    num_batch: 4
+    num_actors: 64
+    truncate_grads: true
+    grad_norm: 1.0
+    state_bptt: true
+    state_grad_clip: 0.0
+    obs_grad_clip: 0.0
+    save_interval: 100

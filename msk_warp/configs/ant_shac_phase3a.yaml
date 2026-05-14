@@ -1,0 +1,54 @@
+params:
+  general:
+    seed: 42
+    device: cuda:0
+    logdir: logs/ant_phase3a
+
+  env:
+    name: Ant
+    # NOTE: model_path filled in after Phase 2A picks a viable XML.
+    # Defaults to ant_phase2a_softref_mild.xml (solref="0.1 1.2") pending sweep results.
+    model_path: assets/ant_phase2a_softref.xml
+    num_actors: 64
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    early_termination: true  # matches DiffRL — enabled for fair training comparison
+    use_fd_jacobian: false
+    tape_per_substep: true
+
+  network:
+    actor: ActorStochasticMLP
+    actor_mlp:
+      units: [128, 64, 32]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [64, 64]
+      activation: elu
+
+  config:
+    name: ant_shac_phase3a
+    gamma: 0.99
+    steps_num: 32
+    max_epochs: 100  # short Phase 3A verification run
+    actor_learning_rate: 2e-3
+    critic_learning_rate: 2e-3
+    lr_schedule: linear
+    betas: [0.7, 0.95]
+    target_critic_alpha: 0.2
+    obs_rms: true
+    ret_rms: false
+    critic_iterations: 16
+    critic_method: td-lambda
+    lambda: 0.95
+    num_batch: 4
+    num_actors: 64
+    truncate_grads: true
+    grad_norm: 1.0
+    # Match DiffRL: disable msk-warp-only state-grad hooks
+    state_bptt: true
+    state_grad_clip: 0.0
+    obs_grad_clip: 0.0
+    save_interval: 100
