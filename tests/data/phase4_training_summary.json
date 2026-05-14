@@ -1,0 +1,546 @@
+{
+  "phase3a-softref": [
+    {
+      "iter": 1,
+      "ep_loss": -29.67,
+      "ep_disc": -27.04,
+      "ep_len": 21.1,
+      "fps": 255.44
+    },
+    {
+      "iter": 2,
+      "ep_loss": -29.99,
+      "ep_disc": -27.25,
+      "ep_len": 21.7,
+      "fps": 335.01
+    },
+    {
+      "iter": 3,
+      "ep_loss": -34.25,
+      "ep_disc": -30.47,
+      "ep_len": 25.8,
+      "fps": 345.22
+    },
+    {
+      "iter": 4,
+      "ep_loss": -40.66,
+      "ep_disc": -34.4,
+      "ep_len": 31.5,
+      "fps": 370.34
+    },
+    {
+      "iter": 5,
+      "ep_loss": -49.05,
+      "ep_disc": -39.44,
+      "ep_len": 39.9,
+      "fps": 416.12
+    },
+    {
+      "iter": 6,
+      "ep_loss": -59.77,
+      "ep_disc": -45.9,
+      "ep_len": 49.7,
+      "fps": 421.43
+    },
+    {
+      "iter": 7,
+      "ep_loss": -72.23,
+      "ep_disc": -51.79,
+      "ep_len": 59.9,
+      "fps": 423.77
+    },
+    {
+      "iter": 8,
+      "ep_loss": -78.11,
+      "ep_disc": -53.92,
+      "ep_len": 68.1,
+      "fps": 410.6
+    },
+    {
+      "iter": 9,
+      "ep_loss": -79.56,
+      "ep_disc": -54.79,
+      "ep_len": 72.6,
+      "fps": 425.64
+    },
+    {
+      "iter": 10,
+      "ep_loss": -87.5,
+      "ep_disc": -58.46,
+      "ep_len": 79.4,
+      "fps": 416.65
+    },
+    {
+      "iter": 11,
+      "ep_loss": -93.16,
+      "ep_disc": -61.2,
+      "ep_len": 86.5,
+      "fps": 416.99
+    },
+    {
+      "iter": 12,
+      "ep_loss": -94.34,
+      "ep_disc": -60.63,
+      "ep_len": 90.4,
+      "fps": 406.95
+    },
+    {
+      "iter": 13,
+      "ep_loss": -92.9,
+      "ep_disc": -59.78,
+      "ep_len": 93.8,
+      "fps": 418.49
+    },
+    {
+      "iter": 14,
+      "ep_loss": -100.98,
+      "ep_disc": -63.37,
+      "ep_len": 101.3,
+      "fps": 418.68
+    },
+    {
+      "iter": 15,
+      "ep_loss": -107.01,
+      "ep_disc": -67.58,
+      "ep_len": 99.6,
+      "fps": 433.34
+    },
+    {
+      "iter": 16,
+      "ep_loss": -99.51,
+      "ep_disc": -64.76,
+      "ep_len": 97.1,
+      "fps": 407.08
+    },
+    {
+      "iter": 17,
+      "ep_loss": -93.29,
+      "ep_disc": -60.35,
+      "ep_len": 99.8,
+      "fps": 426.39
+    },
+    {
+      "iter": 18,
+      "ep_loss": -92.72,
+      "ep_disc": -59.78,
+      "ep_len": 102.8,
+      "fps": 373.39
+    },
+    {
+      "iter": 19,
+      "ep_loss": -86.02,
+      "ep_disc": -55.98,
+      "ep_len": 104.3,
+      "fps": 413.73
+    },
+    {
+      "iter": 20,
+      "ep_loss": -77.24,
+      "ep_disc": -51.47,
+      "ep_len": 100.8,
+      "fps": 395.26
+    },
+    {
+      "iter": 21,
+      "ep_loss": -79.09,
+      "ep_disc": -52.99,
+      "ep_len": 100.4,
+      "fps": 423.43
+    },
+    {
+      "iter": 22,
+      "ep_loss": -84.64,
+      "ep_disc": -54.17,
+      "ep_len": 107.8,
+      "fps": 422.78
+    },
+    {
+      "iter": 23,
+      "ep_loss": -78.63,
+      "ep_disc": -51.91,
+      "ep_len": 106.5,
+      "fps": 415.34
+    },
+    {
+      "iter": 24,
+      "ep_loss": -83.99,
+      "ep_disc": -54.1,
+      "ep_len": 106.3,
+      "fps": 425.19
+    },
+    {
+      "iter": 25,
+      "ep_loss": -83.34,
+      "ep_disc": -54.13,
+      "ep_len": 107.4,
+      "fps": 419.82
+    },
+    {
+      "iter": 26,
+      "ep_loss": -76.82,
+      "ep_disc": -51.66,
+      "ep_len": 107.9,
+      "fps": 415.02
+    },
+    {
+      "iter": 27,
+      "ep_loss": -78.42,
+      "ep_disc": -52.42,
+      "ep_len": 112.5,
+      "fps": 413.46
+    },
+    {
+      "iter": 28,
+      "ep_loss": -79.64,
+      "ep_disc": -52.01,
+      "ep_len": 113.2,
+      "fps": 416.46
+    },
+    {
+      "iter": 29,
+      "ep_loss": -78.48,
+      "ep_disc": -51.34,
+      "ep_len": 117.5,
+      "fps": 419.48
+    },
+    {
+      "iter": 30,
+      "ep_loss": -90.91,
+      "ep_disc": -55.25,
+      "ep_len": 125.0,
+      "fps": 427.25
+    },
+    {
+      "iter": 31,
+      "ep_loss": -92.6,
+      "ep_disc": -56.45,
+      "ep_len": 125.2,
+      "fps": 418.66
+    },
+    {
+      "iter": 32,
+      "ep_loss": -82.53,
+      "ep_disc": -52.27,
+      "ep_len": 126.0,
+      "fps": 409.3
+    },
+    {
+      "iter": 33,
+      "ep_loss": -73.94,
+      "ep_disc": -48.2,
+      "ep_len": 126.4,
+      "fps": 422.48
+    },
+    {
+      "iter": 34,
+      "ep_loss": -68.8,
+      "ep_disc": -46.33,
+      "ep_len": 124.9,
+      "fps": 414.25
+    },
+    {
+      "iter": 35,
+      "ep_loss": -80.76,
+      "ep_disc": -51.13,
+      "ep_len": 125.7,
+      "fps": 406.29
+    },
+    {
+      "iter": 36,
+      "ep_loss": -82.82,
+      "ep_disc": -49.45,
+      "ep_len": 134.5,
+      "fps": 384.95
+    },
+    {
+      "iter": 37,
+      "ep_loss": -72.3,
+      "ep_disc": -46.44,
+      "ep_len": 136.4,
+      "fps": 402.41
+    },
+    {
+      "iter": 38,
+      "ep_loss": -70.98,
+      "ep_disc": -45.17,
+      "ep_len": 139.7,
+      "fps": 412.14
+    },
+    {
+      "iter": 39,
+      "ep_loss": -70.5,
+      "ep_disc": -45.29,
+      "ep_len": 138.7,
+      "fps": 412.73
+    },
+    {
+      "iter": 40,
+      "ep_loss": -76.55,
+      "ep_disc": -48.83,
+      "ep_len": 137.7,
+      "fps": 420.96
+    },
+    {
+      "iter": 41,
+      "ep_loss": -81.55,
+      "ep_disc": -51.52,
+      "ep_len": 138.7,
+      "fps": 424.86
+    },
+    {
+      "iter": 42,
+      "ep_loss": -87.69,
+      "ep_disc": -53.59,
+      "ep_len": 142.4,
+      "fps": 428.89
+    },
+    {
+      "iter": 43,
+      "ep_loss": -89.91,
+      "ep_disc": -54.25,
+      "ep_len": 143.0,
+      "fps": 426.5
+    },
+    {
+      "iter": 44,
+      "ep_loss": -100.94,
+      "ep_disc": -57.98,
+      "ep_len": 143.5,
+      "fps": 416.53
+    },
+    {
+      "iter": 45,
+      "ep_loss": -103.09,
+      "ep_disc": -58.54,
+      "ep_len": 147.3,
+      "fps": 407.65
+    },
+    {
+      "iter": 46,
+      "ep_loss": -95.37,
+      "ep_disc": -56.13,
+      "ep_len": 144.5,
+      "fps": 422.03
+    },
+    {
+      "iter": 47,
+      "ep_loss": -92.68,
+      "ep_disc": -57.33,
+      "ep_len": 145.0,
+      "fps": 425.52
+    },
+    {
+      "iter": 48,
+      "ep_loss": -83.39,
+      "ep_disc": -54.7,
+      "ep_len": 146.9,
+      "fps": 418.21
+    },
+    {
+      "iter": 49,
+      "ep_loss": -73.26,
+      "ep_disc": -50.89,
+      "ep_len": 150.1,
+      "fps": 412.77
+    },
+    {
+      "iter": 50,
+      "ep_loss": -77.54,
+      "ep_disc": -50.25,
+      "ep_len": 149.5,
+      "fps": 429.32
+    }
+  ],
+  "phase3a-baseline": [
+    {
+      "iter": 1,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 372.63
+    },
+    {
+      "iter": 2,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 435.09
+    },
+    {
+      "iter": 3,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 438.1
+    },
+    {
+      "iter": 4,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 448.31
+    },
+    {
+      "iter": 5,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 442.02
+    },
+    {
+      "iter": 6,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 435.51
+    },
+    {
+      "iter": 7,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 454.56
+    },
+    {
+      "iter": 8,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 460.17
+    },
+    {
+      "iter": 9,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 458.26
+    },
+    {
+      "iter": 10,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 439.14
+    },
+    {
+      "iter": 11,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 448.9
+    },
+    {
+      "iter": 12,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 480.98
+    },
+    {
+      "iter": 13,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 446.93
+    },
+    {
+      "iter": 14,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 454.35
+    },
+    {
+      "iter": 15,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 458.08
+    },
+    {
+      "iter": 16,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 464.68
+    },
+    {
+      "iter": 17,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 479.19
+    },
+    {
+      "iter": 18,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 475.46
+    },
+    {
+      "iter": 19,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 491.29
+    },
+    {
+      "iter": 20,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 500.83
+    },
+    {
+      "iter": 21,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 483.3
+    },
+    {
+      "iter": 22,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 496.36
+    },
+    {
+      "iter": 23,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 490.39
+    },
+    {
+      "iter": 24,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 490.45
+    },
+    {
+      "iter": 25,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 472.47
+    },
+    {
+      "iter": 26,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 494.43
+    },
+    {
+      "iter": 27,
+      "ep_loss": null,
+      "ep_disc": null,
+      "ep_len": 0.0,
+      "fps": 479.41
+    }
+  ],
+  "diffrl": []
+}
