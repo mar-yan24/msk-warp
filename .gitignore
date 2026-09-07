@@ -48,3 +48,12 @@ Microsoft/
 # Regenerated diagnostic plots (derived from tests/data/*.pkl
 # via scripts/plot_policy_gradient_diagnostic.py)
 tests/data/plots/
+
+# Bake-off venvs
+.venv-*/
+
+# Kept on disk only, never committed (decision 2026-09-07): research record,
+# bake-off harness, env scripts, assistant instructions
+bench/
+scripts/env/
+CLAUDE.md

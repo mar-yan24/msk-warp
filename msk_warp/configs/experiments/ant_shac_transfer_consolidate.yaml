@@ -1,7 +1,6 @@
-# SHAC transfer stage 2 for PPO-bootstrapped Ant locomotion.
-# Runs the canonical soft-surrogate objective after the gait has been
-# stabilized, while keeping a small decaying anchor to the promoted stage-1
-# policy to avoid regressing into the standing basin.
+# SHAC transfer stage 2 for PPO-bootstrapped Ant locomotion (full horizon,
+# canonical reward). The decaying bootstrap_reg anchor this stage used in
+# May 2026 was removed (docs/POSTMORTEM.md, ledger #45).
 params:
   general:
     seed: 42
@@ -50,7 +49,6 @@ params:
     critic_iterations: 16
     critic_method: td-lambda
     lambda: 0.95
-    deterministic_actor_rollout: true
     num_batch: 4
     num_actors: 64
     truncate_grads: true
@@ -60,8 +58,4 @@ params:
     state_bptt: true
     state_grad_clip: 2.0
     state_grad_decay: 0.85
-    obs_grad_clip: 0.0
-    bootstrap_reg_coef_init: 0.05
-    bootstrap_reg_coef_final: 0.0
-    bootstrap_reg_anneal_epochs: 25
     save_interval: 25
