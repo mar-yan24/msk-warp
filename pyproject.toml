@@ -27,6 +27,11 @@ dev = ["pytest"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "unit: CPU-only, runs on every commit (tests/unit)",
+    "gpu: needs CUDA; skipped without it or with MSK_SKIP_GPU=1 (tests/gpu)",
+    "slow: training regressions; run with --run-slow (tests/slow)",
+]
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu130" }

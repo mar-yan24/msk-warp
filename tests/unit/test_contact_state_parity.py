@@ -11,7 +11,7 @@ import torch
 
 
 def _load_module():
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     script_path = repo_root / "scripts" / "diag_contact_state_parity.py"
     spec = importlib.util.spec_from_file_location("diag_contact_state_parity", script_path)
     module = importlib.util.module_from_spec(spec)

@@ -12,7 +12,7 @@ from msk_warp.envs.ant import AntEnv
 
 
 def _load_diag_module():
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     diag_path = repo_root / "scripts" / "diagnose_ant.py"
     spec = importlib.util.spec_from_file_location("diagnose_ant_module", diag_path)
     module = importlib.util.module_from_spec(spec)
