@@ -77,22 +77,6 @@ def compute_actor_clip_threshold(
     return (1.0 - t) * init + t * target
 
 
-def compute_linear_schedule(
-    *,
-    epoch: int,
-    start: float,
-    end: float,
-    anneal_epochs: int,
-) -> float:
-    """Linearly interpolate from start to end over anneal_epochs."""
-    if anneal_epochs <= 0:
-        return float(end)
-    if epoch >= anneal_epochs:
-        return float(end)
-    t = float(epoch) / float(max(1, anneal_epochs))
-    return (1.0 - t) * float(start) + t * float(end)
-
-
 class SHAC:
     def __init__(self, cfg):
         env_name = cfg['params']['env']['name']
@@ -135,9 +119,6 @@ class SHAC:
         self.lr_schedule = cfg['params']['config'].get('lr_schedule', 'linear')
 
         self.target_critic_alpha = cfg['params']['config'].get('target_critic_alpha', 0.4)
-        self.deterministic_actor_rollout = cfg['params']['config'].get(
-            'deterministic_actor_rollout', False
-        )
 
         self.obs_rms = None
         if cfg['params']['config'].get('obs_rms', False):
@@ -171,20 +152,6 @@ class SHAC:
         )
         self.actor_grad_clip_threshold = float(self.actor_grad_norm)
         self.critic_grad_clip_threshold = float(self.critic_grad_norm)
-        self.bootstrap_reg_coef_init = float(
-            cfg['params']['config'].get('bootstrap_reg_coef_init', 0.0)
-        )
-        self.bootstrap_reg_coef_final = float(
-            cfg['params']['config'].get('bootstrap_reg_coef_final', self.bootstrap_reg_coef_init)
-        )
-        self.bootstrap_reg_anneal_epochs = int(
-            cfg['params']['config'].get('bootstrap_reg_anneal_epochs', 0)
-        )
-        self.bootstrap_reg_enabled = self.bootstrap_reg_coef_init > 0.0 or self.bootstrap_reg_coef_final > 0.0
-        self.bootstrap_reg_coef = 0.0
-        self.bootstrap_reg_loss = 0.0
-        self.bootstrap_ref_actor = None
-
         # State BPTT: propagate gradients through the state (qpos/qvel) chain
         # across simulation steps. Enable for environments where multi-step
         # planning through dynamics is beneficial (e.g., locomotion with
@@ -197,8 +164,8 @@ class SHAC:
         # (qpos, qvel) at each step boundary. This controls BPTT explosion
         # through BOTH the observation path (obs → actor) AND the reward
         # accumulation path (rew → state chain). Set to 0 to disable.
-        # Note: the old obs_grad_clip only clipped the observation path,
-        # leaving the reward path unchecked — causing gradient norms of 1e6+.
+        # Note: clipping only the observation path (an earlier design) left
+        # the reward path unchecked and produced gradient norms of 1e6+.
         self.state_grad_clip = cfg['params']['config'].get('state_grad_clip', 0.0)
 
         # Per-step state gradient decay for stable BPTT.
@@ -207,10 +174,6 @@ class SHAC:
         # clipping). Mimics dflex's natural gradient decay through soft contacts.
         # 0.0 = disabled, 0.5 = 4-5 step effective horizon, 0.9 = ~20 steps.
         self.state_grad_decay = cfg['params']['config'].get('state_grad_decay', 0.0)
-
-        # Legacy obs_grad_clip: kept for backward compatibility but state_grad_clip
-        # is preferred as it clips all BPTT paths, not just the obs path.
-        self.obs_grad_clip = cfg['params']['config'].get('obs_grad_clip', 0.0)
 
         self.log_dir = cfg['params']['general']['logdir']
         os.makedirs(self.log_dir, exist_ok=True)
@@ -297,13 +260,6 @@ class SHAC:
             lr=self.critic_lr,
         )
 
-    def _set_bootstrap_reference(self):
-        """Freeze the current actor as a transfer anchor for fine-tuning."""
-        self.bootstrap_ref_actor = copy.deepcopy(self.actor).to(self.device)
-        self.bootstrap_ref_actor.eval()
-        for param in self.bootstrap_ref_actor.parameters():
-            param.requires_grad_(False)
-
     def compute_actor_loss(self, deterministic=False):
         rew_acc = torch.zeros(
             (self.steps_num + 1, self.num_envs),
@@ -316,7 +272,6 @@ class SHAC:
         )
 
         actor_loss = torch.tensor(0.0, dtype=torch.float32, device=self.device)
-        bootstrap_reg_loss = torch.tensor(0.0, dtype=torch.float32, device=self.device)
 
         with torch.no_grad():
             if self.obs_rms is not None:
@@ -393,28 +348,10 @@ class SHAC:
             # Compute obs from tracked state (always differentiable for non-reset envs)
             obs = self.env.compute_obs(qpos, qvel)
 
-            # Legacy obs-level gradient clipping (prefer state_grad_clip instead).
-            if obs.requires_grad and self.obs_grad_clip > 0:
-                _max_norm = self.obs_grad_clip
-                def _norm_clip_hook(grad, mn=_max_norm):
-                    gn = grad.norm(dim=-1, keepdim=True).clamp(min=1e-8)
-                    scale = (mn / gn).clamp(max=1.0)
-                    return grad * scale
-                obs.register_hook(_norm_clip_hook)
-
             if self.obs_rms is not None:
                 with torch.no_grad():
                     self.obs_rms.update(obs)
                 obs = obs_rms.normalize(obs)
-
-            if self.bootstrap_ref_actor is not None and self.bootstrap_reg_coef > 0.0:
-                obs_anchor = obs.detach()
-                current_mu = self.actor(obs_anchor, deterministic=True)
-                current_action = torch.tanh(current_mu)
-                with torch.no_grad():
-                    bootstrap_mu = self.bootstrap_ref_actor(obs_anchor, deterministic=True)
-                    bootstrap_action = torch.tanh(bootstrap_mu)
-                bootstrap_reg_loss = bootstrap_reg_loss + (current_action - bootstrap_action).pow(2).mean()
 
             if self.ret_rms is not None:
                 with torch.no_grad():
@@ -492,13 +429,6 @@ class SHAC:
 
         actor_loss /= self.steps_num * self.num_envs
 
-        if self.bootstrap_ref_actor is not None and self.bootstrap_reg_coef > 0.0:
-            bootstrap_reg_loss = bootstrap_reg_loss / float(self.steps_num)
-            actor_loss = actor_loss + self.bootstrap_reg_coef * bootstrap_reg_loss
-            self.bootstrap_reg_loss = bootstrap_reg_loss.detach().cpu().item()
-        else:
-            self.bootstrap_reg_loss = 0.0
-
         if self.ret_rms is not None:
             actor_loss = actor_loss * torch.sqrt(ret_var + 1e-6)
 
@@ -562,9 +492,7 @@ class SHAC:
 
             self.time_report.start_timer("compute actor loss")
             self.time_report.start_timer("forward simulation")
-            actor_loss = self.compute_actor_loss(
-                deterministic=self.deterministic_actor_rollout
-            )
+            actor_loss = self.compute_actor_loss()
             self.time_report.end_timer("forward simulation")
 
             # Save post-rollout warp_data state before backward corrupts it.
@@ -616,15 +544,6 @@ class SHAC:
                 warmup_epochs=self.actor_grad_norm_warmup_epochs,
             )
             self.critic_grad_clip_threshold = float(self.critic_grad_norm)
-            if self.bootstrap_ref_actor is not None and self.bootstrap_reg_enabled:
-                self.bootstrap_reg_coef = compute_linear_schedule(
-                    epoch=epoch,
-                    start=self.bootstrap_reg_coef_init,
-                    end=self.bootstrap_reg_coef_final,
-                    anneal_epochs=self.bootstrap_reg_anneal_epochs,
-                )
-            else:
-                self.bootstrap_reg_coef = 0.0
             self.env_epoch_metrics = self.env.begin_epoch(epoch=epoch, max_epochs=self.max_epochs)
 
             # Learning rate schedule
@@ -685,19 +604,12 @@ class SHAC:
             self.writer.add_scalar('lr/iter', lr, self.iter_count)
             self.writer.add_scalar('actor_loss/step', self.actor_loss, self.step_count)
             self.writer.add_scalar('actor_loss/iter', self.actor_loss, self.iter_count)
-            self.writer.add_scalar(
-                'actor_rollout/deterministic',
-                float(self.deterministic_actor_rollout),
-                self.iter_count,
-            )
             self.writer.add_scalar('value_loss/step', self.value_loss, self.step_count)
             self.writer.add_scalar('value_loss/iter', self.value_loss, self.iter_count)
             self.writer.add_scalar('grad_norm/before_clip', self.grad_norm_before_clip, self.iter_count)
             self.writer.add_scalar('grad_norm/after_clip', self.grad_norm_after_clip, self.iter_count)
             self.writer.add_scalar('grad_norm/actor_clip_threshold', self.actor_grad_clip_threshold, self.iter_count)
             self.writer.add_scalar('grad_norm/critic_clip_threshold', self.critic_grad_clip_threshold, self.iter_count)
-            self.writer.add_scalar('bootstrap_reg/coef', self.bootstrap_reg_coef, self.iter_count)
-            self.writer.add_scalar('bootstrap_reg/loss', self.bootstrap_reg_loss, self.iter_count)
             for name, value in self.env_epoch_metrics.items():
                 self.writer.add_scalar(f'env/{name}', float(value), self.iter_count)
 
@@ -732,8 +644,7 @@ class SHAC:
             print(
                 'iter {}: ep loss {:.2f}, ep discounted loss {:.2f}, ep len {:.1f}, '
                 'fps total {:.2f}, value loss {:.2f}, grad norm before clip {:.2f}, '
-                'grad norm after clip {:.2f}, actor clip {:.2f}, critic clip {:.2f}, '
-                'bootstrap reg {:.4f}'.format(
+                'grad norm after clip {:.2f}, actor clip {:.2f}, critic clip {:.2f}'.format(
                     self.iter_count,
                     mean_policy_loss,
                     mean_policy_discounted_loss,
@@ -744,7 +655,6 @@ class SHAC:
                     self.grad_norm_after_clip,
                     self.actor_grad_clip_threshold,
                     self.critic_grad_clip_threshold,
-                    self.bootstrap_reg_coef,
                 )
             )
 
@@ -787,8 +697,6 @@ class SHAC:
         self.target_critic = checkpoint[2].to(self.device)
         self.obs_rms = checkpoint[3].to(self.device) if checkpoint[3] is not None else None
         self.ret_rms = checkpoint[4].to(self.device) if checkpoint[4] is not None else None
-        if getattr(self, 'bootstrap_reg_enabled', False):
-            self._set_bootstrap_reference()
         if reset_optimizers:
             self._build_optimizers()
 

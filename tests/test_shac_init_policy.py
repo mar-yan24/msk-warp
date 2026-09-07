@@ -64,29 +64,3 @@ def test_shac_load_rebuilds_optimizers_and_restores_rms(tmp_path):
     assert shac.actor_optimizer.param_groups[0]["params"][0] is actor_params[0]
     assert shac.critic_optimizer.param_groups[0]["params"][0] is critic_params[0]
 
-
-def test_shac_load_sets_bootstrap_reference_when_enabled(tmp_path):
-    checkpoint_path = tmp_path / "warm_start.pt"
-
-    actor = _linear(3, 2, weight_value=0.25, bias_value=-0.5)
-    critic = _linear(3, 1, weight_value=0.75, bias_value=0.1)
-    target_critic = _linear(3, 1, weight_value=-0.5, bias_value=0.3)
-
-    torch.save([actor, critic, target_critic, None, None], checkpoint_path)
-
-    shac = object.__new__(SHAC)
-    shac.device = "cpu"
-    shac.actor_lr = 1e-3
-    shac.critic_lr = 2e-3
-    shac.betas = (0.7, 0.95)
-    shac.bootstrap_reg_enabled = True
-    shac.actor = _linear(3, 2, weight_value=9.0, bias_value=9.0)
-    shac.critic = _linear(3, 1, weight_value=9.0, bias_value=9.0)
-    shac.target_critic = _linear(3, 1, weight_value=9.0, bias_value=9.0)
-
-    shac.load(str(checkpoint_path))
-
-    assert shac.bootstrap_ref_actor is not None
-    for ref_param, actor_param in zip(shac.bootstrap_ref_actor.parameters(), shac.actor.parameters()):
-        assert torch.allclose(ref_param, actor_param)
-        assert ref_param.requires_grad is False
