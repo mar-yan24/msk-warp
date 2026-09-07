@@ -84,4 +84,3 @@ def test_ant_reward_defaults_match_diffrl_formula():
     assert params["up_weight"].default == 0.1
     assert params["height_weight"].default == 1.0
     assert params["joint_vel_penalty"].default == 0.0
-    assert params["push_reward_weight"].default == 0.0

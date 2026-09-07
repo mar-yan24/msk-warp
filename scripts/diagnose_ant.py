@@ -60,7 +60,6 @@ class AntDiagAdapter:
         self.up_weight = env_cfg.get('up_weight', 0.1)
         self.height_weight = env_cfg.get('height_weight', 1.0)
         self.joint_vel_penalty = env_cfg.get('joint_vel_penalty', 0.0)
-        self.push_reward_weight = env_cfg.get('push_reward_weight', 0.0)
         self.device = device
 
         self.targets = torch.tensor([[10000.0, 0.0, 0.0]], device=device, dtype=torch.float32)
@@ -122,11 +121,6 @@ class AntDiagAdapter:
         height_reward = self.height_weight * (height_raw - 0.27)
         action_cost = self.action_penalty * float(np.sum(action_arr ** 2))
         joint_vel_cost = -self.joint_vel_penalty * float(np.sum(joint_vel ** 2))
-        push_reward = 0.0
-        if self.push_reward_weight != 0.0 and action_arr.shape[0] >= 7:
-            push = (-action_arr[0] - action_arr[2] + action_arr[4] + action_arr[6])
-            push_reward = self.push_reward_weight * float(push)
-
         total = (
             forward_vel
             + up_reward
@@ -134,7 +128,6 @@ class AntDiagAdapter:
             + height_reward
             + action_cost
             + joint_vel_cost
-            + push_reward
         )
         return {
             'forward_vel': forward_vel,
@@ -143,7 +136,6 @@ class AntDiagAdapter:
             'height_reward': height_reward,
             'action_cost': action_cost,
             'joint_vel_cost': joint_vel_cost,
-            'push_reward': push_reward,
             'total': total,
         }
 
@@ -235,7 +227,7 @@ def run_rollout_diagnostics(args, cfg):
     all_step_components = {
         'forward_vel': [], 'up_reward': [], 'heading_reward': [],
         'height_reward': [], 'action_cost': [], 'joint_vel_cost': [],
-        'push_reward': [], 'total': [],
+        'total': [],
     }
 
     for ep in range(args.episodes):
@@ -336,7 +328,7 @@ def run_rollout_diagnostics(args, cfg):
         key: float(np.array(all_step_components[key]).std())
         for key in all_step_components
     }
-    for key in ['forward_vel', 'up_reward', 'heading_reward', 'height_reward', 'action_cost', 'joint_vel_cost', 'push_reward', 'total']:
+    for key in ['forward_vel', 'up_reward', 'heading_reward', 'height_reward', 'action_cost', 'joint_vel_cost', 'total']:
         print(f"  {key:<18s} {component_means[key]:+8.4f} +/- {component_stds[key]:7.4f}")
     print()
 
@@ -405,7 +397,6 @@ def run_rollout_diagnostics(args, cfg):
             'height_weight': float(adapter.height_weight),
             'action_penalty': float(adapter.action_penalty),
             'joint_vel_penalty': float(adapter.joint_vel_penalty),
-            'push_reward_weight': float(adapter.push_reward_weight),
         },
     }
 

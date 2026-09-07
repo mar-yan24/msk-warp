@@ -28,17 +28,11 @@ def test_diagnose_reward_matches_antenv_formula():
         "substeps": 4,
         "episode_length": 1000,
         "early_termination": True,
-        "reward_curriculum": {
-            "enabled": False,
-            "anneal_epochs": 20,
-            "target_speed": 0.5,
-        },
         "forward_vel_weight": 1.7,
         "heading_weight": 0.4,
         "up_weight": 0.2,
         "height_weight": 0.8,
         "joint_vel_penalty": 0.03,
-        "push_reward_weight": 0.25,
         "action_penalty": -0.005,
     }
     adapter = diag.AntDiagAdapter(env_cfg, device="cpu")
@@ -67,7 +61,6 @@ def test_diagnose_reward_matches_antenv_formula():
         adapter.up_weight,
         adapter.height_weight,
         adapter.joint_vel_penalty,
-        adapter.push_reward_weight,
     )[0].item()
 
     summed = (
@@ -77,7 +70,6 @@ def test_diagnose_reward_matches_antenv_formula():
         + components["height_reward"]
         + components["action_cost"]
         + components["joint_vel_cost"]
-        + components["push_reward"]
     )
 
     assert abs(components["total"] - reward_ref) < 1e-6

@@ -52,5 +52,4 @@ params:
     grad_norm: 1.0
     state_bptt: true
     state_grad_clip: 5.0
-    obs_grad_clip: 0.0
     save_interval: 400
