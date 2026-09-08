@@ -23,8 +23,6 @@ class CartPoleSwingUpEnv(MjWarpEnv):
         substeps=4,
         model_path='assets/cartpole.xml',
         action_strength=20.0,
-        use_fd_jacobian=False,
-        tape_per_substep=False,
         **kwargs,
     ):
         num_obs = 5
@@ -39,8 +37,7 @@ class CartPoleSwingUpEnv(MjWarpEnv):
             device=device,
             no_grad=no_grad,
             substeps=substeps,
-            use_fd_jacobian=use_fd_jacobian,
-            tape_per_substep=tape_per_substep,
+            **kwargs,
         )
 
         self.stochastic_init = stochastic_init
@@ -113,16 +110,15 @@ class CartPoleSwingUpEnv(MjWarpEnv):
         )
         return reward
 
-    def step(self, actions, qpos_in=None, qvel_in=None):
+    def step(self, actions, qpos_in=None, qvel_in=None, act_in=None):
         """Run one control step.
 
         Args:
             actions: (num_envs, num_actions) action tensor (already tanh'd)
-            qpos_in: Optional differentiable qpos input (for state gradient flow)
-            qvel_in: Optional differentiable qvel input (for state gradient flow)
+            qpos_in, qvel_in, act_in: optional differentiable state inputs (BPTT)
 
         Returns:
-            obs, rew, done, extras, qpos_out, qvel_out
+            obs, rew, done, extras, qpos_out, qvel_out, act_out
         """
         actions = actions.view(self.num_envs, self.num_actions)
         actions = torch.clamp(actions, -1.0, 1.0)
@@ -143,15 +139,11 @@ class CartPoleSwingUpEnv(MjWarpEnv):
             qvel = wp.to_torch(self.warp_data.qvel)
             self.obs_buf = self._compute_obs(qpos, qvel)
             self.rew_buf = self._compute_reward(qpos, qvel, actions, self._reward_weights)
-            qpos_out, qvel_out = None, None
+            qpos_out, qvel_out, act_out = None, None, None
         else:
             # Differentiable path: state flows through WarpSimStep
-            if qpos_in is None:
-                qpos_in = wp.to_torch(self.warp_data.qpos).clone()
-            if qvel_in is None:
-                qvel_in = wp.to_torch(self.warp_data.qvel).clone()
-
-            qpos_out, qvel_out = WarpSimStep.apply(ctrl, qpos_in, qvel_in, self)
+            qpos_in, qvel_in, act_in = self._state_inputs(qpos_in, qvel_in, act_in)
+            qpos_out, qvel_out, act_out = WarpSimStep.apply(ctrl, qpos_in, qvel_in, act_in, self)
 
             # Clamp state to prevent extreme values causing NaN gradients
             qpos_out = qpos_out.clamp(-20.0, 20.0)
@@ -182,7 +174,7 @@ class CartPoleSwingUpEnv(MjWarpEnv):
         if len(env_ids) > 0:
             self._reset_warp_state(env_ids)
 
-        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras, qpos_out, qvel_out
+        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras, qpos_out, qvel_out, act_out
 
     def _reset_warp_state(self, env_ids):
         """Reset Warp state for specified environments (no gradient)."""

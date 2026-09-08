@@ -37,8 +37,6 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         action_strength=1.0,
         early_termination=True,
         njmax=1000,
-        use_fd_jacobian=False,
-        tape_per_substep=False,
         **kwargs,
     ):
         # Pre-load model to discover dimensions
@@ -69,8 +67,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             no_grad=no_grad,
             substeps=substeps,
             njmax=njmax,
-            use_fd_jacobian=use_fd_jacobian,
-            tape_per_substep=tape_per_substep,
+            **kwargs,
         )
 
         self.stochastic_init = stochastic_init
@@ -240,16 +237,16 @@ class MyoLeg26WalkEnv(MjWarpEnv):
     # Step
     # ------------------------------------------------------------------
 
-    def step(self, actions, qpos_in=None, qvel_in=None):
+    def step(self, actions, qpos_in=None, qvel_in=None, act_in=None):
         """Run one control step.
 
         Args:
             actions: (num_envs, 26) action tensor from the policy (tanh'd)
-            qpos_in: Optional differentiable qpos input
-            qvel_in: Optional differentiable qvel input
+            qpos_in, qvel_in, act_in: optional differentiable state inputs (BPTT);
+                act is the muscle activation state and must be threaded
 
         Returns:
-            obs, rew, done, extras, qpos_out, qvel_out
+            obs, rew, done, extras, qpos_out, qvel_out, act_out
         """
         actions = actions.view(self.num_envs, self.num_actions)
         actions = torch.clamp(actions, -1.0, 1.0)
@@ -275,14 +272,10 @@ class MyoLeg26WalkEnv(MjWarpEnv):
                 self.n_joint_q, self.n_joint_v,
             )
             self.rew_buf = self._compute_reward(self.obs_buf, actions)
-            qpos_out, qvel_out = None, None
+            qpos_out, qvel_out, act_out = None, None, None
         else:
-            if qpos_in is None:
-                qpos_in = wp.to_torch(self.warp_data.qpos).clone()
-            if qvel_in is None:
-                qvel_in = wp.to_torch(self.warp_data.qvel).clone()
-
-            qpos_out, qvel_out = WarpSimStep.apply(ctrl, qpos_in, qvel_in, self)
+            qpos_in, qvel_in, act_in = self._state_inputs(qpos_in, qvel_in, act_in)
+            qpos_out, qvel_out, act_out = WarpSimStep.apply(ctrl, qpos_in, qvel_in, act_in, self)
 
             qpos_out = qpos_out.clamp(-100.0, 100.0)
             qvel_out = qvel_out.clamp(-100.0, 100.0)
@@ -341,7 +334,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         if len(env_ids) > 0:
             self._reset_warp_state(env_ids)
 
-        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras, qpos_out, qvel_out
+        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras, qpos_out, qvel_out, act_out
 
     # ------------------------------------------------------------------
     # Reset
