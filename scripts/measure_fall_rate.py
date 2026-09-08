@@ -19,8 +19,10 @@ Action distributions:
   sigma=s   ``a ~ N(0, s)`` resampled each control step and clipped to [-1, 1].
 
 The reward split reports what fraction of the accumulated return comes from the posture terms
-(height and angle) rather than from forward progress. A posture fraction near 1 is the ant's
-pathology: standing still collects almost the whole return.
+(height and angle) rather than from forward progress, accumulated only over the steps before a
+world falls, since afterwards the quadratic height penalty dominates and the ratio saturates. A
+posture fraction near 1 is the ant's pathology: standing still collects almost the whole return.
+The split needs an environment that exposes DiffRL's reward terms and is skipped otherwise.
 
 Usage::
 
@@ -59,6 +61,11 @@ def run_condition(env, kind, sigma, steps, seed):
     height_trace = np.zeros((steps, n), dtype=np.float32)
 
     passive = env.passive_action() if kind == "passive" else None
+    # The posture split needs DiffRL's reward terms. Environments without them are still scored on
+    # fall rate and height; only the split is skipped.
+    split = all(hasattr(env, a) for a in
+                ("termination_height_tolerance", "height_rew_scale", "angle_rew_scale",
+                 "termination_angle"))
 
     for t in range(steps):
         if kind == "passive":
@@ -76,23 +83,28 @@ def run_condition(env, kind, sigma, steps, seed):
             newly = (height < env.termination_height).detach().cpu().numpy() & (fell_at < 0)
             fell_at[newly] = t
 
-            # Reward split, using the environment's own reward terms.
-            hd = height - (env.termination_height + env.termination_height_tolerance)
-            hr = torch.clip(hd, -1.0, 0.3)
-            hr = torch.where(hr < 0.0, -200.0 * hr * hr, hr)
-            hr = torch.where(hr > 0.0, env.height_rew_scale * hr, hr)
-            ar = 1.0 * (-obs[:, 1] ** 2 / (env.termination_angle ** 2) + 1.0)
-            posture_sum += hr + ar
-            progress_sum += obs[:, 5]
             return_sum += rew
+            if split:
+                # Accumulate only while a world is still upright, using the env's own terms.
+                alive = torch.tensor(fell_at < 0, device=device)
+                hd = height - (env.termination_height + env.termination_height_tolerance)
+                hr = torch.clip(hd, -1.0, 0.3)
+                hr = torch.where(hr < 0.0, -200.0 * hr * hr, hr)
+                hr = torch.where(hr > 0.0, env.height_rew_scale * hr, hr)
+                ar = env.angle_rew_scale * (-obs[:, 1] ** 2 / (env.termination_angle ** 2) + 1.0)
+                posture_sum += (hr + ar) * alive
+                progress_sum += obs[:, 5] * alive
 
-    rate300, median300 = _fall_stats(fell_at, steps, min(300, steps))
+    early = min(300, steps)
+    rate300, median300 = _fall_stats(fell_at, steps, early)
     rate_all, _ = _fall_stats(fell_at, steps, steps)
     posture = float(posture_sum.abs().sum())
     progress = float(progress_sum.abs().sum())
+    fraction = posture / (posture + progress) if split and posture + progress > 0 else float("nan")
 
     return {
         "condition": kind if kind in ("passive", "zero") else f"sigma={sigma}",
+        "early_horizon": early,
         "fall_rate_300": rate300,
         "fall_rate_full": rate_all,
         "median_fall_step": median300,
@@ -100,7 +112,7 @@ def run_condition(env, kind, sigma, steps, seed):
         "final_height_std": float(height_trace[-1].std()),
         "min_height_mean": float(height_trace.min(axis=0).mean()),
         "mean_return": float(return_sum.mean()),
-        "posture_fraction": posture / (posture + progress) if posture + progress > 0 else float("nan"),
+        "posture_fraction": fraction,
     }
 
 
@@ -139,7 +151,7 @@ def main():
         row = run_condition(env, kind, sigma, args.steps, args.seed)
         rows.append(row)
         print(
-            f"{row['condition']:>12s}  fall@300 {row['fall_rate_300']:6.1%}  "
+            f"{row['condition']:>12s}  fall@{row['early_horizon']} {row['fall_rate_300']:6.1%}  "
             f"fall@{args.steps} {row['fall_rate_full']:6.1%}  "
             f"median step {row['median_fall_step']:6.1f}  "
             f"final h {row['final_height_mean']:+7.3f}  "
