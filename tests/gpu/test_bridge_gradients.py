@@ -223,8 +223,32 @@ def test_fd_mode_matches_tape_on_muscle():
         assert _rel(a[f][0], b[f][0]) < 2e-2, f
 
 
-def _hopper(kind):
-    return mujoco.MjModel.from_xml_path(resolve_model_path(f"assets/hopper_{kind}.xml"))
+def _hopper(kind, smooth=False):
+    """Hopper model; ``smooth=True`` disables contacts and joint limits.
+
+    The smooth variant exists because the finite-difference reference is only meaningful away from
+    active-set switches. With contacts and limits on, a perturbation at some states crosses a
+    constraint boundary and the difference quotient jumps by one to two orders of magnitude, which
+    swamps any adjoint comparison. Turning both off leaves purely smooth dynamics, where the motor
+    hopper is exact to 1.00000 at every seed and the muscle hopper is not.
+    """
+    mjm = mujoco.MjModel.from_xml_path(resolve_model_path(f"assets/hopper_{kind}.xml"))
+    if smooth:
+        mjm.opt.disableflags |= int(mujoco.mjtDisableBit.mjDSBL_CONTACT)
+        mjm.jnt_limited[:] = 0
+    return mjm
+
+
+def _hopper_qpos_cosines(kind, seeds=range(4), smooth=True):
+    out = []
+    for seed in seeds:
+        res = _run(_hopper(kind, smooth), f"hopper_{kind}", "tape_per_substep",
+                   horizon=2, substeps=2, njmax=128, seed=seed)
+        ad, fd = res["qpos"]
+        assert np.isfinite(ad).all(), (kind, seed)
+        assert np.abs(ad).max() > 0, f"{kind} seed {seed}: qpos gradient is identically zero"
+        out.append(_cos(ad, fd))
+    return np.array(out)
 
 
 @pytest.mark.parametrize("mode", ["tape_per_substep", "tape"])
@@ -245,6 +269,12 @@ def test_hopper_motor_eight_steps_ctrl_direction_holds():
     assert _cos(ad, fd) > 0.90, (_cos(ad, fd), ad, fd)
 
 
+def test_hopper_motor_smooth_qpos_is_exact():
+    """Control for the muscle case: the same skeleton with torque motors is exact at every seed."""
+    cos = _hopper_qpos_cosines("motor")
+    assert cos.min() > 0.999, cos
+
+
 @pytest.mark.parametrize("mode", ["tape_per_substep", "tape"])
 def test_hopper_muscle_matches_fd(mode):
     """Muscle hopper at a settled contact pose: contact and tendon gradients together (G3.2).
@@ -260,33 +290,29 @@ def test_hopper_muscle_matches_fd(mode):
         assert _cos(ad, fd) > floor, (f, _cos(ad, fd), ad, fd)
 
 
-@pytest.mark.xfail(
-    reason="pr1423 defect 3: the tendon path's dL/dqpos is wrong on hinge coordinates. "
-           "Present in a single physics step (cos 0.976), identical in both tape modes, absent "
-           "with joint actuators, absent on slide coordinates, and unchanged by disabling "
-           "contacts, joint limits and the force-velocity curve. See "
-           "docs/research/phase3-hopper/results.md",
-    strict=False)
-def test_hopper_muscle_qpos_matches_fd():
-    res = _run(_hopper("muscle"), "hopper_muscle", "tape_per_substep", horizon=2, substeps=2, njmax=128)
-    ad, fd = res["qpos"]
-    assert _cos(ad, fd) > 0.99, (_cos(ad, fd), ad, fd)
-
-
-def test_hopper_muscle_qpos_direction_is_usable():
-    """The defect-3 gap is bounded: the direction is still mostly right, and no field is zero."""
-    res = _run(_hopper("muscle"), "hopper_muscle", "tape_per_substep", horizon=2, substeps=2, njmax=128)
-    ad, fd = res["qpos"]
-    assert np.isfinite(ad).all()
-    assert np.abs(ad).max() > 0
-    assert _cos(ad, fd) > 0.90, (_cos(ad, fd), ad, fd)
-
-
 def test_hopper_muscle_eight_steps_ctrl_direction_holds():
     res = _run(_hopper("muscle"), "hopper_muscle", "tape_per_substep", horizon=8, substeps=1, njmax=128)
     ad, fd = res["ctrl"]
     assert np.isfinite(ad).all()
     assert _cos(ad, fd) > 0.85, (_cos(ad, fd), ad, fd)
+
+
+@pytest.mark.xfail(
+    reason="pr1423 defect 3: the tendon path's dL/dqpos is wrong. On smooth dynamics over 8 seeds "
+           "the muscle hopper gives cosine 0.934 (min 0.865) and relative error 0.29-0.60, while "
+           "the same skeleton with torque motors gives 1.00000 and 4e-4. Present in a single "
+           "physics step, identical in both tape modes, and unchanged by the force-velocity curve, "
+           "the force-length curve or welding the root. See docs/research/phase3-hopper/results.md",
+    strict=False)
+def test_hopper_muscle_smooth_qpos_matches_fd():
+    cos = _hopper_qpos_cosines("muscle")
+    assert cos.min() > 0.999, cos
+
+
+def test_hopper_muscle_smooth_qpos_direction_is_usable():
+    """The defect-3 gap is bounded: the direction stays mostly right and no field goes to zero."""
+    cos = _hopper_qpos_cosines("muscle")
+    assert cos.min() > 0.85, cos
 
 
 def test_no_gradients_were_sanitized():
