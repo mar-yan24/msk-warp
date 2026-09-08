@@ -78,7 +78,7 @@ class CartPoleSwingUpEnv(MjWarpEnv):
         self.start_qpos[:, 1] = math.pi
         self.start_qvel[:, :] = 0.0
 
-    def compute_obs(self, qpos, qvel):
+    def compute_obs(self, qpos, qvel, act=None):
         """Instance method wrapper for SHAC compatibility."""
         return self._compute_obs(qpos, qvel)
 

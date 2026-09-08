@@ -214,7 +214,7 @@ class AntEnv(MjWarpEnv):
             torch.rand(n, self.num_joint_qd, device=self.device) - 0.5
         )
 
-    def compute_obs(self, qpos, qvel):
+    def compute_obs(self, qpos, qvel, act=None):
         """Instance method wrapper for SHAC compatibility."""
         return self._compute_obs(
             qpos, qvel, self.actions,

@@ -345,7 +345,7 @@ class SHAC:
                         act.register_hook(_state_control_hook)
 
             # Compute obs from tracked state (always differentiable for non-reset envs)
-            obs = self.env.compute_obs(qpos, qvel)
+            obs = self.env.compute_obs(qpos, qvel, act)
 
             if self.obs_rms is not None:
                 with torch.no_grad():

@@ -215,7 +215,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         )
         return reward
 
-    def compute_obs(self, qpos, qvel):
+    def compute_obs(self, qpos, qvel, act=None):
         """Instance method wrapper for SHAC compatibility.
 
         Writes state to warp_data and runs fwd_position to update xquat,
