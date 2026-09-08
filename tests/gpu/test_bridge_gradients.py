@@ -60,6 +60,24 @@ def _nominal(mjm, kind, seed=0):
     rng = np.random.default_rng(seed)
     if kind == "cartpole":
         qpos = np.array([0.1, 2.9]); qvel = np.array([0.05, -0.1])
+    elif kind.startswith("hopper"):
+        d = mujoco.MjData(mjm)
+        if mjm.na:
+            d.act[:] = 0.5
+            d.ctrl[:] = 0.5
+        for _ in range(200):
+            mujoco.mj_step(mjm, d)  # settle onto the foot, contacts active
+        qpos, qvel = d.qpos.copy(), d.qvel.copy()
+        # Standing settles the knee onto its upper limit (0.0004 rad past it), where the limit
+        # constraint switches on and the derivative is not defined: the fp32 central difference
+        # there swings from -7 to +52 to +24 as eps goes 1e-2, 1e-3, 1e-4. The bake-off rubric
+        # excludes states inside an active-set switch, so every limited joint is moved a margin
+        # inside its range before the comparison.
+        for j in range(mjm.njnt):
+            if mjm.jnt_limited[j]:
+                a = mjm.jnt_qposadr[j]
+                lo, hi = mjm.jnt_range[j]
+                qpos[a] = min(max(qpos[a], lo + 0.05), hi - 0.05)
     elif kind == "ant":
         d = mujoco.MjData(mjm)
         d.qpos[:] = [0, 0, 0.75, 1, 0, 0, 0, 0, 1, 0, -1, 0, -1, 0, 1]
@@ -203,6 +221,72 @@ def test_fd_mode_matches_tape_on_muscle():
     for f in ("act", "qvel", "ctrl"):
         assert _cos(a[f][0], b[f][0]) > 0.99, f
         assert _rel(a[f][0], b[f][0]) < 2e-2, f
+
+
+def _hopper(kind):
+    return mujoco.MjModel.from_xml_path(resolve_model_path(f"assets/hopper_{kind}.xml"))
+
+
+@pytest.mark.parametrize("mode", ["tape_per_substep", "tape"])
+def test_hopper_motor_matches_fd(mode):
+    """Motor hopper at a settled contact pose (Phase 3 gate G3.2)."""
+    res = _run(_hopper("motor"), "hopper_motor", mode, horizon=1, substeps=4, njmax=128)
+    for f, floor in (("ctrl", 0.99), ("qvel", 0.95), ("qpos", 0.95)):
+        ad, fd = res[f]
+        assert np.isfinite(ad).all(), f
+        assert np.abs(ad).max() > 0, f"{f} gradient is identically zero"
+        assert _cos(ad, fd) > floor, (f, _cos(ad, fd), ad, fd)
+
+
+def test_hopper_motor_eight_steps_ctrl_direction_holds():
+    res = _run(_hopper("motor"), "hopper_motor", "tape_per_substep", horizon=8, substeps=1, njmax=128)
+    ad, fd = res["ctrl"]
+    assert np.isfinite(ad).all()
+    assert _cos(ad, fd) > 0.90, (_cos(ad, fd), ad, fd)
+
+
+@pytest.mark.parametrize("mode", ["tape_per_substep", "tape"])
+def test_hopper_muscle_matches_fd(mode):
+    """Muscle hopper at a settled contact pose: contact and tendon gradients together (G3.2).
+
+    Two control steps, because ctrl reaches the dynamics only through ``act_dot -> act`` and so
+    has no effect on the state after a single step.
+    """
+    res = _run(_hopper("muscle"), "hopper_muscle", mode, horizon=2, substeps=2, njmax=128)
+    for f, floor in (("act", 0.99), ("ctrl", 0.95), ("qvel", 0.95)):
+        ad, fd = res[f]
+        assert np.isfinite(ad).all(), f
+        assert np.abs(ad).max() > 0, f"{f} gradient is identically zero"
+        assert _cos(ad, fd) > floor, (f, _cos(ad, fd), ad, fd)
+
+
+@pytest.mark.xfail(
+    reason="pr1423 defect 3: the tendon path's dL/dqpos is wrong on hinge coordinates. "
+           "Present in a single physics step (cos 0.976), identical in both tape modes, absent "
+           "with joint actuators, absent on slide coordinates, and unchanged by disabling "
+           "contacts, joint limits and the force-velocity curve. See "
+           "docs/research/phase3-hopper/results.md",
+    strict=False)
+def test_hopper_muscle_qpos_matches_fd():
+    res = _run(_hopper("muscle"), "hopper_muscle", "tape_per_substep", horizon=2, substeps=2, njmax=128)
+    ad, fd = res["qpos"]
+    assert _cos(ad, fd) > 0.99, (_cos(ad, fd), ad, fd)
+
+
+def test_hopper_muscle_qpos_direction_is_usable():
+    """The defect-3 gap is bounded: the direction is still mostly right, and no field is zero."""
+    res = _run(_hopper("muscle"), "hopper_muscle", "tape_per_substep", horizon=2, substeps=2, njmax=128)
+    ad, fd = res["qpos"]
+    assert np.isfinite(ad).all()
+    assert np.abs(ad).max() > 0
+    assert _cos(ad, fd) > 0.90, (_cos(ad, fd), ad, fd)
+
+
+def test_hopper_muscle_eight_steps_ctrl_direction_holds():
+    res = _run(_hopper("muscle"), "hopper_muscle", "tape_per_substep", horizon=8, substeps=1, njmax=128)
+    ad, fd = res["ctrl"]
+    assert np.isfinite(ad).all()
+    assert _cos(ad, fd) > 0.85, (_cos(ad, fd), ad, fd)
 
 
 def test_no_gradients_were_sanitized():
