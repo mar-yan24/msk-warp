@@ -37,15 +37,21 @@ def _train(cfg_name, logdir, seed, max_epochs, overrides=None):
         cfg_path = Path(logdir) / "cfg_override.yaml"
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
         cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    proc = subprocess.run(
-        [str(PYTHON), "-u", str(REPO / "scripts" / "train.py"), "--cfg", str(cfg_path),
-         "--logdir", str(logdir), "--seed", str(seed), "--max-epochs", str(max_epochs)],
-        cwd=REPO, capture_output=True, text=True, timeout=60 * 90,
-    )
-    assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-3000:]
+    # stream to a file: training prints one line per critic iteration, and buffering the whole
+    # stdout in memory alongside the child process was enough to run this machine out of RAM
+    log = Path(logdir) / "train.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with open(log, "w", encoding="utf-8", errors="replace") as fh:
+        proc = subprocess.run(
+            [str(PYTHON), "-u", str(REPO / "scripts" / "train.py"), "--cfg", str(cfg_path),
+             "--logdir", str(logdir), "--seed", str(seed), "--max-epochs", str(max_epochs)],
+            cwd=REPO, stdout=fh, stderr=subprocess.STDOUT, timeout=60 * 90,
+        )
+    text = log.read_text(encoding="utf-8", errors="replace")
+    assert proc.returncode == 0, text[-3000:]
     # the critic's per-iteration prints have no trailing newline, so the summary line is mid-line
     losses = {}
-    for it, val in re.findall(r"iter (\d+): ep loss (-?[\d.]+|inf|-inf|nan)", proc.stdout):
+    for it, val in re.findall(r"iter (\d+): ep loss (-?[\d.]+|inf|-inf|nan)", text):
         if val not in ("inf", "-inf", "nan"):
             losses[int(it)] = float(val)
     assert losses, "no iteration lines parsed from training output"
