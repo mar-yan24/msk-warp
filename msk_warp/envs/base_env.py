@@ -34,6 +34,7 @@ class MjWarpEnv:
         rerun_after_backward=True,
         grad_contract='strict',
         fd_eps=1e-3,
+        clear_grad_rebuild=False,
     ):
         self.device = device
         self.num_environments = num_envs
@@ -52,6 +53,9 @@ class MjWarpEnv:
         self.tape_per_substep = backward_mode == 'tape_per_substep'
         self.rerun_after_backward = rerun_after_backward
         self.fd_eps = fd_eps
+        # Per-epoch graph cut: zero the gradient buffers (default) or rebuild Data from scratch,
+        # which also resets solver warm-start state. Kept switchable to A/B training dynamics.
+        self.clear_grad_rebuild = clear_grad_rebuild
         self._njmax = njmax
 
         model_path = resolve_model_path(model_path)
@@ -101,13 +105,15 @@ class MjWarpEnv:
         """Detached copies of the current ``(qpos, qvel, act)`` as torch tensors."""
         return _state_tensors(self.warp_data)
 
-    def clear_grad(self, rebuild=False):
+    def clear_grad(self, rebuild=None):
         """Per-epoch graph cut: zero the Warp gradient buffers.
 
         Every backward pass records and disposes its own tape, so nothing accumulates across
         epochs on the Warp side. ``rebuild=True`` reproduces the old behaviour (fresh Data with
         the state copied over); it exists so a test can show both give the same gradients.
         """
+        if rebuild is None:
+            rebuild = self.clear_grad_rebuild
         if not rebuild:
             backend.zero_grad(self.warp_data)
             return
