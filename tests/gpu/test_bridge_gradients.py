@@ -315,5 +315,85 @@ def test_hopper_muscle_smooth_qpos_direction_is_usable():
     assert cos.min() > 0.85, cos
 
 
+# Minimal reproduction of pr1423 defect 3, found by bisecting down from the hopper. Two hinges in
+# one chain, one two-site tendon spanning each, driven hard. Every smaller model is exact: one
+# hinge with one tendon at any force, two hinges with only ONE tendon at any force, and a single
+# hinge with an antagonist pair. The error needs two tendons on two distinct joints and grows
+# monotonically with tendon force, which is the signature of a term proportional to force being
+# lost, i.e. the (d ten_J / dq)^T F half of d(qfrc)/dq.
+TWO_TENDON_CHAIN_XML = """
+<mujoco>
+  <option timestep="0.004" gravity="0 0 -9.81" solver="Newton" jacobian="dense"
+          iterations="20" ls_iterations="20"><flag contact="disable"/></option>
+  <worldbody>
+    <body name="b0" pos="0 0 1">
+      <geom type="capsule" size="0.05 0.2" mass="2"/>
+      <site name="s0" pos="0.09 0 -0.14"/>
+      <body name="b1" pos="0 0 -0.2">
+        <joint name="j1" type="hinge" axis="0 -1 0" damping="1" armature="1"/>
+        <geom type="capsule" size="0.05 0.2" pos="0 0 -0.2" mass="2"/>
+        <site name="s1" pos="0.07 0 -0.11"/>
+        <body name="b2" pos="0 0 -0.4">
+          <joint name="j2" type="hinge" axis="0 -1 0" damping="1" armature="1"/>
+          <geom type="capsule" size="0.05 0.2" pos="0 0 -0.2" mass="2"/>
+          <site name="s2" pos="0.07 0 -0.11"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <tendon>
+    <spatial name="t0"><site site="s0"/><site site="s1"/></spatial>
+    <spatial name="t1"><site site="s1"/><site site="s2"/></spatial>
+  </tendon>
+  <actuator>
+    <motor tendon="t0" gear="{gear}" ctrllimited="true" ctrlrange="0 1"/>
+    <motor tendon="t1" gear="{gear}" ctrllimited="true" ctrlrange="0 1"/>
+  </actuator>
+</mujoco>
+"""
+
+ONE_TENDON_CHAIN_XML = TWO_TENDON_CHAIN_XML.replace(
+    '<spatial name="t1"><site site="s1"/><site site="s2"/></spatial>', "").replace(
+    '<motor tendon="t1" gear="{gear}" ctrllimited="true" ctrlrange="0 1"/>', "")
+
+
+def _chain_qpos_cosines(xml, gear, seeds=range(4)):
+    mjm = mujoco.MjModel.from_xml_string(xml.format(gear=gear))
+    out = []
+    for seed in seeds:
+        res = _run(mjm, "hopper_motor", "tape_per_substep", horizon=2, substeps=2, seed=seed)
+        ad, fd = res["qpos"]
+        assert np.isfinite(ad).all(), seed
+        out.append(_cos(ad, fd))
+    return np.array(out)
+
+
+def test_single_tendon_chain_qpos_is_exact():
+    """The control for the defect-3 reproduction: one tendon in the same chain is exact."""
+    for gear in (3000, 12000):
+        cos = _chain_qpos_cosines(ONE_TENDON_CHAIN_XML, gear)
+        assert cos.min() > 0.999, (gear, cos)
+
+
+@pytest.mark.xfail(
+    reason="pr1423 defect 3, minimal reproduction: two tendons on two joints of one chain. "
+           "Adding the second tendon breaks dL/dqpos and the error grows with tendon force "
+           "(cosine 0.98 at gear 800, 0.59 at 3000, 0.12 at 12000), while the same chain with one "
+           "tendon is exact at every force. See docs/research/phase3-hopper/results.md",
+    strict=False)
+def test_two_tendon_chain_qpos_matches_fd():
+    cos = _chain_qpos_cosines(TWO_TENDON_CHAIN_XML, 3000)
+    assert cos.min() > 0.99, cos
+
+
+def test_two_tendon_chain_error_grows_with_force():
+    """Pin the dose-response, so a backend fix or regression is visible in the shape, not just one
+    number. Low force stays usable; high force degrades."""
+    low = _chain_qpos_cosines(TWO_TENDON_CHAIN_XML, 800).mean()
+    high = _chain_qpos_cosines(TWO_TENDON_CHAIN_XML, 12000).mean()
+    assert low > high, (low, high)
+    assert low > 0.9, low
+
+
 def test_no_gradients_were_sanitized():
     assert bridge.sanitized_nan_count == 0
