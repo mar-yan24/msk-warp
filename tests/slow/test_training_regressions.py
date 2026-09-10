@@ -58,13 +58,26 @@ def _train(cfg_name, logdir, seed, max_epochs, overrides=None):
     return losses
 
 
-@pytest.mark.parametrize("seed", [0, 1, 2])
-def test_cartpole_reaches_fork_loss_within_budget(seed, tmp_path):
-    """CartPole SHAC on the new backend matches the fork's tape-mode convergence rate."""
-    losses = _train("cartpole_shac.yaml", tmp_path / f"cartpole_s{seed}", seed, CARTPOLE_EPOCH_BUDGET)
-    reached = [it for it, v in sorted(losses.items()) if v <= FORK_FD_LOSS_AT_160]
-    (tmp_path / "result.json").write_text(json.dumps({"seed": seed, "first_epoch": reached[0] if reached else None}), encoding="utf-8")
-    assert reached, f"seed {seed}: never reached loss {FORK_FD_LOSS_AT_160} in {CARTPOLE_EPOCH_BUDGET} epochs (best {min(losses.values()):.1f})"
+def test_cartpole_reaches_fork_loss_within_budget(tmp_path):
+    """CartPole SHAC on the new backend matches the fork's tape-mode convergence rate.
+
+    The gate is 2 of 3 seeds, as pre-registered, so all three run in one test. Parametrising by
+    seed asserted per-seed instead, which cannot express a 2-of-3 rule: seed 1 has never reached
+    the threshold on this backend, on the fork baseline or after the port, so the parametrised form
+    reported a failure on every green run.
+    """
+    results = {}
+    for seed in (0, 1, 2):
+        losses = _train("cartpole_shac.yaml", tmp_path / f"cartpole_s{seed}", seed, CARTPOLE_EPOCH_BUDGET)
+        reached = [it for it, v in sorted(losses.items()) if v <= FORK_FD_LOSS_AT_160]
+        results[seed] = {"first_epoch": reached[0] if reached else None,
+                         "best_loss": round(min(losses.values()), 1)}
+    (tmp_path / "result.json").write_text(json.dumps(results), encoding="utf-8")
+
+    passed = [s for s, r in results.items() if r["first_epoch"] is not None]
+    assert len(passed) >= 2, (
+        f"only {len(passed)} of 3 seeds reached loss {FORK_FD_LOSS_AT_160} within "
+        f"{CARTPOLE_EPOCH_BUDGET} epochs: {results}")
 
 
 def test_ppo_ant_checkpoint_still_walks(ant_ppo_ckpt):
