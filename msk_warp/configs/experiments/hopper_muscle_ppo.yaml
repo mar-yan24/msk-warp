@@ -1,0 +1,60 @@
+# PPO feasibility test for the muscle hopper. Amendment A3 in
+# docs/research/phase3-hopper/protocol.md.
+#
+# Four SHAC configurations have failed, each landing in either standing or diving, and an open-loop
+# sweep turned out uninformative because the motor hopper fails it too. The open question is whether
+# ANY policy can hop the physiological muscle model. PPO is model-free and explores differently, and
+# it is the pre-registered fallback in the approved plan; on the ant it walked 43 m where SHAC from
+# scratch converged to standing.
+#
+# The model is the unmodified hopper_muscle.xml, not the fast-deactivation variant, because the
+# question is whether the physiological model is capable. The reward is A1's, the only setting that
+# orders hopping above standing above diving. Batch is held at the ant recipe's 131072, reshaped
+# from 64 actors x 2048 steps to 256 x 512 for GPU utilisation.
+params:
+  general:
+    seed: 0
+    device: cuda:0
+    logdir: logs/phase3/muscle_ppo_seed0
+
+  env:
+    name: HopperMuscle
+    model_path: assets/hopper_muscle.xml
+    num_actors: 256
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    height_rew_scale: 0.3
+    angle_rew_scale: 0.5
+    early_termination: true
+
+  network:
+    actor: ActorStochasticMLP
+    actor_logstd_init: -1.0
+    actor_mlp:
+      units: [128, 64, 32]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [64, 64]
+      activation: elu
+
+  config:
+    algorithm: ppo
+    name: hopper_muscle_ppo
+    gamma: 0.99
+    gae_lambda: 0.95
+    steps_num: 512
+    max_epochs: 500
+    actor_learning_rate: 3e-4
+    critic_learning_rate: 3e-4
+    lr_schedule: constant
+    betas: [0.9, 0.999]
+    obs_rms: true
+    ret_rms: false
+    truncate_grads: true
+    max_grad_norm: 0.5
+    save_interval: 50
+    eval_interval: 50
+    eval_episodes: 16

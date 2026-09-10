@@ -8,8 +8,8 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "torch>=2.1",
-    "warp-lang>=1.5",
-    "mujoco>=3.2,<3.8.1",
+    "warp-lang==1.14.0",
+    "mujoco==3.10.0",
     "mujoco-warp",
     "tensorboardX",
     "pyyaml",
@@ -35,7 +35,7 @@ markers = [
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu130" }
-mujoco-warp = { path = "C:/Projects/mujoco_warp", editable = true }
+mujoco-warp = { path = "C:/Projects/mujoco_warp_pr1423", editable = true }
 
 [[tool.uv.index]]
 name = "pytorch-cu130"

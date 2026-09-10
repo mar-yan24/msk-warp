@@ -1,16 +1,21 @@
+# Muscle hopper at 35% peak force. Amendment A5 stage 2.
+#
+# The reward is DiffRL's, unchanged, so this is comparable with the original G3.5 run rather than
+# with the A1 reward repair: strength is the only variable. The scale was chosen by the
+# pre-registered fall-rate rule, and the asset header records the sweep.
 params:
   general:
-    seed: 42
+    seed: 0
     device: cuda:0
-    logdir: logs/ant_nobptt
+    logdir: logs/hopper_muscle_weak_shac
 
   env:
-    name: Ant
-    model_path: assets/ant.xml
-    num_actors: 64
+    name: HopperMuscle
+    model_path: assets/hopper_muscle_weak.xml
+    num_actors: 512
     episode_length: 1000
     stochastic_init: true
-    substeps: 16
+    substeps: 4
     action_strength: 1.0
     early_termination: true
     backward_mode: tape_per_substep
@@ -26,12 +31,12 @@ params:
       activation: elu
 
   config:
-    name: ant_shac_nobptt
+    name: hopper_muscle_weak_shac
     gamma: 0.99
     steps_num: 32
-    max_epochs: 300
+    max_epochs: 1000
     actor_learning_rate: 2e-3
-    critic_learning_rate: 2e-3
+    critic_learning_rate: 2e-4
     lr_schedule: linear
     betas: [0.7, 0.95]
     target_critic_alpha: 0.2
@@ -41,9 +46,12 @@ params:
     critic_method: td-lambda
     lambda: 0.95
     num_batch: 4
-    num_actors: 64
+    num_actors: 512
     truncate_grads: true
     grad_norm: 1.0
-    state_bptt: false
+    state_bptt: true
     state_grad_clip: 0.0
-    save_interval: 400
+    state_grad_decay: 0.0
+    save_interval: 100
+    eval_interval: 50
+    eval_episodes: 16

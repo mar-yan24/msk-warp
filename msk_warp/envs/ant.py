@@ -31,13 +31,12 @@ class AntEnv(MjWarpEnv):
         action_strength=1.0,
         early_termination=True,
         njmax=512,
-        use_fd_jacobian=False,
-        tape_per_substep=False,
         forward_vel_weight=1.0,
         heading_weight=1.0,
         up_weight=0.1,
         height_weight=1.0,
         joint_vel_penalty=0.0,
+        **kwargs,
     ):
         num_obs = 37
         num_act = 8
@@ -52,8 +51,7 @@ class AntEnv(MjWarpEnv):
             no_grad=no_grad,
             substeps=substeps,
             njmax=njmax,
-            use_fd_jacobian=use_fd_jacobian,
-            tape_per_substep=tape_per_substep,
+            **kwargs,
         )
 
         self.stochastic_init = stochastic_init
@@ -216,7 +214,7 @@ class AntEnv(MjWarpEnv):
             torch.rand(n, self.num_joint_qd, device=self.device) - 0.5
         )
 
-    def compute_obs(self, qpos, qvel):
+    def compute_obs(self, qpos, qvel, act=None):
         """Instance method wrapper for SHAC compatibility."""
         return self._compute_obs(
             qpos, qvel, self.actions,
@@ -224,16 +222,15 @@ class AntEnv(MjWarpEnv):
             self.joint_vel_obs_scaling,
         )
 
-    def step(self, actions, qpos_in=None, qvel_in=None):
+    def step(self, actions, qpos_in=None, qvel_in=None, act_in=None):
         """Run one control step.
 
         Args:
             actions: (num_envs, 8) action tensor (already tanh'd)
-            qpos_in: Optional differentiable qpos input (for state gradient flow)
-            qvel_in: Optional differentiable qvel input (for state gradient flow)
+            qpos_in, qvel_in, act_in: optional differentiable state inputs (BPTT)
 
         Returns:
-            obs, rew, done, extras, qpos_out, qvel_out
+            obs, rew, done, extras, qpos_out, qvel_out, act_out
         """
         actions = actions.view(self.num_envs, self.num_actions)
         actions = torch.clamp(actions, -1.0, 1.0)
@@ -265,15 +262,11 @@ class AntEnv(MjWarpEnv):
                 self.forward_vel_weight, self.heading_weight,
                 self.up_weight, self.height_weight,
                 self.joint_vel_penalty)
-            qpos_out, qvel_out = None, None
+            qpos_out, qvel_out, act_out = None, None, None
         else:
             # Differentiable path: state flows through WarpSimStep
-            if qpos_in is None:
-                qpos_in = wp.to_torch(self.warp_data.qpos).clone()
-            if qvel_in is None:
-                qvel_in = wp.to_torch(self.warp_data.qvel).clone()
-
-            qpos_out, qvel_out = WarpSimStep.apply(ctrl, qpos_in, qvel_in, self)
+            qpos_in, qvel_in, act_in = self._state_inputs(qpos_in, qvel_in, act_in)
+            qpos_out, qvel_out, act_out = WarpSimStep.apply(ctrl, qpos_in, qvel_in, act_in, self)
 
             # Clamp state to prevent extreme values
             qpos_out = qpos_out.clamp(-100.0, 100.0)
@@ -326,7 +319,7 @@ class AntEnv(MjWarpEnv):
         if len(env_ids) > 0:
             self._reset_warp_state(env_ids)
 
-        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras, qpos_out, qvel_out
+        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras, qpos_out, qvel_out, act_out
 
     def _reset_warp_state(self, env_ids):
         """Reset Warp state for specified environments (no gradient)."""

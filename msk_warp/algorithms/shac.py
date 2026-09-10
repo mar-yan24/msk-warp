@@ -13,19 +13,6 @@ import numpy as np
 import torch
 import warp as wp
 
-# Suppress expected Warp warnings from mujoco_warp kernels that use custom
-# adjoint paths (implicit differentiation) instead of tape-based AD.
-# Warp's warn() uses catch_warnings()+simplefilter("default") internally,
-# which overrides standard filterwarnings. Monkey-patch to skip these.
-_wp_warn_original = wp._src.utils.warn
-
-def _wp_warn_filtered(message, category=None, stacklevel=1, once=False):
-    if "Running the tape backwards may produce incorrect gradients" in str(message):
-        return
-    _wp_warn_original(message, category, stacklevel=stacklevel + 1, once=once)
-
-wp._src.utils.warn = _wp_warn_filtered
-
 warnings.filterwarnings(
     "ignore", message="The .grad attribute of a Tensor that is not a leaf Tensor"
 )
@@ -50,6 +37,8 @@ def apply_state_grad_control(
     clip: float,
 ) -> torch.Tensor:
     """Apply per-step state-grad decay and optional norm clipping."""
+    if grad is None:  # autograd passes None for zero-width state (e.g. act on a motor model)
+        return None
     out = grad
     if decay > 0.0:
         out = out * decay
@@ -95,6 +84,8 @@ class SHAC:
         env_kwargs['device'] = self.device
         env_kwargs['no_grad'] = False
 
+        self._env_fn = env_fn
+        self._env_kwargs = dict(env_kwargs)
         self.env = env_fn(**env_kwargs)
 
         print('num_envs =', self.env.num_envs)
@@ -183,6 +174,13 @@ class SHAC:
         yaml.dump(save_cfg, open(os.path.join(self.log_dir, 'cfg.yaml'), 'w'))
         self.writer = SummaryWriter(os.path.join(self.log_dir, 'log'))
         self.save_interval = cfg['params']['config'].get('save_interval', 500)
+        # Behavioral evaluation (deterministic rollouts on a separate no-grad env). When enabled,
+        # best_policy.pt is selected by evaluation return, not by the training-loss meter
+        # (loss-best and behavior-best diverged badly on the ant in May 2026).
+        self.eval_interval = int(cfg['params']['config'].get('eval_interval', 0))
+        self.eval_episodes = int(cfg['params']['config'].get('eval_episodes', 8))
+        self._eval_env = None
+        self.best_eval_return = -np.inf
 
         # Create actor/critic
         actor_name = cfg['params']['network'].get('actor', 'ActorStochasticMLP')
@@ -284,8 +282,7 @@ class SHAC:
 
         # Initialize differentiable state tensors for dynamics gradient path
         with torch.no_grad():
-            qpos = wp.to_torch(self.env.warp_data.qpos).clone()
-            qvel = wp.to_torch(self.env.warp_data.qvel).clone()
+            qpos, qvel, act = self.env.state_tensors()
 
         if self.obs_rms is not None:
             with torch.no_grad():
@@ -298,8 +295,8 @@ class SHAC:
 
             actions = self.actor(obs, deterministic=deterministic)
             # Pass state tensors through for dynamics gradient flow
-            obs_raw, rew, done, extra_info, qpos_new, qvel_new = self.env.step(
-                torch.tanh(actions), qpos, qvel
+            obs_raw, rew, done, extra_info, qpos_new, qvel_new, act_new = self.env.step(
+                torch.tanh(actions), qpos, qvel, act
             )
 
             with torch.no_grad():
@@ -313,16 +310,15 @@ class SHAC:
             # Handle resets: detach state for reset envs, preserve gradient for others
             if len(done_env_ids) > 0:
                 with torch.no_grad():
-                    qpos_reset = wp.to_torch(self.env.warp_data.qpos).clone()
-                    qvel_reset = wp.to_torch(self.env.warp_data.qvel).clone()
+                    qpos_reset, qvel_reset, act_reset = self.env.state_tensors()
 
                 mask = torch.ones(self.num_envs, 1, dtype=torch.float32, device=self.device)
                 mask[done_env_ids] = 0.0
                 qpos = qpos_new * mask + qpos_reset * (1.0 - mask)
                 qvel = qvel_new * mask + qvel_reset * (1.0 - mask)
+                act = act_new * mask + act_reset * (1.0 - mask)
             else:
-                qpos = qpos_new
-                qvel = qvel_new
+                qpos, qvel, act = qpos_new, qvel_new, act_new
 
             # Optionally detach state to disable BPTT through dynamics.
             # When disabled, only single-step ctrl gradients flow through
@@ -330,6 +326,7 @@ class SHAC:
             if not self.state_bptt:
                 qpos = qpos.detach()
                 qvel = qvel.detach()
+                act = act.detach()
 
             # State gradient control at step boundaries for BPTT stability.
             if qpos.requires_grad:
@@ -344,9 +341,11 @@ class SHAC:
 
                     qpos.register_hook(_state_control_hook)
                     qvel.register_hook(_state_control_hook)
+                    if act.requires_grad and act.numel() > 0:
+                        act.register_hook(_state_control_hook)
 
             # Compute obs from tracked state (always differentiable for non-reset envs)
-            obs = self.env.compute_obs(qpos, qvel)
+            obs = self.env.compute_obs(qpos, qvel, act)
 
             if self.obs_rms is not None:
                 with torch.no_grad():
@@ -462,6 +461,38 @@ class SHAC:
         predicted_values = self.critic(batch_sample['obs']).squeeze(-1)
         target_values = batch_sample['target_values']
         return ((predicted_values - target_values) ** 2).mean()
+
+    @torch.no_grad()
+    def evaluate(self):
+        """Deterministic full-episode rollouts on a separate no-grad env; returns behavioral metrics."""
+        if self._eval_env is None:
+            kwargs = dict(self._env_kwargs)
+            kwargs['num_envs'] = self.eval_episodes
+            kwargs['no_grad'] = True
+            self._eval_env = self._env_fn(**kwargs)
+        env = self._eval_env
+        obs = env.reset()
+        n = env.num_envs
+        returns = torch.zeros(n, dtype=torch.float32, device=self.device)
+        lengths = torch.zeros(n, dtype=torch.long, device=self.device)
+        alive = torch.ones(n, dtype=torch.bool, device=self.device)
+        self.actor.eval()
+        for _ in range(env.episode_length):
+            obs_in = self.obs_rms.normalize(obs) if self.obs_rms is not None else obs
+            actions = torch.tanh(self.actor(obs_in, deterministic=True))
+            obs, rew, done, _extras = env.step(actions)[:4]
+            returns += rew * alive
+            lengths += alive.long()
+            alive &= done == 0
+            if not alive.any():
+                break
+        self.actor.train()
+        fell = (lengths < env.episode_length).float().mean()
+        return {
+            'eval/return': returns.mean().item(),
+            'eval/length': lengths.float().mean().item(),
+            'eval/fall_rate': fell.item(),
+        }
 
     def initialize_env(self):
         self.env.clear_grad()
@@ -620,7 +651,7 @@ class SHAC:
 
                 if mean_policy_loss < self.best_policy_loss:
                     print_info("save best policy with loss {:.2f}".format(mean_policy_loss))
-                    self.save()
+                    self.save('best_policy' if self.eval_interval == 0 else 'best_loss_policy')
                     self.best_policy_loss = mean_policy_loss
 
                 self.writer.add_scalar('policy_loss/step', mean_policy_loss, self.step_count)
@@ -657,6 +688,17 @@ class SHAC:
                     self.critic_grad_clip_threshold,
                 )
             )
+
+            if self.eval_interval > 0 and ((epoch + 1) % self.eval_interval == 0 or epoch + 1 == self.max_epochs):
+                ev = self.evaluate()
+                for key, value in ev.items():
+                    self.writer.add_scalar(key, value, self.iter_count)
+                print('eval iter {}: return {:.2f}, length {:.1f}, fall rate {:.2f}'.format(
+                    self.iter_count, ev['eval/return'], ev['eval/length'], ev['eval/fall_rate']))
+                if ev['eval/return'] > self.best_eval_return:
+                    self.best_eval_return = ev['eval/return']
+                    print_info("save best policy with eval return {:.2f}".format(ev['eval/return']))
+                    self.save('best_policy')
 
             self.writer.flush()
 

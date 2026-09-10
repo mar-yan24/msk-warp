@@ -1,0 +1,61 @@
+# Motor hopper, SHAC from scratch. Settings mirror DiffRL's examples/cfg/shac/hopper.yaml so
+# that the reward is comparable with R_ref measured on DiffRL itself (5136 at epoch 500, seed 0).
+# Deviations from DiffRL, both msk-warp side: num_actors 512 rather than 256, and substeps 4 at
+# 1/240 s rather than dflex's 16 substeps of its own integrator.
+#
+# state_grad_clip and state_grad_decay are deliberately 0, contradicting the ant recipe
+# (grad_norm 20, state_grad_clip 5). Those values were fitted to the ant's BPTT explosion; using
+# them here would make the comparison against R_ref meaningless. See
+# docs/research/phase3-hopper/protocol.md.
+params:
+  general:
+    seed: 0
+    device: cuda:0
+    logdir: logs/hopper_motor_shac
+
+  env:
+    name: HopperMotor
+    model_path: assets/hopper_motor.xml
+    num_actors: 512
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    early_termination: true
+    backward_mode: tape_per_substep
+
+  network:
+    actor: ActorStochasticMLP
+    actor_mlp:
+      units: [128, 64, 32]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [64, 64]
+      activation: elu
+
+  config:
+    name: hopper_motor_shac
+    gamma: 0.99
+    steps_num: 32
+    max_epochs: 500
+    actor_learning_rate: 2e-3
+    critic_learning_rate: 2e-4
+    lr_schedule: linear
+    betas: [0.7, 0.95]
+    target_critic_alpha: 0.2
+    obs_rms: true
+    ret_rms: false
+    critic_iterations: 16
+    critic_method: td-lambda
+    lambda: 0.95
+    num_batch: 4
+    num_actors: 512
+    truncate_grads: true
+    grad_norm: 1.0
+    state_bptt: true
+    state_grad_clip: 0.0
+    state_grad_decay: 0.0
+    save_interval: 100
+    eval_interval: 50
+    eval_episodes: 16

@@ -1,0 +1,61 @@
+<mujoco model="hopper_motor">
+  <!-- Planar hopper ported from DiffRL's envs/assets/hopper.xml (dflex), z-up.
+
+       Joint order is rootx, rootz, rooty, thigh, leg, foot, so qpos/qvel match DiffRL's
+       joint_q/joint_qd element for element and the reward, observation and termination
+       definitions carry over unchanged.
+
+       rootz deliberately has no "ref". DiffRL's own asset writes ref="1.25", but its dflex loader
+       ignores ref and starts joint_q at 0 as an offset from the loaded pose. MuJoCo instead makes
+       qpos equal ref at the rest pose, which would turn qpos[1] into absolute height. Leaving ref
+       at its default of 0 puts the torso at its XML height of 1.25 when qpos[1] = 0, so qpos[1] is
+       the offset that DiffRL's termination height (-0.45) and height reward are written against.
+
+       Torque scale matches DiffRL's action_strength=200 through gear=200, with action_strength=1
+       in the env.
+
+       Solver settings follow the ant soft-contact recipe: Newton with a dense Jacobian (the
+       differentiable path), iteration caps 20/20, timestep 1/240 with 4 substeps per 1/60 s
+       control step as in DiffRL, and a softened contact time constant. Body geoms use condim=3
+       rather than DiffRL's condim=1 because dflex applies its contact friction (mu=0.9) globally,
+       which a frictionless MuJoCo contact would not reproduce. -->
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.004166667" gravity="0 0 -9.81" solver="Newton" jacobian="dense"
+          iterations="20" ls_iterations="20"/>
+
+  <default>
+    <joint limited="true" armature="1" damping="1"/>
+    <geom condim="3" friction="0.9 0.005 0.0001" solref="0.06 1.2" solimp="0.95 0.99 0.001 0.5 2"
+          margin="0.001" density="1000" rgba="0.8 0.6 0.4 1"/>
+    <motor ctrlrange="-1 1" gear="200"/>
+  </default>
+
+  <worldbody>
+    <geom name="floor" type="plane" size="40 40 0.125" rgba="0.8 0.9 0.8 1"/>
+    <body name="torso" pos="0 0 1.25">
+      <joint name="rootx" type="slide" axis="1 0 0" pos="0 0 -1.25" limited="false" armature="0" damping="0"/>
+      <joint name="rootz" type="slide" axis="0 0 1" limited="false" armature="0" damping="0"/>
+      <joint name="rooty" type="hinge" axis="0 1 0" limited="false" armature="0" damping="0"/>
+      <geom name="torso_geom" type="capsule" size="0.05 0.2"/>
+      <body name="thigh" pos="0 0 -0.2">
+        <joint name="thigh_joint" type="hinge" axis="0 -1 0" range="-2.61799 0"/>
+        <geom name="thigh_geom" type="capsule" size="0.05 0.225" pos="0 0 -0.225"/>
+        <body name="leg" pos="0 0 -0.7">
+          <joint name="leg_joint" type="hinge" axis="0 -1 0" pos="0 0 0.25" range="-2.61799 0"/>
+          <geom name="leg_geom" type="capsule" size="0.04 0.25"/>
+          <body name="foot" pos="0 0 -0.25">
+            <joint name="foot_joint" type="hinge" axis="0 -1 0" range="-0.785398 0.785398"/>
+            <geom name="foot_geom" type="capsule" size="0.06 0.195" pos="0.06 0 0"
+                  quat="0.707107 0 -0.707107 0" friction="2 0.005 0.0001"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="thigh_motor" joint="thigh_joint"/>
+    <motor name="leg_motor" joint="leg_joint"/>
+    <motor name="foot_motor" joint="foot_joint"/>
+  </actuator>
+</mujoco>

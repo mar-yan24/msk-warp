@@ -1,0 +1,116 @@
+<mujoco model="hopper_muscle">
+  <!-- The hopper_motor skeleton driven by six Hill-type muscles instead of three torque motors:
+       an antagonist pair per joint, each pulling through a two-site spatial tendon. Bodies,
+       geoms, joint order, solver settings and timestep are identical to hopper_motor.xml, whose
+       header explains the coordinate and contact choices, so the two models differ only in how
+       force reaches the joints.
+
+       Muscle parameters come from myoLeg26's default muscle class, with two changes:
+
+       * dynprm[2] (tausmooth) is 0.02 rather than 0. With tausmooth=0 the activation time
+         constant switches discontinuously on the sign of (ctrl - act), so d(act_dot)/d(ctrl)
+         loses the tau term exactly where the gradient is needed. A finite smoothing width
+         restores it, which matters because ctrl reaches the dynamics only through act.
+
+       * gainprm[2]/biasprm[2] (peak isometric force) are set explicitly per muscle instead of
+         being derived from gainprm[3] (scale) and the actuator's acc0. myoLeg26's scale=4000 is
+         calibrated to that model's segment inertias; on this 15.8 kg hopper it yields 1700-4300
+         N.m of joint torque, 10-20x the motor variant. Each force below was calibrated so the
+         muscle's peak joint torque, maximised over its joint's range at full activation, equals
+         the 200 N.m that hopper_motor.xml's gear=200 delivers. Passive tension stays under
+         5.3 N.m everywhere in range. gainprm[3] is retained but inert (scale is ignored when
+         force >= 0). scripts/calibrate_hopper_muscle.py reproduces the numbers. -->
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.004166667" gravity="0 0 -9.81" solver="Newton" jacobian="dense"
+          iterations="20" ls_iterations="20"/>
+
+  <default>
+    <joint limited="true" armature="1" damping="1"/>
+    <geom condim="3" friction="0.9 0.005 0.0001" solref="0.06 1.2" solimp="0.95 0.99 0.001 0.5 2"
+          margin="0.001" density="1000" rgba="0.8 0.6 0.4 1"/>
+    <default class="muscle">
+      <general ctrllimited="true" ctrlrange="0 1"
+               dyntype="muscle" dynprm="0.01 0.04 0.02 0 0 0 0 0 0 0"
+               gaintype="muscle" gainprm="0.75 1.05 -1 4000 0.5 1.6 1.5 1.3 1.2 0"
+               biastype="muscle" biasprm="0.75 1.05 -1 4000 0.5 1.6 1.5 1.3 1.2 0"/>
+    </default>
+    <site size="0.006" rgba="0.9 0.3 0.3 1" group="3"/>
+  </default>
+
+  <worldbody>
+    <geom name="floor" type="plane" size="40 40 0.125" rgba="0.8 0.9 0.8 1"/>
+    <body name="torso" pos="0 0 1.25">
+      <joint name="rootx" type="slide" axis="1 0 0" pos="0 0 -1.25" limited="false" armature="0" damping="0"/>
+      <joint name="rootz" type="slide" axis="0 0 1" limited="false" armature="0" damping="0"/>
+      <joint name="rooty" type="hinge" axis="0 1 0" limited="false" armature="0" damping="0"/>
+      <geom name="torso_geom" type="capsule" size="0.05 0.2"/>
+      <site name="hip_f_org" pos="0.09 0 -0.14"/>
+      <site name="hip_b_org" pos="-0.09 0 -0.14"/>
+      <body name="thigh" pos="0 0 -0.2">
+        <joint name="thigh_joint" type="hinge" axis="0 -1 0" range="-2.61799 0"/>
+        <geom name="thigh_geom" type="capsule" size="0.05 0.225" pos="0 0 -0.225"/>
+        <site name="hip_f_ins" pos="0.07 0 -0.11"/>
+        <site name="hip_b_ins" pos="-0.07 0 -0.11"/>
+        <site name="knee_f_org" pos="0.07 0 -0.36"/>
+        <site name="knee_b_org" pos="-0.07 0 -0.36"/>
+        <body name="leg" pos="0 0 -0.7">
+          <joint name="leg_joint" type="hinge" axis="0 -1 0" pos="0 0 0.25" range="-2.61799 0"/>
+          <geom name="leg_geom" type="capsule" size="0.04 0.25"/>
+          <site name="knee_f_ins" pos="0.06 0 0.13"/>
+          <site name="knee_b_ins" pos="-0.06 0 0.13"/>
+          <site name="ankle_f_org" pos="0.06 0 -0.17"/>
+          <site name="ankle_b_org" pos="-0.06 0 -0.17"/>
+          <body name="foot" pos="0 0 -0.25">
+            <joint name="foot_joint" type="hinge" axis="0 -1 0" range="-0.785398 0.785398"/>
+            <geom name="foot_geom" type="capsule" size="0.06 0.195" pos="0.06 0 0"
+                  quat="0.707107 0 -0.707107 0" friction="2 0.005 0.0001"/>
+            <site name="ankle_f_ins" pos="0.17 0 0.05"/>
+            <site name="ankle_b_ins" pos="-0.06 0 0.05"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <tendon>
+    <spatial name="hip_f" width="0.004" rgba="0.8 0.2 0.2 1">
+      <site site="hip_f_org"/><site site="hip_f_ins"/>
+    </spatial>
+    <spatial name="hip_b" width="0.004" rgba="0.2 0.2 0.8 1">
+      <site site="hip_b_org"/><site site="hip_b_ins"/>
+    </spatial>
+    <spatial name="knee_f" width="0.004" rgba="0.8 0.2 0.2 1">
+      <site site="knee_f_org"/><site site="knee_f_ins"/>
+    </spatial>
+    <spatial name="knee_b" width="0.004" rgba="0.2 0.2 0.8 1">
+      <site site="knee_b_org"/><site site="knee_b_ins"/>
+    </spatial>
+    <spatial name="ankle_f" width="0.004" rgba="0.8 0.2 0.2 1">
+      <site site="ankle_f_org"/><site site="ankle_f_ins"/>
+    </spatial>
+    <spatial name="ankle_b" width="0.004" rgba="0.2 0.2 0.8 1">
+      <site site="ankle_b_org"/><site site="ankle_b_ins"/>
+    </spatial>
+  </tendon>
+
+  <actuator>
+    <general class="muscle" name="hip_flex" tendon="hip_f"
+             gainprm="0.75 1.05 3505 4000 0.5 1.6 1.5 1.3 1.2 0"
+             biasprm="0.75 1.05 3505 4000 0.5 1.6 1.5 1.3 1.2 0"/>
+    <general class="muscle" name="hip_ext" tendon="hip_b"
+             gainprm="0.75 1.05 2015 4000 0.5 1.6 1.5 1.3 1.2 0"
+             biasprm="0.75 1.05 2015 4000 0.5 1.6 1.5 1.3 1.2 0"/>
+    <general class="muscle" name="knee_flex" tendon="knee_f"
+             gainprm="0.75 1.05 4470 4000 0.5 1.6 1.5 1.3 1.2 0"
+             biasprm="0.75 1.05 4470 4000 0.5 1.6 1.5 1.3 1.2 0"/>
+    <general class="muscle" name="knee_ext" tendon="knee_b"
+             gainprm="0.75 1.05 2005 4000 0.5 1.6 1.5 1.3 1.2 0"
+             biasprm="0.75 1.05 2005 4000 0.5 1.6 1.5 1.3 1.2 0"/>
+    <general class="muscle" name="ankle_dorsi" tendon="ankle_f"
+             gainprm="0.75 1.05 2035 4000 0.5 1.6 1.5 1.3 1.2 0"
+             biasprm="0.75 1.05 2035 4000 0.5 1.6 1.5 1.3 1.2 0"/>
+    <general class="muscle" name="ankle_plantar" tendon="ankle_b"
+             gainprm="0.75 1.05 2590 4000 0.5 1.6 1.5 1.3 1.2 0"
+             biasprm="0.75 1.05 2590 4000 0.5 1.6 1.5 1.3 1.2 0"/>
+  </actuator>
+</mujoco>

@@ -1,0 +1,60 @@
+# Muscle hopper with 10 ms deactivation instead of myoLeg26's 40 ms. Amendment A2 in
+# docs/research/phase3-hopper/protocol.md: one knob against the measured finding that the muscle
+# model releases torque 20-25x slower than the motor model, and that the gait the motor hopper
+# learned demands releases beyond muscle capability on 24-57% of the steps calling for one.
+#
+# The reward is DiffRL's, unchanged, so this is comparable with the original G3.5 run rather than
+# with the A1 reward repair. Everything else, including the calibrated peak forces, is identical to
+# hopper_muscle_shac.yaml.
+params:
+  general:
+    seed: 0
+    device: cuda:0
+    logdir: logs/hopper_muscle_fast_shac
+
+  env:
+    name: HopperMuscle
+    model_path: assets/hopper_muscle_fast.xml
+    num_actors: 512
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    early_termination: true
+    backward_mode: tape_per_substep
+
+  network:
+    actor: ActorStochasticMLP
+    actor_mlp:
+      units: [128, 64, 32]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [64, 64]
+      activation: elu
+
+  config:
+    name: hopper_muscle_fast_shac
+    gamma: 0.99
+    steps_num: 32
+    max_epochs: 1000
+    actor_learning_rate: 2e-3
+    critic_learning_rate: 2e-4
+    lr_schedule: linear
+    betas: [0.7, 0.95]
+    target_critic_alpha: 0.2
+    obs_rms: true
+    ret_rms: false
+    critic_iterations: 16
+    critic_method: td-lambda
+    lambda: 0.95
+    num_batch: 4
+    num_actors: 512
+    truncate_grads: true
+    grad_norm: 1.0
+    state_bptt: true
+    state_grad_clip: 0.0
+    state_grad_decay: 0.0
+    save_interval: 100
+    eval_interval: 50
+    eval_episodes: 16

@@ -1,0 +1,59 @@
+# Muscle hopper, SHAC from scratch. Same optimiser settings as hopper_motor_shac.yaml; the model
+# swaps three torque motors for six Hill-type muscles calibrated to the same 200 N.m of joint
+# torque. Observation is 17-dimensional because the six activation states are part of the state
+# the policy must see: ctrl reaches the dynamics only through act.
+#
+# Runs to 1000 epochs rather than 500. Muscle activation dynamics add a first-order lag between
+# action and force, so the credit-assignment horizon is longer.
+params:
+  general:
+    seed: 0
+    device: cuda:0
+    logdir: logs/hopper_muscle_shac
+
+  env:
+    name: HopperMuscle
+    model_path: assets/hopper_muscle.xml
+    num_actors: 512
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    early_termination: true
+    backward_mode: tape_per_substep
+
+  network:
+    actor: ActorStochasticMLP
+    actor_mlp:
+      units: [128, 64, 32]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [64, 64]
+      activation: elu
+
+  config:
+    name: hopper_muscle_shac
+    gamma: 0.99
+    steps_num: 32
+    max_epochs: 1000
+    actor_learning_rate: 2e-3
+    critic_learning_rate: 2e-4
+    lr_schedule: linear
+    betas: [0.7, 0.95]
+    target_critic_alpha: 0.2
+    obs_rms: true
+    ret_rms: false
+    critic_iterations: 16
+    critic_method: td-lambda
+    lambda: 0.95
+    num_batch: 4
+    num_actors: 512
+    truncate_grads: true
+    grad_norm: 1.0
+    state_bptt: true
+    state_grad_clip: 0.0
+    state_grad_decay: 0.0
+    save_interval: 100
+    eval_interval: 50
+    eval_episodes: 16

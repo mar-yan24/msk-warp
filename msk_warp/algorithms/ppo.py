@@ -185,7 +185,9 @@ class PPO:
             action = torch.tanh(pre_tanh)
 
             # Step environment
-            obs_new, rew, done, extras, _, _ = self.env.step(action)
+            # PPO is on-policy and does not backpropagate through the dynamics, so the
+            # differentiable (qpos, qvel, act) tail of the step return is discarded.
+            obs_new, rew, done, extras = self.env.step(action)[:4]
 
             # Store transition
             self.buf_obs[step] = obs_norm
