@@ -76,6 +76,12 @@ def test_ppo_ant_checkpoint_still_walks(ant_ppo_ckpt):
     """
     from msk_warp.envs.ant import AntEnv
 
+    # Fixed seed: the environment uses stochastic_init, and with only 8 episodes an unlucky draw
+    # made one of them fall, tripping the strict fall-rate assertion. Observed failing once and
+    # passing on an immediate rerun, which is not acceptable in a gate a milestone tag depends on.
+    torch.manual_seed(0)
+    torch.cuda.manual_seed_all(0)
+
     checkpoint = torch.load(ant_ppo_ckpt, map_location="cuda:0", weights_only=False)
     actor, obs_rms = checkpoint[0].to("cuda:0"), checkpoint[3].to("cuda:0")
     actor.eval()
