@@ -32,8 +32,13 @@ outputs/
 .DS_Store
 Thumbs.db
 
-# Session docs
-docs/
+# Session docs. The research record stays on disk only (decision 2026-09-07,
+# reaffirmed 2026-09-10) -- with one exception: docs/VALIDITY.md, the running
+# validity ledger, is long-lived and needs real history, blame and review.
+# Note 'docs/*' rather than 'docs/': git cannot re-include a file whose parent
+# directory is excluded by a directory pattern.
+docs/*
+!docs/VALIDITY.md
 
 # Claude
 .claude/
