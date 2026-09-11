@@ -593,6 +593,66 @@ of the research record deliberately does not.
   CL-02 and re-run `T_c` 16; (ii) joint `(x*, u)` shooting on CPU, which at 0.4 ms per cycle can
   afford thousands of restarts and is the only experiment that can answer the existence question.
 
+### CL-13 `open` (2026-09-11) Velocity reach along the periodic manifold tracks **flight fraction**, not actuator type
+
+- Evidence: project the velocity gradient onto the null space of the periodicity Jacobian, in a
+  physical metric (state in units of its own scale, control in units of its own range), and read off
+  the achievable velocity change per unit step along the manifold. Measured on four orbits spanning
+  both actuators, same instrument, same metric:
+
+  | orbit | flight | `rho` | retained | dv per unit step |
+  |---|---|---|---|---|
+  | motor trained gait `T_c` 27 | 22/27 | 9.008 | 0.178 | **7.80e-01** |
+  | motor backwards hop `T_c` 16 | 6/16 | 3.948 | 0.288 | **6.11e-01** |
+  | muscle bob `T_c` 32 | 1/32 | 6.984 | 0.011 | **2.52e-02** |
+  | muscle standing `T_c` 16 | 0/16 | 0.736 | 0.000 | **7.97e-10** |
+
+  The ordering of `dv per unit step` is **identical** to the ordering of flight fraction, and it
+  spans both actuators. It does not track `rho`.
+- Mechanism, and it is elementary once seen: in flight the body is ballistic and horizontal velocity
+  is a free constant of the motion; in stance the foot is anchored by contact, so changing velocity
+  means working against the constraint. **An orbit with no flight phase has no lever, whatever
+  drives it** -- the standing orbit's 7.97e-10 is that statement at the limit.
+- Impact: it explains, and retires, a failed experiment. Continuing in velocity from the muscle bob
+  needs ~40 physical units of motion along the manifold to gain 1 m/s, against ~1.3 from the motor
+  gait. That continuation was doomed by the **choice of starting orbit**, not by the muscle. Any
+  future search for a fast muscle gait must start from, or first create, an orbit with a flight
+  phase.
+- Closes: the same measurement on a muscle orbit that *does* have flight, once one is found. If its
+  `dv per unit step` lands near the motor values, muscle actuation is not the velocity constraint at
+  all.
+
+### IN-16 `characterised` (2026-09-11) Joint `(x, u)` shooting does not converge from the `T_c` 16 candidate, and four candidate explanations are ruled out
+
+- The setup: unknowns `(x, u)`, 11 equations in 107 unknowns for single shooting, solved by
+  minimum-norm damped Gauss-Newton in the dual form `delta = -A^T (A A^T + lambda I)^-1 F`.
+  `msk_warp/analysis/gaitsearch.py`.
+- **Not conditioning.** The scaled periodicity Jacobian has singular values 8.20 down to 0.111,
+  condition **74**.
+- **Not the control box.** Relaxed from [0, 1] to [-3, 4] with **zero** cells saturated, the solve
+  stalls at exactly the same 1.9431e-02 it reaches inside the physiological box. Identical to four
+  decimals across four box widths, so every run finds the same local minimum.
+- **Not contact non-smoothness.** Per-segment linear-model error for a random step of 1e-2 in the
+  physical metric is **0.0005 overall and below 0.002 in every segment**, including the two segments
+  that contain a contact transition (2 and 14). The residual is smooth where the solver works.
+- **Not single-vs-multiple shooting**, though it helps. Splitting the cycle raises the usable step
+  from `k = 0.02` to `k = 0.10` and the gain per step from 1.0% to 6.2% (segments 1, 2, 4, 8, 16),
+  and the Jacobian gets **9x cheaper** (0.382 s to 0.043 s) because it becomes 82% sparse. 301
+  iterations at `S = 16` moved the closing error 8.24e-02 to 1.78e-02 and then stalled.
+- **What is left: distance.** With the smallest singular value around 0.04 and a closing gap of 1.36
+  RMS scale-units, the Newton step is of order 30 physical units while the linear model is exact
+  only to about 1e-2. The solution, if it exists, is roughly three orders of magnitude further away
+  than the trust region, so a local method seeded at the candidate cannot reach it.
+- A closure homotopy (`set_homotopy`: demand a fraction `alpha` of the gap) was built to cross that
+  distance and does not: adaptive stepping reached `alpha = 0.002` and needed 120 iterations there.
+- Verified, so the negative is about the problem rather than the code: the hand-assembled sparse
+  Jacobian agrees with a brute-force dense difference of the same residual to **4.3e-13**
+  (`test_sparse_jacobian_matches_dense_finite_differences`), and four-segment chaining reproduces a
+  full sixteen-step roll to 2.7e-15 with activation closing exactly.
+- Closes: a method that is not seeded locally -- direct collocation with a proper NLP, or multistart
+  over random controls rather than continuation from one candidate. CL-13 also says any such search
+  should be seeded on an orbit that already has a flight phase.
+
 ---
 
 ## OP - Operational

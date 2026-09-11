@@ -380,6 +380,99 @@ class ReturnMap:
         r = self.residual(x, cycles) / np.asarray(scales, dtype=np.float64)
         return float(np.sqrt(np.mean(r ** 2)))
 
+    def segment(self, x, act, phase: int, length: int):
+        """Roll ``length`` control steps starting at ``phase``, from an explicit ``(x, act)``.
+
+        The building block of multiple shooting. Single shooting fails on this hopper for a measured
+        reason: the Gauss-Newton step needs ``max |dctrl| = 2.1`` while the linear model holds only
+        out to about 0.02, because sixteen steps of an expanding map amplify any control change into
+        a touchdown-timing change. Splitting the cycle caps that amplification per segment.
+
+        Returns ``(state, act_out, advance, contacts, terminated)``. Unlike :meth:`roll` this takes
+        activation explicitly, because a segment does not start at phase 0 where ``act*`` lives.
+        """
+        d = self._data
+        nq, nv = self.mjm.nq, self.mjm.nv
+        x = np.asarray(x, dtype=np.float64)
+        mujoco.mj_resetData(self.mjm, d)
+        d.qpos[0] = 0.0
+        d.qpos[1:] = x[: nq - 1]
+        d.qvel[:] = x[nq - 1: nq - 1 + nv]
+        if self.mjm.na:
+            d.act[:] = act
+        mujoco.mj_forward(self.mjm, d)
+
+        contacts = []
+        terminated = False
+        warned = {w: int(d.warning[w].number) for w in UNSTABLE_WARNINGS}
+        for k in range(length):
+            d.ctrl[:] = self.ctrl_seq[(phase + k) % self.cycle]
+            for _ in range(self.substeps):
+                mujoco.mj_step(self.mjm, d)
+            contacts.append(int(d.ncon))
+            if any(int(d.warning[w].number) > warned[w] for w in UNSTABLE_WARNINGS):
+                terminated = True
+                break
+            if not np.isfinite(d.qpos).all() or float(d.qpos[HEIGHT_INDEX]) < self.termination_height:
+                terminated = True
+                break
+        return (shape_state(d.qpos, d.qvel), np.array(d.act, dtype=np.float64, copy=True),
+                float(d.qpos[TRANSLATING_INDEX]), tuple(contacts), terminated)
+
+    def activation_trajectory(self, *, tol: float = 1e-14, max_cycles: int = 32,
+                              start=None) -> np.ndarray:
+        """``act*`` at every control-step boundary of the cycle, shape ``(cycle, na)``.
+
+        Multiple shooting needs the activation at each segment start, not just at phase 0. The
+        autonomy of the activation subsystem (CL-02) makes this exact: it depends on the control
+        alone, so it can be integrated once and indexed.
+        """
+        if self.mjm.na == 0:
+            return np.zeros((self.cycle, 0))
+        act, _, _ = activation_limit_cycle(
+            self.mjm, self.ctrl_seq, substeps=self.substeps, tol=tol,
+            max_cycles=max_cycles, start=self.activation if start is None else start,
+        )
+        dt = float(self.mjm.opt.timestep)
+        prm = np.asarray(self.mjm.actuator_dynprm[:, :3], dtype=np.float64)
+        out = np.empty((self.cycle, self.mjm.na))
+        for t in range(self.cycle):
+            out[t] = act
+            u = self.ctrl_seq[t]
+            for _ in range(self.substeps):
+                act = act + dt * np.array(
+                    [mujoco.mju_muscleDynamics(float(u[i]), float(act[i]), prm[i])
+                     for i in range(self.mjm.na)]
+                )
+        return out
+
+    def set_control(self, ctrl_seq, *, activation=None, warm_start: bool = True,
+                    max_cycles: int = 6) -> None:
+        """Replace the periodic control **in place**, recomputing ``act*``.
+
+        For the joint ``(x, u)`` search, where the control changes on every residual evaluation and
+        allocating a fresh ``MjData`` per evaluation would dominate the cost. ``act*`` is
+        warm-started from the current value by default: the activation map contracts at a measured
+        rate of about 1e-6 per cycle, so a finite-difference-sized control change re-converges in
+        one or two cycles rather than the four a cold start needs.
+        """
+        ctrl_seq = np.asarray(ctrl_seq, dtype=np.float64)
+        if ctrl_seq.shape != self.ctrl_seq.shape:
+            raise ValueError(
+                f"control must keep its shape {self.ctrl_seq.shape}, got {ctrl_seq.shape}"
+            )
+        self.ctrl_seq = ctrl_seq
+        if self.include_activation or self.mjm.na == 0:
+            return
+        if activation is not None:
+            self.activation = np.asarray(activation, dtype=np.float64).copy()
+            self.activation_cycles = 0
+            return
+        start = self.activation if (warm_start and self.activation.size) else None
+        self.activation, self.activation_cycles, _ = activation_limit_cycle(
+            self.mjm, ctrl_seq, substeps=self.substeps, start=start, max_cycles=max_cycles
+        )
+
     def state_at_phase(self, qpos, qvel, act=None) -> np.ndarray:
         """Build a state vector from raw MuJoCo arrays, honouring ``include_activation``."""
         return shape_state(qpos, qvel, act if self.include_activation else None)
