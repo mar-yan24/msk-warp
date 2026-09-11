@@ -331,3 +331,154 @@ def test_engine_instability_terminates_a_rollout(candidate):
     assert out.unstable, "the engine's bad-QACC warning must be what stops this, not the height"
     with pytest.raises(orb.OrbitTerminated, match="numerical instability"):
         rmap(x)
+
+
+# ------------------------------------------------------- controls: the instrument must pass these
+
+MOTOR_TRACE = "docs/research/phase4-capability/gait_motor_seed2_trace.npz"
+MOTOR_RULER = "docs/research/phase4-capability/gait_motor_seed2.json"
+
+
+@pytest.fixture(scope="module")
+def standing():
+    """A real periodic orbit of the muscle hopper: constant co-activation at ctrl = 0.5.
+
+    Chosen over a trained checkpoint deliberately -- no torch, no GPU, no policy, and it is
+    T_c-periodic by construction rather than by a policy's accident, so it isolates the instrument.
+    It is not a weaker test: it converges on the real hybrid dynamics with real contact.
+    """
+    m = mujoco.MjModel.from_xml_path(resolve_model_path("assets/hopper_muscle.xml"))
+    rmap = orb.ReturnMap(m, np.full((16, m.nu), 0.5))
+    scales = np.load(resolve_model_path(REFERENCE))["shape_scales"].astype(np.float64)
+    x = np.zeros(11)
+    for _ in range(40):
+        x = rmap.roll(x).state
+    return rmap, x, scales
+
+
+def test_settling_reaches_machine_precision_on_a_real_orbit(standing):
+    """Sanity on the map itself, before any solver: a stable orbit is found by iteration alone.
+
+    Measured residual by cycle: 2.2e-03 at 10, 1.0e-04 at 20, 2.2e-07 at 40, 1.0e-12 at 80, then a
+    plateau at ~2.4e-16. The return map is deterministic and smooth to machine epsilon, which is
+    what licenses asking a solver for 1e-10.
+    """
+    rmap, x, scales = standing
+    for _ in range(120):
+        x = rmap.roll(x).state
+    assert rmap.scaled_residual(x, scales) <= 1e-12
+    assert np.array_equal(rmap(x), rmap(x)), "the map must be deterministic"
+
+
+def test_soft_joint_limits_must_not_be_projected(standing):
+    """Regression for a bug that would have manufactured a false negative on the muscle question.
+
+    MuJoCo enforces joint limits as soft constraints, so a valid state sits slightly outside
+    ``jnt_range`` -- this orbit settles with ``leg`` at +3.29e-04 against an upper limit of 0.
+    Clamping it is a move off the orbit, not onto the feasible set: measured, the raw Newton step
+    reaches 1.9e-12 while the projected step gives 4.3e-04 and the solver then stalls at a point it
+    has already found. All three of this module's controls failed this way before the fix.
+    """
+    rmap, x, scales = standing
+    bounds = st.Bounds.from_model(rmap.mjm)
+    assert np.any(x > bounds.hi), "a soft limit must be exceeded, or this test proves nothing"
+    assert not np.allclose(bounds.project(x), x)
+
+    free = st.shoot(rmap, x, scales=scales, classify_terminal=False)
+    clamped = st.shoot(rmap, x, scales=scales, project=True, classify_terminal=False)
+    assert free.residual <= 1e-12
+    assert clamped.residual > free.residual * 1e3
+
+
+def test_shoot_converges_on_the_standing_orbit_from_perturbed_starts(standing):
+    """The solver must be able to converge on this model at all. Measured 3-4 iterations."""
+    rmap, x, scales = standing
+    for _ in range(160):
+        x = rmap.roll(x).state
+    rng = np.random.default_rng(0)
+    for mag in (1e-2, 5e-2, 2e-1):
+        u = rng.normal(size=11)
+        u /= np.linalg.norm(u / scales)
+        res = st.shoot(rmap, x + mag * u * scales, scales=scales, classify_terminal=False)
+        assert res.residual <= 1e-10, (mag, res.outcome, res.residual)
+        assert res.iterations <= 8
+
+
+def test_standing_orbit_is_stable_and_stationary(standing):
+    rmap, x, scales = standing
+    res = st.shoot(rmap, x, scales=scales, classify_terminal=False)
+    sp = st.spectrum(st.jacobian_fd(rmap, res.x, scales=scales, eps_rel=1e-4).J)
+    assert sp.spectral_radius == pytest.approx(0.7358, abs=5e-3)
+    assert sp.unstable_count == 0
+    assert res.outcome is st.Outcome.STANDING
+    assert abs(rmap.roll(res.x).advance) < 1e-3
+
+
+# The motor calibration needs a trace under docs/, which is gitignored, so it cannot be assumed
+# present in a fresh clone. Regenerate with:
+#   scripts/extract_gait_cycle.py --cfg configs/hopper_motor_shac.yaml \
+#       --checkpoint logs/phase3/motor_ad_seed2/best_policy.pt --out <MOTOR_RULER>
+import os  # noqa: E402
+
+_have_motor = os.path.exists(MOTOR_TRACE) and os.path.exists(MOTOR_RULER)
+motor_artefacts = pytest.mark.skipif(not _have_motor, reason=f"{MOTOR_TRACE} not on disk")
+
+
+@pytest.fixture(scope="module")
+def motor_gait():
+    import json
+    tr = np.load(MOTOR_TRACE)
+    qpos, qvel, actions = (tr[k][:, 0].astype(np.float64) for k in ("qpos", "qvel", "actions"))
+    m = mujoco.MjModel.from_xml_path(resolve_model_path("assets/hopper_motor.xml"))
+    rmap = orb.ReturnMap(m, actions[150:177])  # start 150, period 27, action_strength 1.0
+    x0 = orb.shape_state(qpos[149], qvel[149])  # the recorded state one step earlier
+    with open(MOTOR_RULER) as fh:
+        scales = np.array(json.load(fh)["per_world"][0]["scales"], dtype=np.float64)
+    return rmap, x0, scales
+
+
+@motor_artefacts
+def test_engine_parity_holds_on_an_exponentially_diverging_quantity(motor_gait):
+    """The hardest parity test available, and it is exact.
+
+    Cycled open-loop replay of the trained 3.83 m/s motor gait is an unstable trajectory, so any
+    engine difference is amplified by rho = 9.16 per cycle. float64 CPU falls at **exactly 100
+    control steps**, the same integer that Warp float32 measured (3.70 cycles,
+    ``openloop_motor_gait.json``). This is what licenses BE-08.
+    """
+    rmap, x0, _ = motor_gait
+    out = rmap.roll(x0, cycles=8)
+    assert out.terminated
+    assert out.terminated_at == 100
+
+
+@motor_artefacts
+def test_motor_gait_spectral_radius_is_pinned(motor_gait):
+    """rho = 9.157 with FOUR unstable multipliers at the recorded start.
+
+    Worth stating plainly, because it reframes a Phase 4 caveat: the trained, non-falling motor
+    gait is **four times more unstable** than the muscle candidate (rho 2.17, two unstable
+    directions). Strong open-loop instability is a property of hopping gaits, not a muscle
+    pathology, and it is why every one of them needs feedback.
+    """
+    rmap, x0, scales = motor_gait
+    jac = st.jacobian_fd(rmap, x0, scales=scales, eps_rel=1e-4)
+    sp = st.spectrum(jac.J)
+    assert sp.spectral_radius == pytest.approx(9.1568, abs=1e-3)
+    assert sp.unstable_count == 4
+    assert sp.spectral_radius > CANDIDATE_RHO * 3
+
+
+@motor_artefacts
+def test_cycles_to_amplitude_underestimates_the_known_answer(motor_gait):
+    """CL-09, pinned so nobody promotes this arithmetic to a gate.
+
+    The measured open-loop lifetime is 3.70 cycles; the spectral-radius formula predicts under 1.
+    The radius is evaluated off-orbit (the recorded start has |F| = 0.18, not 0), the asymptotic
+    rate understates the finite-time rate, and the escape radius is not 1.0.
+    """
+    rmap, x0, scales = motor_gait
+    sp = st.spectrum(st.jacobian_fd(rmap, x0, scales=scales, eps_rel=1e-4).J)
+    predicted = st.cycles_to_amplitude(sp.spectral_radius, rmap.scaled_residual(x0, scales), 1.0)
+    assert predicted < 2.0
+    assert rmap.roll(x0, cycles=8).terminated_at / rmap.cycle == pytest.approx(3.70, abs=0.05)

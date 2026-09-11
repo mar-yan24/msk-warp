@@ -455,10 +455,19 @@ class Bounds:
                    margin: float = 0.0) -> "Bounds":
         """Joint ranges for ``qpos[1:]``, the termination height as a floor, ``act`` in [0, 1].
 
-        Projection rather than a ``tanh`` reparameterisation, deliberately: a reparameterisation
-        hides the boundary, whereas projection plus :meth:`active` reports it. A fixed point sitting
-        on a joint limit is physically real but its Jacobian there is one-sided, and that has to be
-        visible rather than smoothed away.
+        **These are for reporting, not for projection.** MuJoCo enforces joint limits as *soft*
+        constraints through ``solimp``/``solref``, exactly like contact, so a physically valid state
+        can and does sit slightly outside ``jnt_range`` -- the standing orbit of this hopper settles
+        with ``leg`` at ``+3.29e-04`` against an upper limit of ``0``. Clamping that state is not a
+        projection onto the feasible set; it is a move off the orbit. Measured: from the settled
+        standing point, the raw Newton step reaches a residual of 1.9e-12 while the *projected* step
+        gives 4.3e-04, and the solver then stalls forever at a point it has already found.
+
+        So :func:`shoot` does not project by default. The physical constraint that does bind is
+        enforced where it belongs: a trial step whose rollout terminates -- by falling or by the
+        engine's own instability flags -- is rejected outright. :meth:`active` remains useful for
+        *interpreting* a converged orbit, because a fixed point resting on a limit has a one-sided
+        Jacobian and that should be visible rather than silently smoothed.
         """
         nq, nv, na = mjm.nq, mjm.nv, mjm.na
         lo = np.full(nq - 1, -np.inf)
@@ -506,6 +515,7 @@ class ShootResult:
 
 
 def shoot(rmap: ReturnMap, x0, *, scales, bounds: Optional[Bounds] = None,
+          project: bool = False,
           tol: float = 1e-10, max_iter: int = 60, lam0: float = 1e-4,
           lam_down: float = 0.25, lam_up: float = 10.0, max_backtracks: int = 16,
           stall_window: int = 5, stall_rel: float = 1e-3,
@@ -518,12 +528,20 @@ def shoot(rmap: ReturnMap, x0, *, scales, bounds: Optional[Bounds] = None,
     arbitrarily large. ``lambda`` *is* the line search -- large ``lambda`` gives a short gradient
     step -- so there is no separate step-length ladder. One knob.
 
-    A trial step is **rejected outright** if its rollout terminates, rather than penalised, which
-    keeps the residual well defined throughout.
+    A trial step is **rejected outright** if its rollout terminates -- by falling, or because the
+    engine flagged numerical instability -- rather than penalised, which keeps the residual well
+    defined throughout and is the only constraint that physically binds.
+
+    ``project`` is off by default. Joint limits in MuJoCo are soft, so clamping a state onto
+    ``jnt_range`` moves it off a legitimate orbit rather than onto the feasible set; see
+    :meth:`Bounds.from_model`. ``bounds`` is still used to *report* active limits either way.
     """
     x0 = np.asarray(x0, dtype=np.float64)
     scales = np.asarray(scales, dtype=np.float64)
     if bounds is None:
+        # Built for *reporting* active limits; ``project`` stays at its default of False unless the
+        # caller asked for it explicitly. Silently overriding an explicit project=True would make
+        # the flag untestable, which is how the soft-limit bug survived its first regression test.
         bounds = Bounds.from_model(rmap.mjm, include_activation=rmap.include_activation)
     n = rmap.dim
     ident = np.eye(n)
@@ -568,7 +586,7 @@ def shoot(rmap: ReturnMap, x0, *, scales, bounds: Optional[Bounds] = None,
             except np.linalg.LinAlgError:
                 lam *= lam_up
                 continue
-            trial = bounds.project(x + step)
+            trial = bounds.project(x + step) if project else x + step
             got = merit(trial)
             if got is not None and got[0] < cost:
                 x, (cost, F) = trial, got

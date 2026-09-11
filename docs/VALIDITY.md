@@ -315,6 +315,28 @@ of the research record deliberately does not.
 - Impact: numerical solvers (Newton, Levenberg-Marquardt, Riccati, eigen) must be numpy-only. The venv
   pins are fixed by ADR-0001 and are not worth a resolver risk.
 
+### IN-15 `fixed` (2026-09-11) Projecting a state onto `jnt_range` moves it *off* a valid orbit, because MuJoCo's joint limits are soft
+
+- Evidence: found by running the instrument's own controls, which all three failed. MuJoCo enforces
+  joint limits through `solimp`/`solref` exactly like contact, so a physically valid state sits
+  slightly outside `jnt_range`: the muscle hopper's standing orbit settles with `leg` at
+  **+3.29e-04** against an upper limit of **0**. A hard clamp is therefore not a projection onto the
+  feasible set but a move off the orbit. Measured from the settled standing point: the raw Newton
+  step reaches residual **1.9e-12**, the *projected* step **4.3e-04**, and the solver then stalls
+  forever at a point it had already found.
+- Impact while live: the negative control stalled at 2.2e-07 instead of converging, and **both**
+  positive controls stalled -- the motor gait at 9.36e-02 with its thigh limit flagged active. Had
+  this not been caught by a control with a known answer, it would have produced a **false negative
+  on the central muscle question**, and the false negative would have looked clean.
+- Fixed: `shoot` does not project by default (`msk_warp/analysis/stability.py`). The constraint that
+  actually binds is enforced where it belongs -- a trial step whose rollout terminates, by falling or
+  by the engine's instability flags, is rejected outright. `Bounds` is now a reporting device;
+  `active()` still matters for interpreting an orbit that rests on a limit, whose Jacobian there is
+  one-sided. Pinned by `test_soft_joint_limits_must_not_be_projected`.
+- Second-order lesson, also pinned: the first version of that regression test passed while the bug
+  was still reachable, because `shoot` silently overrode an explicit `project=True` when `bounds`
+  was `None`. A flag that cannot be exercised cannot be regression-tested.
+
 ---
 
 ## TR - Training and algorithm
@@ -461,6 +483,14 @@ of the research record deliberately does not.
   in QACC" while `qpos` stayed finite, and the rollout was accepted, reporting an advance of
   **-918389 m**. A finite-state check is not sufficient; `ReturnMap.roll` now reads the engine's
   own `mjWARN_BADQACC`/`BADQVEL`/`BADQPOS` counters and terminates. Found by a test.
+- **Positive control now passes, 2026-09-11, so the muscle negative is interpretable.** With the
+  soft-limit defect IN-15 fixed, 24 perturbed starts (sigma 0.25) on the **motor** hopper at
+  `T_c` 27 gave **5 converged fixed points**, the best at residual **1.57e-14**, advance
+  **+1.7708 m/cycle** = **+3.935 m/s**, within-cycle torso range **0.1788 m**, eps verdict `stable`
+  over 4 decades. That is the trained policy's own gait (3.83 m/s, 0.1857 m per cycle) recovered as
+  an *exact* limit cycle -- the strongest validation the instrument has. The identical protocol on
+  the **muscle** candidate gave **0 of 24**, best residual 7.59e-02. Still 24 starts at one radius:
+  the multistart sweep is what scopes the claim.
 
 ### CL-04 `open` (2026-09-11) `phase4-capability/results.md` still quotes the retracted height figures
 
@@ -516,6 +546,22 @@ of the research record deliberately does not.
   penalised it. `trajopt_hopper.py` already insets the *joint* parameterisation by
   `JOINT_MARGIN = 0.05` for the same class of reason; the control box needs the same treatment before
   any feedback experiment is fair.
+
+### CL-11 `open` (2026-09-11) "It is open-loop unstable" was recorded as a limitation of the muscle result; the working motor gait is four times worse
+
+- Evidence: measured spectral radius of the cycle Jacobian, same instrument, same protocol.
+  **Muscle `T_c` 16 candidate: rho 2.167, two unstable multipliers** out of eleven. **Trained motor
+  gait at its own period 27: rho 9.157, four unstable multipliers** -- and that gait evaluates at
+  3.83 m/s with a 0% fall rate over 16 episodes. The converged motor fixed point found by shooting
+  reads rho 9.008.
+- Impact: `phase4-capability/results.md:448-454` lists "it is open-loop unstable" as one of four
+  things bounding the muscle existence claim. It is not a muscle property. **Strong open-loop
+  instability is what a hopping gait is**, which is why every one of them -- motor included -- needs
+  feedback, and why Phase 4's own amendment 2 had to cut the verification from 10 cycles to 3. If
+  anything the muscle candidate is the *more* benign orbit of the two, and a two-dimensional
+  unstable subspace against 96 control parameters is a great deal of authority.
+- Closes: restate the caveat in the phase record as "hopping orbits are open-loop unstable, this one
+  included and less so than its control", with both radii cited.
 
 ---
 
