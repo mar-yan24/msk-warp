@@ -253,6 +253,10 @@ def main():
     # (scripts/replay_openloop.py), so 10 is unachievable by any real gait. 3 sits below that and
     # above the diving attractor's 2.4 cycles, so it separates them. See results.md amendment 2.
     ap.add_argument("--verify-cycles", type=int, default=3)
+    ap.add_argument("--velocity-bar", type=float, default=0.5,
+                    help="G4.2 uses 0.5, the same bar G3.5 used; the motor control uses 1.0")
+    ap.add_argument("--residual-bar", type=float, default=0.4684,
+                    help="2 x R_ref, with R_ref = 0.2342 measured in stage 0")
     ap.add_argument("--log-every", type=int, default=25)
     ap.add_argument("--resume", default=None, help="continue from a saved _params.npz")
     ap.add_argument("--verify-only", action="store_true",
@@ -358,7 +362,12 @@ def main():
     # A candidate counts only if it survives every verification cycle and its open-loop speed is
     # within 25% of what the optimiser reported (protocol, "Verification").
     consistent = (verified_velocity - velocity).abs() <= 0.25 * velocity.abs().clamp(min=1e-6)
-    qualifies = alive & consistent
+    # Surviving the verification is necessary but not sufficient: a trajectory that never closes can
+    # still stay upright for three cycles. The gate is the conjunction of all four conditions, so it
+    # is computed as one rather than read off a survival count.
+    residual_ok = residual <= args.residual_bar
+    velocity_ok = velocity >= args.velocity_bar
+    qualifies = alive & consistent & residual_ok & velocity_ok
     order = torch.argsort(torch.where(qualifies, verified_velocity, torch.full_like(verified_velocity, -1e9)),
                           descending=True)
 
@@ -379,9 +388,18 @@ def main():
         "grad_norm_p90": float(np.percentile(grad_norms, 90)) if grad_norms else None,
         "grad_norm_max": float(np.max(grad_norms)) if grad_norms else None,
         "final": summarise("final", velocity, residual, violation, obj),
+        "gate": {
+            "velocity_bar": args.velocity_bar,
+            "residual_bar": args.residual_bar,
+            "passed": bool(qualifies.any()),
+        },
         "verified": {
             "survived_all_cycles": int(alive.sum()),
             "speed_consistent": int(consistent.sum()),
+            "residual_within_gate": int(residual_ok.sum()),
+            "velocity_within_gate": int(velocity_ok.sum()),
+            "survived_and_residual_ok": int((alive & residual_ok).sum()),
+            "residual_and_velocity_ok": int((residual_ok & velocity_ok).sum()),
             "qualifying": int(qualifies.sum()),
             "best_verified_velocity": float(verified_velocity[order[0]]) if int(qualifies.sum()) else None,
             "best_verified_residual": float(residual[order[0]]) if int(qualifies.sum()) else None,
@@ -392,6 +410,9 @@ def main():
                     "verified_velocity": float(verified_velocity[w]),
                     "residual": float(residual[w]),
                     "alive_fraction": float(alive_fraction[w]),
+                    "alive": bool(alive[w]),
+                    "consistent": bool(consistent[w]),
+                    "qualifies": bool(qualifies[w]),
                 }
                 for w in order[:10].tolist()
             ],
