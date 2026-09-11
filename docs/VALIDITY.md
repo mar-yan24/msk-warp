@@ -563,6 +563,36 @@ of the research record deliberately does not.
 - Closes: restate the caveat in the phase record as "hopping orbits are open-loop unstable, this one
   included and less so than its control", with both radii cited.
 
+### CL-12 `open` (2026-09-11) Phase 4's existence claim is retracted: none of its eleven candidates is a forward-travelling periodic orbit, for either actuation
+
+- Evidence: `research/phase5-orbits/results.md`. Each of the eleven `logs/phase4/*_params.npz`
+  candidates was tested for a fixed point of its own `T_c`-step return map -- activation pinned to
+  `act*`, 96 starts per cell at sigma 0.05 to 0.60 of component scale, 1056 shoots, each with a
+  two-route Jacobian and an eps certification. Control reconstruction verified against the exported
+  reference to `max |dctrl| = 4.3e-08`.
+- **Nine of eleven cells contain no fixed point**, best residuals 2.18e-02 to 9.94e-02. That
+  includes **five of five motor cells**, which Phase 4 reported as passing at all four horizons and
+  relied on as its positive control. So the gate's failure is **actuation-independent**: it could
+  not distinguish a periodic orbit from a well-shaped transient, for muscle or motor.
+- Two cells do yield genuine orbits, and neither travels forward: `motor_T16` world 185 at residual
+  5.98e-15 hops **backwards** at -0.246 m/s (airborne 6 of 16 steps, `rho` 3.948), and
+  `muscle_T32` world 154 at residual 1.42e-13 is a **bob**, airborne 1 of 32 steps, 0.1335 m of
+  vertical excursion at +0.005 m/s (`rho` 6.984).
+- The positive control that does pass is the **trained** motor policy's own control at its measured
+  period 27: 5 of 24 starts converge, best residual 1.57e-14, +1.7708 m/cycle = **+3.935 m/s**,
+  airborne 22 of 27, within-cycle height range 0.1788 m. That is the real gait recovered as an exact
+  limit cycle at its own speed and amplitude, which is what licenses reading the negatives.
+- **What is licensed**: "these candidates are not periodic orbits". **Not** "no periodic muscle orbit
+  exists" -- the return map takes a control as given, so the sweep cannot search over controls. Five
+  of the nine negatives have a terminal point reading `no_window`, so for those "a real local
+  minimum" is not established either.
+- Also retracted by implication: the framing that the muscle model "cannot close a cycle". It can --
+  the `T_c` 32 bob is a real orbit of the unmodified physiological model. What has not been found is
+  a muscle orbit with **both** a flight phase and forward travel.
+- Closes: (i) remove the six redundant initial-activation parameters from `trajopt_hopper.py` per
+  CL-02 and re-run `T_c` 16; (ii) joint `(x*, u)` shooting on CPU, which at 0.4 ms per cycle can
+  afford thousands of restarts and is the only experiment that can answer the existence question.
+
 ---
 
 ## OP - Operational
