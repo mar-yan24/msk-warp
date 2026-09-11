@@ -37,6 +37,7 @@ Usage::
 """
 
 import argparse
+import gc
 import json
 import os
 import time
@@ -175,6 +176,44 @@ def verify(env, u_logits, z, scales, cycle, n_act_state, device, cycles):
     return alive, velocity, survived / (cycles * cycle)
 
 
+def save_params(out, u_logits, z, optimiser=None, order=None, done=0):
+    """Persist parameters, Adam state and progress beside the result JSON.
+
+    Written every logging interval, not only at the end. This machine runs at about 24.8 GB
+    committed of a 31.3 GB limit before any Python starts, and three attempts at the motor control
+    were OOM-killed mid-run, one of them after it had already converged and cleared its gate. The
+    Adam moments are saved with the parameters so a staged run -- several short processes, each
+    exiting and releasing everything -- is continuous rather than restarting momentum each stage.
+    """
+    if out is None:
+        return
+    os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+    payload = {"u_logits": u_logits.detach().cpu().numpy(), "z": z.detach().cpu().numpy(),
+               "iterations_done": np.array(done)}
+    if optimiser is not None:
+        for name, tensor in zip(("u", "z"), (u_logits, z)):
+            state = optimiser.state.get(tensor, {})
+            if "exp_avg" in state:
+                payload[f"exp_avg_{name}"] = state["exp_avg"].cpu().numpy()
+                payload[f"exp_avg_sq_{name}"] = state["exp_avg_sq"].cpu().numpy()
+                payload[f"step_{name}"] = np.array(float(state["step"]))
+    if order is not None:
+        payload["order"] = order.cpu().numpy()
+    np.savez_compressed(os.path.splitext(out)[0] + "_params.npz", **payload)
+
+
+def restore_optimiser(optimiser, saved, u_logits, z, device):
+    """Put the saved Adam moments back, so a staged run does not re-warm its momentum."""
+    for name, tensor in zip(("u", "z"), (u_logits, z)):
+        if f"exp_avg_{name}" not in saved:
+            continue
+        optimiser.state[tensor] = {
+            "step": torch.tensor(float(saved[f"step_{name}"])),
+            "exp_avg": torch.tensor(saved[f"exp_avg_{name}"], device=device),
+            "exp_avg_sq": torch.tensor(saved[f"exp_avg_sq_{name}"], device=device),
+        }
+
+
 def summarise(tag, velocity, residual, violation, objective):
     v, r, h, j = (t.detach().cpu().numpy() for t in (velocity, residual, violation, objective))
     best = int(np.argmax(j))
@@ -210,8 +249,16 @@ def main():
     ap.add_argument("--lam", type=float, default=4.0, help="periodicity weight; see the protocol")
     ap.add_argument("--mu", type=float, default=20.0, help="height-violation weight")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--verify-cycles", type=int, default=10)
+    # 3, not 10. The trained motor policy's own gait, cycled open loop, falls after 3.7 cycles
+    # (scripts/replay_openloop.py), so 10 is unachievable by any real gait. 3 sits below that and
+    # above the diving attractor's 2.4 cycles, so it separates them. See results.md amendment 2.
+    ap.add_argument("--verify-cycles", type=int, default=3)
     ap.add_argument("--log-every", type=int, default=25)
+    ap.add_argument("--resume", default=None, help="continue from a saved _params.npz")
+    ap.add_argument("--verify-only", action="store_true",
+                    help="skip optimisation; load --resume parameters and run verification only")
+    ap.add_argument("--skip-verify", action="store_true",
+                    help="optimise and checkpoint only; for intermediate stages of a staged run")
     ap.add_argument("--probe", action="store_true",
                     help="report term magnitudes and seconds per iteration, then stop (stage 1a)")
     ap.add_argument("--device", default="cuda:0")
@@ -237,7 +284,20 @@ def main():
 
     u_logits = torch.randn(args.worlds, args.cycle, env.num_actions, device=args.device, requires_grad=True)
     z = torch.randn(args.worlds, 11 + n_act_state, device=args.device, requires_grad=True)
+    saved, already_done = None, 0
+    if args.resume:
+        saved = np.load(args.resume)
+        with torch.no_grad():
+            u_logits.copy_(torch.tensor(saved["u_logits"], device=args.device))
+            z.copy_(torch.tensor(saved["z"], device=args.device))
+        already_done = int(saved["iterations_done"]) if "iterations_done" in saved else 0
+        print(f"resumed from {args.resume} at iteration {already_done}", flush=True)
+    elif args.verify_only:
+        raise SystemExit("--verify-only needs --resume to say which parameters to verify")
+
     optimiser = torch.optim.Adam([u_logits, z], lr=args.lr)
+    if saved is not None:
+        restore_optimiser(optimiser, saved, u_logits, z, args.device)
 
     def objective():
         velocity, residual, violation = rollout(
@@ -249,7 +309,7 @@ def main():
     grad_norms = []
     started = time.time()
 
-    for iteration in range(args.iters):
+    for iteration in range(args.iters if args.verify_only else 0, args.iters):
         env.clear_grad()
         optimiser.zero_grad(set_to_none=True)
         velocity, residual, violation, obj = objective()
@@ -262,12 +322,16 @@ def main():
             row["iteration"] = iteration
             row["grad_norm"] = grad_norms[-1]
             row["seconds"] = time.time() - started
+            row["cuda_allocated_mb"] = torch.cuda.memory_allocated() / 1024 ** 2
+            row["cuda_reserved_mb"] = torch.cuda.memory_reserved() / 1024 ** 2
             history.append(row)
+            save_params(args.out, u_logits, z, optimiser, done=already_done + iteration + 1)
+            gc.collect()
             print(f"iter {iteration:4d}  J {row['best_objective']:+7.3f}  "
                   f"v {row['best_velocity']:+6.2f}  R {row['best_residual']:.3f}  "
                   f"H {row['best_violation']:.3f}  |  median v {row['velocity_median']:+6.2f} "
                   f"R {row['residual_median']:.3f}  |g| {row['grad_norm']:9.2e}  "
-                  f"{row['seconds']:6.1f}s", flush=True)
+                  f"{row['seconds']:6.1f}s  cuda {row['cuda_reserved_mb']:6.0f}MB", flush=True)
 
         if args.probe and iteration == min(args.iters, 20) - 1:
             elapsed = time.time() - started
@@ -278,6 +342,12 @@ def main():
                   f"lambda*R {args.lam * history[0]['residual_median']:.3f}   "
                   f"mu*H {args.mu * history[0]['violation_median']:.3f}")
             return
+
+    if args.skip_verify:
+        save_params(args.out, u_logits, z, optimiser, done=already_done + args.iters)
+        print(f"stage complete at iteration {already_done + args.iters}; verification skipped",
+              flush=True)
+        return
 
     velocity, residual, violation, obj = objective()
     alive, verified_velocity, alive_fraction = verify(
@@ -304,10 +374,10 @@ def main():
         "seed": args.seed,
         "verify_cycles": args.verify_cycles,
         "seconds_total": time.time() - started,
-        "seconds_per_iter": (time.time() - started) / args.iters,
-        "grad_norm_median": float(np.median(grad_norms)),
-        "grad_norm_p90": float(np.percentile(grad_norms, 90)),
-        "grad_norm_max": float(np.max(grad_norms)),
+        "seconds_per_iter": (time.time() - started) / args.iters if args.iters else None,
+        "grad_norm_median": float(np.median(grad_norms)) if grad_norms else None,
+        "grad_norm_p90": float(np.percentile(grad_norms, 90)) if grad_norms else None,
+        "grad_norm_max": float(np.max(grad_norms)) if grad_norms else None,
         "final": summarise("final", velocity, residual, violation, obj),
         "verified": {
             "survived_all_cycles": int(alive.sum()),
@@ -344,10 +414,8 @@ def main():
         os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
         with open(args.out, "w") as fh:
             json.dump(result, fh, indent=2)
-        npz = os.path.splitext(args.out)[0] + "_params.npz"
-        np.savez_compressed(npz, u_logits=u_logits.detach().cpu().numpy(), z=z.detach().cpu().numpy(),
-                            order=order.cpu().numpy())
-        print(f"wrote {args.out} and {npz}")
+        save_params(args.out, u_logits, z, optimiser, order, done=already_done + args.iters)
+        print(f"wrote {args.out} and its _params.npz")
 
 
 if __name__ == "__main__":
