@@ -233,6 +233,10 @@ of the research record deliberately does not.
 - Impact: the "verdict: hopping" reasoning in `phase4-capability/results.md:271, 383, 390` rests
   partly on "the torso oscillates half a metre". It oscillates 38% of a real gait's amplitude.
 - Closes: compute the range within a single cycle; see CL-04 for the documents still carrying it.
+- **Note 2026-09-11.** Two within-cycle numbers are now on record and they differ by 2.5% because
+  of the sample set, not the physics: **0.071374 m** over the reference table's 16 pre-step phases,
+  and **0.073186 m** from `ReturnMap.roll`, which additionally samples the closing state after step
+  16. Either is the right order; both are ~7x below the retracted 0.508 m. Quote which one you mean.
 
 ### IN-02 `open` (2026-09-11) `inspect_trajopt_candidate.py` has a second, previously unrecorded off-by-one in advance-per-cycle
 
