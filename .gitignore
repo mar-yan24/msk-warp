@@ -62,3 +62,7 @@ tests/data/plots/
 bench/
 scripts/env/
 CLAUDE.md
+
+# MuJoCo writes this when the engine emits a warning (e.g. the deliberate
+# instability regression in tests/unit/test_stability.py)
+MUJOCO_LOG.TXT

@@ -69,6 +69,18 @@ TRANSLATING_INDEX = 0
 #: ``qpos[1]`` is torso height on both hopper assets.
 HEIGHT_INDEX = 1
 
+#: MuJoCo warnings that mean a rollout is numerically worthless even if its state stayed finite.
+#:
+#: Found by a test: a shooting step drove the hopper into a region where MuJoCo printed
+#: "Nan, Inf or huge value in QACC at DOF 2. The simulation is unstable", yet ``qpos`` remained
+#: finite and the rollout was accepted, reporting an advance of -918389 m. A finite-state check is
+#: not enough -- the engine's own instability flags have to be read.
+UNSTABLE_WARNINGS = (
+    mujoco.mjtWarning.mjWARN_BADQACC,
+    mujoco.mjtWarning.mjWARN_BADQVEL,
+    mujoco.mjtWarning.mjWARN_BADQPOS,
+)
+
 
 class OrbitTerminated(RuntimeError):
     """A rollout fell below the termination height, so the return map is undefined there."""
@@ -201,6 +213,10 @@ class CycleResult:
     terminated: bool
     terminated_at: Optional[int]
 
+    unstable: bool
+    """The engine raised a bad-QACC/QVEL/QPOS warning. Implies ``terminated``: the numbers are not
+    physics and must never reach a results table."""
+
     act_excursions: int
     """Substeps in which any activation left [0, 1]. This model does not clamp ``act``
     (``actuator_actlimited`` is False, ``docs/VALIDITY.md`` MF-08), and an excursion paired with a
@@ -297,6 +313,8 @@ class ReturnMap:
         hmin = hmax = h
         contacts, pairs = [], []
         terminated, terminated_at, excursions = False, None, 0
+        unstable = False
+        warned = {w: int(d.warning[w].number) for w in UNSTABLE_WARNINGS}
         steps = cycles * self.cycle
 
         for t in range(steps):
@@ -312,6 +330,9 @@ class ReturnMap:
                 pairs.append(tuple(sorted(tuple(p) for p in d.contact.geom[: d.ncon].tolist())))
             h = float(d.qpos[HEIGHT_INDEX])
             hmin, hmax = min(hmin, h), max(hmax, h)
+            if any(int(d.warning[w].number) > warned[w] for w in UNSTABLE_WARNINGS):
+                terminated, terminated_at, unstable = True, t, True
+                break
             if not np.isfinite(d.qpos).all() or not np.isfinite(d.qvel).all():
                 terminated, terminated_at = True, t
                 break
@@ -329,6 +350,7 @@ class ReturnMap:
             contact_pairs=tuple(pairs),
             terminated=terminated,
             terminated_at=terminated_at,
+            unstable=unstable,
             act_excursions=excursions,
         )
 
@@ -336,9 +358,11 @@ class ReturnMap:
         """``P(x)``. Raises :class:`OrbitTerminated` if the rollout did not survive the window."""
         result = self.roll(x, cycles, record_contacts=False)
         if result.terminated:
+            why = ("the engine flagged numerical instability" if result.unstable
+                   else f"height fell below {self.termination_height}")
             raise OrbitTerminated(
                 f"rollout terminated at control step {result.terminated_at} of "
-                f"{cycles * self.cycle} (height fell below {self.termination_height})"
+                f"{cycles * self.cycle} ({why})"
             )
         return result.state
 

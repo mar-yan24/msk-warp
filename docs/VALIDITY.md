@@ -446,6 +446,21 @@ of the research record deliberately does not.
   negative is reported.
 - Also open: the searched radius was sigma <= 0.60 from one candidate. A negative claim must be
   scoped by start count and radius.
+- **Refinement 2026-09-11, and it strengthens the negative.** The kink caveat was *measured at this
+  terminal iterate and does not apply*: the eps sweep there reports slope **+0.0000** over three
+  clean decades, verdict `stable`, zero contact-sequence changes at every step at or below 1e-4.
+  So Levenberg-Marquardt stalled at a genuine smooth local minimum of `||F||`, not on a
+  contact-event surface. (The large-eps end of the grid *does* straddle an event -- `||J||_F` of
+  `[16.5, 75.6, 215.3, 623.4, 7.92, 7.92, 7.92, 7.92]` across eps 1e-2 down to 1e-7, with 3 to 10
+  columns changing the contact sequence in the first four -- which is why the slope must be fitted
+  on the clean sub-window only. Fitting all eight gives +0.24 and hides a perfectly smooth
+  small-eps regime.) The remaining caveat is scope alone: one start. `Outcome.ON_EVENT_BOUNDARY`
+  and the sweep now ship in `msk_warp/analysis/stability.py`, so any future negative carries this
+  check automatically.
+- **New 2026-09-11:** a shooting step reached a state where MuJoCo warned "Nan, Inf or huge value
+  in QACC" while `qpos` stayed finite, and the rollout was accepted, reporting an advance of
+  **-918389 m**. A finite-state check is not sufficient; `ReturnMap.roll` now reads the engine's
+  own `mjWARN_BADQACC`/`BADQVEL`/`BADQPOS` counters and terminates. Found by a test.
 
 ### CL-04 `open` (2026-09-11) `phase4-capability/results.md` still quotes the retracted height figures
 

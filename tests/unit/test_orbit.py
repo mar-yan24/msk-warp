@@ -299,3 +299,24 @@ def test_motor_hopper_return_map_is_eleven_dimensional(motor_model):
     assert out.state.shape == (11,)
     assert out.activation.shape == (0,)
     assert out.act_excursions == 0
+
+
+def test_analysis_package_imports_without_torch_or_warp():
+    """The no-torch, no-warp claim in the package docstring, enforced.
+
+    It is load-bearing rather than cosmetic: it is what makes the instrument independent of the
+    Warp adjoint, and therefore of backend defects BE-01, BE-02 and BE-06. A stray import would
+    silently reattach the dependency the whole design exists to cut.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, msk_warp.analysis as a;"
+        "bad=[m for m in ('torch','warp','mujoco_warp') if m in sys.modules];"
+        "print(','.join(bad))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                         cwd=str(__import__('msk_warp').PACKAGE_ROOT.parent))
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "", f"msk_warp.analysis pulled in: {out.stdout.strip()}"
