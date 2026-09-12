@@ -142,6 +142,11 @@ def main():
     ap.add_argument("--tol", type=float, default=1e-10)
     ap.add_argument("--max-iter", type=int, default=60)
     ap.add_argument("--action-strength", type=float, default=1.0)
+    ap.add_argument("--warmup", type=int, default=0,
+                    help="warm-up cycles the candidate was optimised with (trajopt_hopper's "
+                         "WARMUP_CYCLES). The scored cycle starts AFTER these, so the orbit to test "
+                         "is the state at their end, not the parameterised initial state. Phase 4 "
+                         "candidates predate the warm-up and need 0.")
     ap.add_argument("--check-reference", default=None,
                     help="a reference .npz whose ctrl must match the reconstruction")
     ap.add_argument("--out", default=None)
@@ -173,10 +178,23 @@ def main():
                 "different trajectory from the one Phase 4 found"
             )
 
-    qpos0, qvel0, _ = trajopt.initial_state(
-        torch.tensor(z[world: world + 1].astype(np.float64)), n_act, "cpu"
-    )
+    zw = torch.tensor(z[world: world + 1].astype(np.float64))
+    if z.shape[1] == 11 + n_act:          # a pre-warm-up candidate, activation still in z
+        qpos0, qvel0, _ = trajopt.initial_state(zw, n_act, "cpu")
+    else:
+        qpos0, qvel0, _ = trajopt.initial_state(zw, n_act, "cpu")
     x0 = orb.shape_state(qpos0.numpy()[0], qvel0.numpy()[0])
+
+    rmap_seed = orb.ReturnMap(mjm, ctrl)
+    for _ in range(args.warmup):
+        # Advance to the start of the cycle the optimiser actually scored. Activation is already
+        # handled -- ReturnMap pins it to act* -- so only the mechanical state has to be carried.
+        out = rmap_seed.roll(x0)
+        if out.terminated:
+            raise SystemExit("the candidate does not survive its own warm-up cycle")
+        x0 = out.state
+    if args.warmup:
+        print(f"  advanced {args.warmup} warm-up cycle(s) to the scored cycle's start")
 
     with open(args.scales) as fh:
         scales = np.array(json.load(fh)["per_world"][0]["scales"], dtype=np.float64)

@@ -653,6 +653,38 @@ of the research record deliberately does not.
   over random controls rather than continuation from one candidate. CL-13 also says any such search
   should be seeded on an orbit that already has a flight phase.
 
+### CL-14 `open` (2026-09-11) The Phase 4 ruler measured the noise floor of a policy rollout, not the tolerance for periodicity, and a soft penalty cannot fix it
+
+- `R_ref = 0.2342` was extracted by `scripts/extract_gait_cycle.py` from a **trained policy's
+  trajectory** -- stochastic initialisation, 400 control steps, not a limit cycle. A genuine periodic
+  orbit has `R = 0` exactly. So the gate `R <= 2 * R_ref = 0.4684` calibrated *how noisy a policy
+  rollout is*, and admits trajectories nowhere near periodic. That is the root cause of CL-12: nine
+  of eleven Phase 4 candidates cleared the gate and none of them was an orbit.
+- **Fixing the activation defect (CL-02) does not fix this.** Re-running `T_c` 16 muscle with the
+  initial activation pinned and a warm-up cycle, 165 iterations at 256 worlds, gives best
+  `v +1.37 m/s` at `R 0.244` and 1 of 256 verified at `+0.914 m/s, R 0.3468`. Put through the
+  return map: **0 of 96 starts converge**, best residual 6.36e-02, terminal point certified
+  `stable`. Still not an orbit. (The reconstruction agrees with the optimiser -- 0.338 against
+  0.347 -- so the pipeline is sound; it is the criterion that is not.)
+- **The penalty trades, it does not enforce, and that is actuation-independent.** Same cycle length,
+  same iteration budget, same seed, only `lambda` changed:
+
+  | model | `lambda` 4 | `lambda` 40 |
+  |---|---|---|
+  | muscle | `v +1.4`, `R 0.25` | `v +0.01`, **`R 0.036`** |
+  | motor | `v +2.9`, `R 0.55` | `v -0.08`, **`R 0.058`** |
+
+  Raising `lambda` tenfold buys a 7x tighter cycle and costs essentially all the speed, in **both**
+  models. There is no setting that delivers `R -> 0` with `v > 0.5`; `J = v - lambda R` simply picks
+  a point on a trade-off curve.
+- Impact: **periodicity has to be a constraint, not a penalty term.** That is what the return-map
+  shooting in `msk_warp/analysis` does, and it is why the two instruments disagree systematically.
+  The trajectory optimiser remains the right tool for a *global* search over controls -- it explores
+  256 restarts at once, which no local method can -- but its output is a starting point for shooting,
+  never a periodic-orbit claim on its own.
+- Closes: a formulation with `P(x) - x = 0` enforced (augmented Lagrangian on the existing GPU
+  driver, or a proper NLP), with the return map as the acceptance test either way.
+
 ---
 
 ## OP - Operational
