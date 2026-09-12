@@ -1,12 +1,11 @@
-# Candidate comparison on the same task as experiments/myoleg26_ppo.yaml.
-# Construction intentionally fails until official free-root/tendon derivatives
-# pass task-level validation. Do not set allow_unvalidated_gradients for training.
+# Forward-policy feasibility baseline for myoleg26-walk-v1; not a trained recipe.
+# Reproduce the source/model/task hashes with scripts/check_myoleg26_task.py first.
+# SHAC comparison is gated on actual free-root/tendon derivative validation.
 params:
   general:
     seed: 0
     device: cuda:0
-    logdir: logs/myoleg26
-
+    logdir: logs/myoleg26_ppo
   env:
     name: MyoLeg26Walk
     model_path: assets/myoleg26/flat_boxes.xml
@@ -18,7 +17,6 @@ params:
     action_strength: 1.0
     early_termination: true
     njmax: 1000
-
   network:
     actor: ActorStochasticMLP
     actor_logstd_init: -1.0
@@ -29,24 +27,23 @@ params:
     critic_mlp:
       units: [128, 64]
       activation: elu
-
   config:
-    name: myoleg26_shac
+    algorithm: ppo
+    name: myoleg26_ppo
     gamma: 0.99
-    steps_num: 16
+    gae_lambda: 0.95
+    steps_num: 128
     max_epochs: 500
-    actor_learning_rate: 1e-3
-    critic_learning_rate: 1e-3
-    lr_schedule: linear
-    betas: [0.7, 0.95]
-    target_critic_alpha: 0.2
+    actor_learning_rate: 3e-4
+    critic_learning_rate: 3e-4
+    lr_schedule: constant
+    betas: [0.9, 0.999]
     obs_rms: true
     ret_rms: false
-    critic_iterations: 16
-    critic_method: td-lambda
-    lambda: 0.95
-    num_batch: 4
-    num_actors: 64
+    ppo_epochs: 5
+    num_minibatches: 8
+    clip_range: 0.2
+    entropy_coef: 0.01
     truncate_grads: true
-    grad_norm: 1.0
-    save_interval: 200
+    max_grad_norm: 0.5
+    save_interval: 50
