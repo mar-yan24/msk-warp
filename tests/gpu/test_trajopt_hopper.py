@@ -56,7 +56,8 @@ def test_objective_gradient_reaches_controls_and_initial_state(kind, n_act_state
     u, z = _params(env, worlds, cycle, n_act_state)
     scales = torch.ones(11, device="cuda:0")
 
-    velocity, residual, violation = trajopt.rollout(env, u, z, scales, cycle, n_act_state, "cuda:0")
+    velocity, error, residual, violation = trajopt.rollout(
+        env, u, z, scales, cycle, n_act_state, "cuda:0")
     (velocity - residual - violation).sum().backward()
 
     for name, grad in (("controls", u.grad), ("initial state", z.grad)):
@@ -92,8 +93,8 @@ def test_initial_activation_is_not_a_decision_variable():
     assert act.shape == (worlds, n_act_state)
     assert torch.allclose(act, torch.full_like(act, 0.5)), "activation starts neutral"
 
-    velocity, residual, _ = trajopt.rollout(env, u, z, torch.ones(11, device="cuda:0"),
-                                            cycle, n_act_state, "cuda:0")
+    velocity, _, residual, _ = trajopt.rollout(env, u, z, torch.ones(11, device="cuda:0"),
+                                               cycle, n_act_state, "cuda:0")
     (velocity - residual).sum().backward()
     assert torch.isfinite(u.grad).all() and u.grad.abs().max() > 0, (
         "the control must still carry the whole actuation gradient")
@@ -139,7 +140,7 @@ def test_verification_reproduces_the_differentiable_rollout_over_one_cycle(kind,
     scales = torch.ones(11, device="cuda:0")
 
     with torch.no_grad():
-        velocity, _, _ = trajopt.rollout(env, u, z, scales, cycle, n_act_state, "cuda:0")
+        velocity, _, _, _ = trajopt.rollout(env, u, z, scales, cycle, n_act_state, "cuda:0")
     _, verified, _ = trajopt.verify(env, u, z, scales, cycle, n_act_state, "cuda:0", cycles=1)
 
     assert torch.allclose(velocity, verified, atol=1e-4), f"{velocity} vs {verified}"
@@ -160,3 +161,31 @@ def test_verification_marks_a_collapsed_world_as_not_surviving():
     )
     assert not alive.any(), "a passive muscle hopper must fall within 160 control steps"
     assert (alive_fraction < 1.0).all()
+
+
+def test_rollout_returns_the_error_vector_the_constraint_needs():
+    """The augmented Lagrangian constrains the 11-component error, not its norm.
+
+    ``R = ||e||`` has an infinite-derivative kink at ``e = 0`` -- exactly where convergence has to
+    happen -- so constraining the scalar would place a non-differentiable point at the solution.
+    ``||e||^2`` is smooth there. This pins both that the vector is returned and that its RMS still
+    reproduces the scalar every Phase 4 number was measured with.
+    """
+    trajopt = _load_trajopt()
+    worlds, cycle, n_act_state = 4, 3, 6
+    env = _env("muscle", worlds)
+    u, z = _params(env, worlds, cycle, n_act_state)
+    scales = torch.rand(11, device="cuda:0") + 0.5
+
+    velocity, error, residual, violation = trajopt.rollout(
+        env, u, z, scales, cycle, n_act_state, "cuda:0")
+    assert error.shape == (worlds, 11)
+    assert torch.allclose(error.pow(2).mean(dim=-1).sqrt(), residual, atol=1e-6)
+
+    from msk_warp.utils.gait import periodicity_residual
+    # the scalar must equal what the historical ruler would have produced
+    assert torch.allclose(
+        periodicity_residual(error, torch.zeros_like(error), torch.ones(11, device="cuda:0")),
+        residual, atol=1e-6)
+    error.pow(2).sum().backward()
+    assert u.grad is not None and torch.isfinite(u.grad).all() and u.grad.abs().max() > 0

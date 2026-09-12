@@ -183,8 +183,13 @@ def rollout(env, u_logits, z, scales, cycle, n_act_state, device, warmup=WARMUP_
 
     dt = env.substeps * float(env.mjm.opt.timestep)
     velocity = (qpos[:, 0] - start_x) / (cycle * dt)
-    residual = periodicity_residual(shape_vector(qpos, qvel), start_shape, scales)
-    return velocity, residual, violation / ((warmup + 1) * cycle)
+    # The closing error as a VECTOR, not just its norm. The augmented Lagrangian needs the vector:
+    # its penalty is ||e||^2, which is smooth at e = 0, whereas the scalar residual R = ||e|| has an
+    # infinite-derivative kink exactly there -- at the solution. Constraining R instead of e would
+    # put a non-differentiable point where convergence has to happen.
+    error = (shape_vector(qpos, qvel) - start_shape) / scales
+    residual = error.pow(2).mean(dim=-1).sqrt()
+    return velocity, error, residual, violation / ((warmup + 1) * cycle)
 
 
 @torch.no_grad()
@@ -215,7 +220,7 @@ def verify(env, u_logits, z, scales, cycle, n_act_state, device, cycles):
     return alive, velocity, survived / (cycles * cycle)
 
 
-def save_params(out, u_logits, z, optimiser=None, order=None, done=0):
+def save_params(out, u_logits, z, optimiser=None, order=None, done=0, extra=None):
     """Persist parameters, Adam state and progress beside the result JSON.
 
     Written every logging interval, not only at the end. This machine runs at about 24.8 GB
@@ -238,6 +243,11 @@ def save_params(out, u_logits, z, optimiser=None, order=None, done=0):
                 payload[f"step_{name}"] = np.array(float(state["step"]))
     if order is not None:
         payload["order"] = order.cpu().numpy()
+    # Augmented-Lagrangian multipliers and penalty weights, so a staged run resumes mid-solve
+    # rather than restarting the outer loop with y = 0 -- which would throw away exactly the
+    # information the method accumulates.
+    for key, tensor in (extra or {}).items():
+        payload[key] = tensor.detach().cpu().numpy()
     np.savez_compressed(os.path.splitext(out)[0] + "_params.npz", **payload)
 
 
@@ -253,10 +263,26 @@ def restore_optimiser(optimiser, saved, u_logits, z, device):
         }
 
 
-def summarise(tag, velocity, residual, violation, objective):
+#: Constraint bars the Pareto summary reports the fastest world under. A periodic orbit has R = 0,
+#: so these are "how fast can a nearly-closed cycle go", which is the quantity the closure-versus-
+#: speed trade is about (docs/VALIDITY.md CL-14).
+PARETO_BARS = (0.05, 0.10, 0.20, 0.30)
+
+
+def summarise(tag, velocity, residual, violation, objective, auglag=False):
     v, r, h, j = (t.detach().cpu().numpy() for t in (velocity, residual, violation, objective))
-    best = int(np.argmax(j))
-    return {
+    # Ranking by the objective is meaningless under an augmented Lagrangian, because each world
+    # carries its own multipliers: max_e (-y.e - rho/2 |e|^2) = |y|^2 / 2 rho, so argmax(J) selects
+    # the world with the largest multipliers rather than the best gait. Observed directly -- a run
+    # reported "J +80.8, R 1.436" while the tightest world in the same population sat at R 0.058.
+    # With a constraint the meaningful ranking is by constraint violation.
+    best = int(np.argmin(r)) if auglag else int(np.argmax(j))
+    pareto = {}
+    for bar in PARETO_BARS:
+        under = r < bar
+        pareto[f"fastest_velocity_under_R{bar}"] = float(v[under].max()) if under.any() else None
+        pareto[f"worlds_under_R{bar}"] = int(under.sum())
+    return dict(pareto, **{
         "tag": tag,
         "best_world": best,
         "best_objective": float(j[best]),
@@ -269,7 +295,8 @@ def summarise(tag, velocity, residual, violation, objective):
         "residual_min": float(r.min()),
         "violation_median": float(np.median(h)),
         "objective_median": float(np.median(j)),
-    }
+        "ranked_by": "residual" if auglag else "objective",
+    })
 
 
 def main():
@@ -302,6 +329,19 @@ def main():
                     help="skip optimisation; load --resume parameters and run verification only")
     ap.add_argument("--skip-verify", action="store_true",
                     help="optimise and checkpoint only; for intermediate stages of a staged run")
+    ap.add_argument("--auglag", action="store_true",
+                    help="enforce periodicity as a CONSTRAINT with multipliers instead of the "
+                         "lambda*R penalty. The penalty provably trades closure against speed in "
+                         "both models (docs/VALIDITY.md CL-14); an augmented Lagrangian does not.")
+    ap.add_argument("--al-inner", type=int, default=20,
+                    help="Adam iterations between multiplier updates")
+    ap.add_argument("--al-rho0", type=float, default=4.0,
+                    help="initial penalty weight; 4.0 matches the lambda the penalty runs used, so "
+                         "the first inner solve starts where the penalty method left off")
+    ap.add_argument("--al-rho-max", type=float, default=1.0e4)
+    ap.add_argument("--al-eta", type=float, default=0.5,
+                    help="a world's rho is raised only if its constraint norm failed to fall to "
+                         "this fraction of its value at the previous outer update")
     ap.add_argument("--probe", action="store_true",
                     help="report term magnitudes and seconds per iteration, then stop (stage 1a)")
     ap.add_argument("--device", default="cuda:0")
@@ -344,11 +384,42 @@ def main():
     if saved is not None:
         restore_optimiser(optimiser, saved, u_logits, z, args.device)
 
+    # ---- augmented-Lagrangian state, one multiplier vector and one penalty weight per world ----
+    #
+    # A soft penalty trades periodicity for speed; it never enforces it. Measured at T_c 16, same
+    # budget and seed, only lambda changed (docs/VALIDITY.md CL-14):
+    #
+    #     muscle  lambda  4 -> v +1.4, R 0.25      lambda 40 -> v +0.01, R 0.036
+    #     motor   lambda  4 -> v +2.9, R 0.55      lambda 40 -> v -0.08, R 0.058
+    #
+    # Ten times the weight buys a seven times tighter cycle and costs essentially all the speed, in
+    # BOTH models, so no lambda delivers R -> 0 with v > 0.5. The augmented Lagrangian removes the
+    # trade: the objective stays v, the multipliers carry the constraint, and rho only has to be
+    # large enough locally rather than large enough to dominate.
+    n_con = 11
+    al_y = torch.zeros(args.worlds, n_con, device=args.device)
+    al_rho = torch.full((args.worlds,), args.al_rho0, device=args.device)
+    al_prev = torch.full((args.worlds,), float("inf"), device=args.device)
+    if saved is not None and "al_y" in saved.files:
+        al_y.copy_(torch.tensor(saved["al_y"], device=args.device))
+        al_rho.copy_(torch.tensor(saved["al_rho"], device=args.device))
+        al_prev.copy_(torch.tensor(saved["al_prev"], device=args.device))
+        print(f"resumed multipliers: |y| median {al_y.norm(dim=-1).median():.3f}, "
+              f"rho median {al_rho.median():.1f}", flush=True)
+    al_state = {"al_y": al_y, "al_rho": al_rho, "al_prev": al_prev} if args.auglag else None
+
     def objective():
-        velocity, residual, violation = rollout(
+        velocity, error, residual, violation = rollout(
             env, u_logits, z, scales, args.cycle, n_act_state, args.device,
         )
-        return velocity, residual, violation, velocity - args.lam * residual - args.mu * violation
+        if args.auglag:
+            obj = (velocity
+                   - (al_y * error).sum(dim=-1)
+                   - 0.5 * al_rho * error.pow(2).sum(dim=-1)
+                   - args.mu * violation)
+        else:
+            obj = velocity - args.lam * residual - args.mu * violation
+        return velocity, residual, violation, obj, error
 
     history = []
     grad_norms = []
@@ -357,26 +428,49 @@ def main():
     for iteration in range(args.iters if args.verify_only else 0, args.iters):
         env.clear_grad()
         optimiser.zero_grad(set_to_none=True)
-        velocity, residual, violation, obj = objective()
+        velocity, residual, violation, obj, error = objective()
         (-obj.sum()).backward()
         grad_norms.append(float(torch.cat([u_logits.grad.flatten(), z.grad.flatten()]).norm()))
         optimiser.step()
 
+        if args.auglag and (iteration + 1) % args.al_inner == 0:
+            # Outer update, per world and in place so the closure keeps its references.
+            with torch.no_grad():
+                err = error.detach()
+                norm = err.norm(dim=-1)
+                al_y.add_(al_rho.unsqueeze(-1) * err)
+                # Raise rho only where the constraint is not shrinking fast enough. Worlds that are
+                # converging keep a small rho, which is the whole point of the method: the penalty
+                # does not have to dominate the objective everywhere.
+                stalled = norm > args.al_eta * al_prev
+                al_rho.copy_(torch.where(stalled, (al_rho * 10.0).clamp(max=args.al_rho_max), al_rho))
+                al_prev.copy_(norm)
+
         if args.probe or iteration % args.log_every == 0 or iteration == args.iters - 1:
-            row = summarise(f"iter{iteration}", velocity, residual, violation, obj)
+            row = summarise(f"iter{iteration}", velocity, residual, violation, obj, args.auglag)
             row["iteration"] = iteration
             row["grad_norm"] = grad_norms[-1]
             row["seconds"] = time.time() - started
             row["cuda_allocated_mb"] = torch.cuda.memory_allocated() / 1024 ** 2
             row["cuda_reserved_mb"] = torch.cuda.memory_reserved() / 1024 ** 2
             history.append(row)
-            save_params(args.out, u_logits, z, optimiser, done=already_done + iteration + 1)
+            save_params(args.out, u_logits, z, optimiser, done=already_done + iteration + 1,
+                        extra=al_state)
             gc.collect()
-            print(f"iter {iteration:4d}  J {row['best_objective']:+7.3f}  "
-                  f"v {row['best_velocity']:+6.2f}  R {row['best_residual']:.3f}  "
-                  f"H {row['best_violation']:.3f}  |  median v {row['velocity_median']:+6.2f} "
-                  f"R {row['residual_median']:.3f}  |g| {row['grad_norm']:9.2e}  "
-                  f"{row['seconds']:6.1f}s  cuda {row['cuda_reserved_mb']:6.0f}MB", flush=True)
+            if args.auglag:
+                fast = row["fastest_velocity_under_R0.1"]
+                print(f"iter {iteration:4d}  Rmin {row['residual_min']:.4f} "
+                      f"(v {row['best_velocity']:+5.2f})  |  under R<0.1: "
+                      f"{row['worlds_under_R0.1']:3d} worlds, fastest "
+                      f"{fast if fast is None else round(fast, 3)}  |  median R "
+                      f"{row['residual_median']:.3f}  |g| {row['grad_norm']:9.2e}  "
+                      f"{row['seconds']:6.1f}s", flush=True)
+            else:
+                print(f"iter {iteration:4d}  J {row['best_objective']:+7.3f}  "
+                      f"v {row['best_velocity']:+6.2f}  R {row['best_residual']:.3f}  "
+                      f"H {row['best_violation']:.3f}  |  median v {row['velocity_median']:+6.2f} "
+                      f"R {row['residual_median']:.3f}  |g| {row['grad_norm']:9.2e}  "
+                      f"{row['seconds']:6.1f}s  cuda {row['cuda_reserved_mb']:6.0f}MB", flush=True)
 
         if args.probe and iteration == min(args.iters, 20) - 1:
             elapsed = time.time() - started
@@ -389,12 +483,13 @@ def main():
             return
 
     if args.skip_verify:
-        save_params(args.out, u_logits, z, optimiser, done=already_done + args.iters)
+        save_params(args.out, u_logits, z, optimiser, done=already_done + args.iters,
+                    extra=al_state)
         print(f"stage complete at iteration {already_done + args.iters}; verification skipped",
               flush=True)
         return
 
-    velocity, residual, violation, obj = objective()
+    velocity, residual, violation, obj, _error = objective()
     alive, verified_velocity, alive_fraction = verify(
         env, u_logits.detach(), z.detach(), scales, args.cycle, n_act_state, args.device,
         args.verify_cycles,
@@ -428,7 +523,7 @@ def main():
         "grad_norm_median": float(np.median(grad_norms)) if grad_norms else None,
         "grad_norm_p90": float(np.percentile(grad_norms, 90)) if grad_norms else None,
         "grad_norm_max": float(np.max(grad_norms)) if grad_norms else None,
-        "final": summarise("final", velocity, residual, violation, obj),
+        "final": summarise("final", velocity, residual, violation, obj, args.auglag),
         "gate": {
             "velocity_bar": args.velocity_bar,
             "residual_bar": args.residual_bar,
@@ -476,7 +571,8 @@ def main():
         os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
         with open(args.out, "w") as fh:
             json.dump(result, fh, indent=2)
-        save_params(args.out, u_logits, z, optimiser, order, done=already_done + args.iters)
+        save_params(args.out, u_logits, z, optimiser, order, done=already_done + args.iters,
+                extra=al_state)
         print(f"wrote {args.out} and its _params.npz")
 
 

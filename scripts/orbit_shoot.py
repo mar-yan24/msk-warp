@@ -230,6 +230,9 @@ def main():
           f"{len(converged)} converged at <= {args.tol:g}")
 
     orbits = []
+    #: Converged starts usually land on the SAME orbit -- 48 of 48 in one augmented-Lagrangian cell,
+    #: all reporting identical advance, flight and rho. Print a few; keep them all in the JSON.
+    printed = 0
     for r in converged:
         d = describe(rmap, r.x, scales)
         d["residual"] = r.residual
@@ -238,6 +241,9 @@ def main():
         d["x"] = [float(v) for v in r.x]  # full float64; rounding can land on an event surface
         d["classification"] = classify(d, cycle)
         orbits.append(d)
+        printed += 1
+        if printed > 5:
+            continue
         print(f"    residual {r.residual:.2e}  advance {d['advance_per_cycle_m']:+.4f} m/cyc "
               f"({d['velocity_mps']:+.3f} m/s)  h-range {d['height_range_m']:.4f}  "
               f"flight {d['flight_steps']}/{cycle}  rho {d['spectral_radius']:.4f} "
@@ -254,6 +260,8 @@ def main():
         "eps_verdict": best.terminal_sweep.verdict if best.terminal_sweep else None,
         "eps_slope": best.terminal_sweep.slope if best.terminal_sweep else None,
     }
+    if printed > 5:
+        print(f"    ... and {printed - 5} more converged starts, all in the JSON")
     if not orbits:
         print("    no fixed point found. Scope: "
               f"{args.starts} starts, sigma {min(SIGMAS)} to {max(SIGMAS)}, seed {args.seed}."

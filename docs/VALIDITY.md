@@ -684,6 +684,55 @@ of the research record deliberately does not.
   never a periodic-orbit claim on its own.
 - Closes: a formulation with `P(x) - x = 0` enforced (augmented Lagrangian on the existing GPU
   driver, or a proper NLP), with the return map as the acceptance test either way.
+- **`fixed` 2026-09-12.** Implemented as `--auglag` in `scripts/trajopt_hopper.py`: the objective
+  stays `v`, the 11-component closing error is the constraint, multipliers and per-world penalty
+  weights are carried in the checkpoint. The constraint is the **vector** `e`, not the scalar
+  `R = ||e||`, because `||e||` has an infinite-derivative kink at `e = 0` -- exactly where
+  convergence has to happen -- while `||e||^2` is smooth there. It works: see CL-15.
+
+### CL-15 `open` (2026-09-12) At `T_c` 16 every closed orbit is static, for **both** actuators -- the cycle length excludes forward travel, not the muscle
+
+- Evidence. With periodicity **enforced** rather than penalised, the muscle run at `T_c` 16 drove the
+  closing residual from 0.244 to **0.0269**, twelve times tighter than any Phase 4 candidate. Two of
+  its tightest worlds were then put through the return map: **48 of 48 starts converged**, residuals
+  down to **1.7e-15**. These are genuine periodic orbits to machine precision -- the first the
+  trajectory optimiser has ever produced.
+- **Every one of them is static**: advance +0.0001 m/cycle, **flight 0/16**, within-cycle height
+  range 0.0036 to 0.0114 m, `rho` about 2.23 with one unstable multiplier.
+- The population-level picture is a Pareto frontier, not a failure:
+
+  | closing residual | worlds | fastest among them |
+  |---|---|---|
+  | `R < 0.30` | 55 | +0.916 m/s |
+  | `R < 0.20` | 36 | +0.640 m/s |
+  | `R < 0.10` | 8 | +0.287 m/s |
+  | `R -> 0` | -- | **-> 0** |
+
+- **The motor control, run identically, behaves the same way.** Its tightest worlds reach `R` 0.055
+  at `v -0.17`, and worlds under `R < 0.1` top out near +0.3 m/s before vanishing as the constraint
+  tightens. So the closure-versus-speed conflict at this cycle length is **actuation-independent**.
+- Reading, and it reframes the phase: `T_c` 16 is the wrong cycle length for a travelling gait, for
+  muscle *and* motor. Phase 4 chose it because it was the only horizon its broken residual gate
+  passed for the muscle (CL-12, CL-14), and the choice has been inherited ever since. The motor's
+  one **known** fast orbit -- +3.935 m/s, airborne 22 of 27, recovered to residual 1.57e-14 -- lives
+  at `T_c` **27**, and CL-13 explains why a short cycle cannot travel: too little flight, and in
+  stance the foot is anchored.
+- Closes: sweep `T_c` with the augmented Lagrangian and the return map as acceptance, for both
+  models. The right question is no longer "does a muscle orbit exist at `T_c` 16" -- it does, and it
+  stands still -- but **"at what cycle length does a moving muscle orbit appear, and how does its
+  speed compare with the motor's at the same `T_c`"**.
+
+### IN-17 `fixed` (2026-09-12) Ranking worlds by the objective is meaningless under an augmented Lagrangian
+
+- Evidence: each world carries its own multipliers, and `max_e (-y.e - rho/2 |e|^2) = |y|^2 / 2 rho`,
+  so `argmax(J)` selects the world with the **largest multipliers** rather than the best gait.
+  Observed directly: a run reported `J +80.8, R 1.436` while the tightest world in the same
+  population sat at `R 0.058` and the fastest world under `R < 0.1` ran at +0.287 m/s. Read off the
+  progress line alone, that looks like divergence; it was the ranking.
+- Fixed: `summarise` ranks by constraint violation in `--auglag` mode and reports a Pareto row --
+  how many worlds sit under each residual bar and how fast the quickest of them is. `orbit_shoot`
+  also caps its per-orbit printing, since converged starts usually land on one orbit (48 of 48 in
+  the cell above, all reporting identical advance, flight and `rho`).
 
 ---
 
