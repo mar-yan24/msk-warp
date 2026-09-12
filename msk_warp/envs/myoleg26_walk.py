@@ -46,15 +46,17 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         nq = _mjm.nq
         nv = _mjm.nv
         nu = _mjm.nu
+        na = _mjm.na
 
         # Observation: height(1) + xquat(4) + lin_vel(3) + ang_vel(3)
-        #            + joint_q(nq-6) + joint_v(nv-6)*0.1 + up_z(1) + heading(1) + actions(nu)
+        #            + joint_q(nq-6) + joint_v(nv-6)*0.1 + act(na)
+        #            + up_z(1) + heading(1) + actions(nu)
         n_joint_q = nq - 6   # exclude 6 pelvis DOFs
         n_joint_v = nv - 6
-        num_obs = 1 + 4 + 3 + 3 + n_joint_q + n_joint_v + 1 + 1 + nu
+        num_obs = 1 + 4 + 3 + 3 + n_joint_q + n_joint_v + na + 1 + 1 + nu
         num_act = nu
 
-        logging.info(f'MyoLeg26 model: nq={nq}, nv={nv}, nu={nu}, num_obs={num_obs}')
+        logging.info(f'MyoLeg26 model: nq={nq}, nv={nv}, nu={nu}, na={na}, num_obs={num_obs}')
         del _mjm
 
         super().__init__(
@@ -79,6 +81,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         self.nq = self.mjm.nq
         self.nv = self.mjm.nv
         self.nu = self.mjm.nu
+        self.na = self.mjm.na
         self.n_joint_q = self.nq - 6
         self.n_joint_v = self.nv - 6
 
@@ -170,15 +173,19 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         return quat
 
     @staticmethod
-    def _compute_obs(qpos, qvel, pelvis_xquat, actions, up_vec, heading_vec,
+    def _compute_obs(qpos, qvel, act, pelvis_xquat, actions, up_vec, heading_vec,
                      n_joint_q, n_joint_v):
         """Compute observation from state tensors.
 
-        Differentiable in qpos, qvel, pelvis_xquat, and actions.
+        Differentiable in qpos, qvel, act, pelvis_xquat, and actions.
 
-        Observation layout (147D for the default model):
+        Observation layout (nq + nv + na + nu + 1 values):
           height(1) + xquat(4) + lin_vel(3) + ang_vel(3)
-          + joint_q(54) + joint_v(54)*0.1 + up_z(1) + heading(1) + actions(26)
+          + joint_q(nq-6) + joint_v(nv-6)*0.1 + act(na)
+          + up_z(1) + heading(1) + actions(nu)
+
+        Activation is distinct from the previous action: it determines the
+        current muscle force after the excitation command has changed.
         """
         # Pelvis DOFs: qpos[0:6] = [tx, ty, tz, tilt, list, rotation]
         # Due to body quat (90deg x-rotation): ty maps to world Z (height)
@@ -206,6 +213,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             ang_vel,              # 3
             joint_q,              # n_joint_q
             joint_v * 0.1,        # n_joint_v (scaled)
+            act,                  # na
             up_z,                 # 1
             heading,              # 1
             actions,              # nu
@@ -246,10 +254,18 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         return reward
 
     def compute_obs(self, qpos, qvel, act=None):
-        """Pure observation computation from the supplied tracked state."""
+        """Pure observation computation from the complete supplied tracked state.
+
+        Activation is required explicitly, so a supplied mechanical state is
+        never silently combined with activation from another simulator state.
+        """
+        if act is None:
+            raise ValueError('MyoLeg26 observations require explicit muscle activation state (act)')
+        if act.shape != (qpos.shape[0], self.mjm.na):
+            raise ValueError(f'Expected act shape {(qpos.shape[0], self.mjm.na)}, got {tuple(act.shape)}')
         pelvis_xquat = self._compute_pelvis_xquat(qpos)
         return self._compute_obs(
-            qpos, qvel, pelvis_xquat, self.actions,
+            qpos, qvel, act, pelvis_xquat, self.actions,
             self.up_vec, self.heading_vec,
             self.n_joint_q, self.n_joint_v,
         )
@@ -286,9 +302,10 @@ class MyoLeg26WalkEnv(MjWarpEnv):
 
             qpos = wp.to_torch(self.warp_data.qpos)
             qvel = wp.to_torch(self.warp_data.qvel)
+            act = wp.to_torch(self.warp_data.act)
             pelvis_xquat = self._compute_pelvis_xquat(qpos)
             self.obs_buf = self._compute_obs(
-                qpos, qvel, pelvis_xquat, actions,
+                qpos, qvel, act, pelvis_xquat, actions,
                 self.up_vec, self.heading_vec,
                 self.n_joint_q, self.n_joint_v,
             )
@@ -314,7 +331,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             pelvis_xquat = self._compute_pelvis_xquat(qpos_out)
 
             self.obs_buf = self._compute_obs(
-                qpos_out, qvel_out, pelvis_xquat, actions,
+                qpos_out, qvel_out, act_out, pelvis_xquat, actions,
                 self.up_vec, self.heading_vec,
                 self.n_joint_q, self.n_joint_v,
             )
@@ -418,8 +435,9 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             with torch.no_grad():
                 qpos_view = wp.to_torch(self.warp_data.qpos)
                 qvel_view = wp.to_torch(self.warp_data.qvel)
+                act_view = wp.to_torch(self.warp_data.act)
 
-                self.obs_buf = self.compute_obs(qpos_view, qvel_view)
+                self.obs_buf = self.compute_obs(qpos_view, qvel_view, act_view)
 
         return self.obs_buf
 
@@ -428,8 +446,9 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         wp.synchronize()
         qpos = wp.to_torch(self.warp_data.qpos)
         qvel = wp.to_torch(self.warp_data.qvel)
+        act = wp.to_torch(self.warp_data.act)
 
-        self.obs_buf = self.compute_obs(qpos, qvel)
+        self.obs_buf = self.compute_obs(qpos, qvel, act)
 
     def calculateReward(self):
         """Non-differentiable reward computation (unused in diff path)."""
