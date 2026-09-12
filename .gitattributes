@@ -1,2 +1,12 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Pinned model/export hashes must survive checkout on Windows and Linux.
+msk_warp/assets/myoleg26/*.xml text eol=lf
+msk_warp/assets/myoleg26/*.json text eol=lf
+msk_warp/assets/myoleg26/*.txt text eol=lf
+msk_warp/assets/myoleg26/LICENSE* text eol=lf
+msk_warp/assets/myoleg26/meshes/* -text
+msk_warp/assets/myoleg26/textures/* -text
+msk_warp/models/myoleg26.py text eol=lf
+scripts/build_myoleg26_assets.py text eol=lf
