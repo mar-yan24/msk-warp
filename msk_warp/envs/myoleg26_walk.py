@@ -1,14 +1,8 @@
-"""MyoLeg26 walking environment using MuJoCo Warp.
+"""MyoLeg26 locomotion with explicit model and observation contracts.
 
-Bilateral human gait model with 26 Hill-type muscle actuators routed through
-spatial tendons.  Based on the OpenSim Gait2392 reduced model (14 DOF,
-22 muscles), extended with EDL/FDL and cosmetic arms.
-
-Key differences from AntEnv:
-  - Pelvis uses 3 slide + 3 hinge joints (NOT a free joint), so nq == nv.
-  - Muscle actuators with dyntype/gaintype/biastype = "muscle".
-  - Pelvis orientation computed differentiably from the three hinge coordinates.
-  - Action space maps tanh[-1,1] -> muscle activation [0,1].
+The official model has a free root and a rigidly attached pelvis; the historical
+slide/hinge root is available only with ``model_contract='legacy'``. Pelvis pose,
+world-frame velocities and activation observations use the supplied state.
 """
 
 import logging
@@ -20,6 +14,7 @@ import warp as wp
 import mujoco_warp as mjw
 
 from msk_warp.envs.base_env import MjWarpEnv
+from msk_warp.backend import GradContractError
 from msk_warp.bridge import WarpSimStep
 import msk_warp.utils.torch_utils as tu
 
@@ -33,12 +28,27 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         no_grad=False,
         stochastic_init=True,
         substeps=4,
-        model_path='assets/myoleg/myoLeg26_BASELINE.xml',
+        model_path='assets/myoleg26/flat_boxes.xml',
+        model_contract='official',
+        allow_unvalidated_gradients=False,
         action_strength=1.0,
         early_termination=True,
         njmax=1000,
         **kwargs,
     ):
+        if model_contract not in ('official', 'legacy'):
+            raise ValueError("model_contract must be 'official' or 'legacy'")
+        if model_contract == 'official' and action_strength != 1.0:
+            raise ValueError('Official MyoLeg26 requires action_strength=1.0 for excitation in [0, 1]')
+        if model_contract == 'official' and not no_grad and not allow_unvalidated_gradients:
+            raise GradContractError(
+                'Official MyoLeg26 free-root and tendon gradients are unvalidated. '
+                'Use no_grad=True for forward evaluation; '
+                'allow_unvalidated_gradients=True is reserved for explicit gradient diagnostics.'
+            )
+        self.model_contract = model_contract
+        self.allow_unvalidated_gradients = allow_unvalidated_gradients
+        self.root_qpos_size = 7 if model_contract == 'official' else 6
         # Pre-load model to discover dimensions
         from msk_warp import resolve_model_path
         _path = resolve_model_path(model_path)
@@ -49,9 +59,9 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         na = _mjm.na
 
         # Observation: height(1) + xquat(4) + lin_vel(3) + ang_vel(3)
-        #            + joint_q(nq-6) + joint_v(nv-6)*0.1 + act(na)
+        #            + joint_q(nq-root_qpos_size) + joint_v(nv-6)*0.1 + act(na)
         #            + up_z(1) + heading(1) + actions(nu)
-        n_joint_q = nq - 6   # exclude 6 pelvis DOFs
+        n_joint_q = nq - self.root_qpos_size
         n_joint_v = nv - 6
         num_obs = 1 + 4 + 3 + 3 + n_joint_q + n_joint_v + na + 1 + 1 + nu
         num_act = nu
@@ -82,7 +92,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         self.nv = self.mjm.nv
         self.nu = self.mjm.nu
         self.na = self.mjm.na
-        self.n_joint_q = self.nq - 6
+        self.n_joint_q = self.nq - self.root_qpos_size
         self.n_joint_v = self.nv - 6
 
         self._init_pelvis_kinematics()
@@ -91,63 +101,76 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         self.reset()
 
     def _save_start_state(self):
-        """Save keyframe states for initialization."""
-        wp.synchronize()
+        """Use the task standing keyframe, falling back to compiled qpos0.
 
-        # Parse keyframes from MuJoCo model
-        self.keyframe_qpos = {}
-        self.keyframe_qvel = {}
-        for name in ('stand', 'walk_left', 'walk_right'):
-            kid = mujoco.mj_name2id(self.mjm, mujoco.mjtObj.mjOBJ_KEY, name)
-            if kid < 0:
-                continue
-            qp = torch.tensor(
-                self.mjm.key_qpos[kid].copy(),
-                device=self.device, dtype=torch.float32,
-            )
-            qv = torch.tensor(
-                self.mjm.key_qvel[kid].copy(),
-                device=self.device, dtype=torch.float32,
-            )
-            self.keyframe_qpos[name] = qp
-            self.keyframe_qvel[name] = qv
-
-        # Default: stand keyframe broadcast to all envs
-        self.start_qpos = self.keyframe_qpos['stand'].unsqueeze(0).expand(
-            self.num_envs, -1,
-        ).clone()
-        self.start_qvel = self.keyframe_qvel['stand'].unsqueeze(0).expand(
-            self.num_envs, -1,
-        ).clone()
+        The task builder aligns the standing heading and clears the floor by a
+        rigid root transform, preserving official internal reference positions.
+        """
+        kid = mujoco.mj_name2id(self.mjm, mujoco.mjtObj.mjOBJ_KEY, 'stand')
+        qpos = self.mjm.key_qpos[kid] if kid >= 0 else self.mjm.qpos0
+        qvel = self.mjm.key_qvel[kid] if kid >= 0 else np.zeros(self.mjm.nv)
+        self.start_qpos = torch.tensor(qpos.copy(), device=self.device, dtype=torch.float32)[None].repeat(self.num_envs, 1)
+        self.start_qvel = torch.tensor(qvel.copy(), device=self.device, dtype=torch.float32)[None].repeat(self.num_envs, 1)
 
     # ------------------------------------------------------------------
     # Observation helpers
     # ------------------------------------------------------------------
 
     def _init_pelvis_kinematics(self):
-        """Cache the compiled root body's rotation and ordered hinge definition."""
+        """Cache compiled transforms for the explicitly selected root topology."""
         self.pelvis_body_id = mujoco.mj_name2id(
             self.mjm, mujoco.mjtObj.mjOBJ_BODY, 'pelvis',
         )
         bid = self.pelvis_body_id
-        if bid < 0 or self.mjm.body_parentid[bid] != 0:
-            raise ValueError('MyoLeg26 observations require pelvis to be a child of world')
-        start = int(self.mjm.body_jntadr[bid])
-        joints = np.arange(start, start + int(self.mjm.body_jntnum[bid]))
-        expected = [mujoco.mjtJoint.mjJNT_SLIDE] * 3 + [mujoco.mjtJoint.mjJNT_HINGE] * 3
-        if not np.array_equal(self.mjm.jnt_type[joints], expected):
-            raise ValueError('MyoLeg26 observations require three pelvis slides followed by three hinges')
-        hinges = joints[3:]
-        self._pelvis_hinge_qpos = tuple(int(i) for i in self.mjm.jnt_qposadr[hinges])
-        # Keep the model's precision; conversion in _compute_pelvis_xquat follows
-        # the state dtype (float32 in training, float64 for native-MuJoCo checks).
-        self._pelvis_base_quat = torch.tensor(self.mjm.body_quat[bid].copy(), device=self.device)
-        self._pelvis_hinge_axes = torch.tensor(self.mjm.jnt_axis[hinges].copy(), device=self.device)
-        self._pelvis_hinge_refs = torch.tensor(
-            self.mjm.qpos0[list(self._pelvis_hinge_qpos)].copy(), device=self.device,
-        )
-        # Anatomical axes in the pelvis's local frame. Its fixed base rotation
-        # maps local +Y (up) onto world +Z; local +X is forward.
+        if bid < 0:
+            raise ValueError('MyoLeg26 requires a body named pelvis')
+
+        def tensor(array):
+            return torch.tensor(np.asarray(array).copy(), device=self.device)
+
+        if self.model_contract == 'official':
+            root = mujoco.mj_name2id(self.mjm, mujoco.mjtObj.mjOBJ_BODY, 'Full Body')
+            if root < 0 or self.mjm.body_parentid[root] != 0:
+                raise ValueError('Official MyoLeg26 requires a world-child body named Full Body')
+            j = int(self.mjm.body_jntadr[root])
+            if (self.mjm.body_jntnum[root] != 1 or self.mjm.jnt_type[j] != mujoco.mjtJoint.mjJNT_FREE
+                    or self.mjm.jnt_qposadr[j] != 0 or self.mjm.jnt_dofadr[j] != 0):
+                raise ValueError('Official MyoLeg26 requires the first joint to be the Full Body free root')
+            path = []
+            child = bid
+            while child != root and child > 0:
+                if self.mjm.body_jntnum[child] != 0:
+                    raise ValueError('Official MyoLeg26 pelvis must be rigidly attached to the free root')
+                path.append(child)
+                child = int(self.mjm.body_parentid[child])
+            if child != root:
+                raise ValueError('Official MyoLeg26 pelvis must descend from Full Body')
+            offset = torch.zeros((1, 3), dtype=torch.float64, device=self.device)
+            rotation = torch.tensor([[1.0, 0.0, 0.0, 0.0]], dtype=torch.float64, device=self.device)
+            for child in reversed(path):
+                offset = offset + tu.quat_rotate(rotation, tensor(self.mjm.body_pos[child])[None])
+                rotation = tu.quat_mul(rotation, tensor(self.mjm.body_quat[child])[None])
+            self._pelvis_fixed_pos = offset
+            self._pelvis_fixed_quat = rotation
+        else:
+            if self.mjm.body_parentid[bid] != 0:
+                raise ValueError('Legacy MyoLeg26 requires pelvis to be a child of world')
+            start = int(self.mjm.body_jntadr[bid])
+            joints = np.arange(start, start + int(self.mjm.body_jntnum[bid]))
+            expected = [mujoco.mjtJoint.mjJNT_SLIDE] * 3 + [mujoco.mjtJoint.mjJNT_HINGE] * 3
+            if (not np.array_equal(self.mjm.jnt_type[joints], expected)
+                    or not np.array_equal(self.mjm.jnt_qposadr[joints], np.arange(6))
+                    or not np.array_equal(self.mjm.jnt_dofadr[joints], np.arange(6))):
+                raise ValueError('Legacy MyoLeg26 requires three pelvis slides followed by three hinges first')
+            self._pelvis_base_pos = tensor(self.mjm.body_pos[bid])
+            self._pelvis_base_quat = tensor(self.mjm.body_quat[bid])
+            self._pelvis_joint_axes = tensor(self.mjm.jnt_axis[joints])
+            self._pelvis_joint_pos = tensor(self.mjm.jnt_pos[joints])
+            self._pelvis_joint_refs = tensor(self.mjm.qpos0[:6])
+        self.root_qpos_size = 7 if self.model_contract == 'official' else 6
+        self.n_joint_q = self.mjm.nq - self.root_qpos_size
+        self.n_joint_v = self.mjm.nv - 6
+        # Anatomical local +Y is up; local +X is forward in both model contracts.
         self.up_vec = torch.tensor(
             [0.0, 1.0, 0.0], device=self.device, dtype=torch.float32,
         ).unsqueeze(0).expand(self.num_envs, -1)
@@ -156,48 +179,78 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         ).unsqueeze(0).expand(self.num_envs, -1)
 
     def _compute_pelvis_xquat(self, qpos):
-        """World quaternion [w, x, y, z] at the supplied state, without simulator reads.
+        """World quaternion [w, x, y, z] from the supplied state only."""
+        return self._compute_pelvis_state(qpos, qpos.new_zeros((qpos.shape[0], self.mjm.nv)))[1]
 
-        MuJoCo composes same-body hinge rotations in model order, each around
-        its local axis, after the fixed body quaternion. Angles are relative
-        to qpos0; these are not interchangeable with a generic Euler convention.
-        """
-        quat = self._pelvis_base_quat.to(qpos).expand(qpos.shape[0], -1)
-        axes = self._pelvis_hinge_axes.to(qpos)
-        refs = self._pelvis_hinge_refs.to(qpos)
-        for i, adr in enumerate(self._pelvis_hinge_qpos):
-            rotation = tu.quat_from_angle_axis(
-                qpos[:, adr] - refs[i], axes[i].expand(qpos.shape[0], -1),
-            )
-            quat = tu.quat_mul(quat, rotation)
-        return quat
+    def _compute_pelvis_position(self, qpos):
+        """World pelvis origin from the supplied state only."""
+        return self._compute_pelvis_state(qpos, qpos.new_zeros((qpos.shape[0], self.mjm.nv)))[0]
 
     @staticmethod
-    def _compute_obs(qpos, qvel, act, pelvis_xquat, actions, up_vec, heading_vec,
-                     n_joint_q, n_joint_v):
+    def _normalize_root_quat(quat):
+        norm = quat.norm(dim=-1, keepdim=True)
+        identity = torch.zeros_like(quat)
+        identity[:, 0] = 1.0
+        return torch.where(norm > 1e-12, quat / norm.clamp_min(1e-12), identity)
+
+    def _compute_pelvis_state(self, qpos, qvel):
+        """Return pelvis position, quaternion, linear and angular world velocities.
+
+        MuJoCo free-joint translational velocity is world-frame, but angular
+        velocity is in the free body's local frame. A fixed descendant's origin
+        adds omega cross its rotated offset to the root translational velocity.
+        """
+        n = qpos.shape[0]
+        if self.model_contract == 'official':
+            root_quat = self._normalize_root_quat(qpos[:, 3:7])
+            offset = tu.quat_rotate(root_quat, self._pelvis_fixed_pos.to(qpos).expand(n, -1))
+            quat = tu.quat_mul(root_quat, self._pelvis_fixed_quat.to(qpos).expand(n, -1))
+            angular = tu.quat_rotate(root_quat, qvel[:, 3:6])
+            linear = qvel[:, :3] + torch.cross(angular, offset, dim=-1)
+            return qpos[:, :3] + offset, quat, linear, angular
+
+        pos = self._pelvis_base_pos.to(qpos).expand(n, -1)
+        quat = self._pelvis_base_quat.to(qpos).expand(n, -1)
+        linear, angular = torch.zeros_like(pos), torch.zeros_like(pos)
+        axes = self._pelvis_joint_axes.to(qpos)
+        anchors = self._pelvis_joint_pos.to(qpos)
+        refs = self._pelvis_joint_refs.to(qpos)
+        for j in range(6):
+            axis = tu.quat_rotate(quat, axes[j].expand(n, -1))
+            angle = qpos[:, j] - refs[j]
+            if j < 3:
+                shift = axis * angle[:, None]
+                pos = pos + shift
+                linear = linear + axis * qvel[:, j:j + 1] + torch.cross(angular, shift, dim=-1)
+            else:
+                old_arm = tu.quat_rotate(quat, anchors[j].expand(n, -1))
+                anchor_pos = pos + old_arm
+                anchor_velocity = linear + torch.cross(angular, old_arm, dim=-1)
+                quat = tu.quat_mul(quat, tu.quat_from_angle_axis(angle, axes[j].expand(n, -1)))
+                angular = angular + axis * qvel[:, j:j + 1]
+                new_arm = tu.quat_rotate(quat, anchors[j].expand(n, -1))
+                pos = anchor_pos - new_arm
+                linear = anchor_velocity - torch.cross(angular, new_arm, dim=-1)
+        return pos, quat, linear, angular
+
+    @staticmethod
+    def _compute_obs(qpos, qvel, act, pelvis_position, pelvis_xquat, linear_velocity,
+                     angular_velocity, actions, up_vec, heading_vec, root_qpos_size):
         """Compute observation from state tensors.
 
         Differentiable in qpos, qvel, act, pelvis_xquat, and actions.
 
-        Observation layout (nq + nv + na + nu + 1 values):
+        Observation layout (145 values for the official model, 173 for legacy):
           height(1) + xquat(4) + lin_vel(3) + ang_vel(3)
-          + joint_q(nq-6) + joint_v(nv-6)*0.1 + act(na)
+          + joint_q(nq-root_qpos_size) + joint_v(nv-6)*0.1 + act(na)
           + up_z(1) + heading(1) + actions(nu)
 
         Activation is distinct from the previous action: it determines the
         current muscle force after the excitation command has changed.
         """
-        # Pelvis DOFs: qpos[0:6] = [tx, ty, tz, tilt, list, rotation]
-        # Due to body quat (90deg x-rotation): ty maps to world Z (height)
-        height = qpos[:, 1:2]
-
-        # Pelvis velocities
-        lin_vel = qvel[:, 0:3]
-        ang_vel = qvel[:, 3:6]
-
-        # All joint positions/velocities beyond pelvis
-        joint_q = qpos[:, 6:6 + n_joint_q]
-        joint_v = qvel[:, 6:6 + n_joint_v]
+        height = pelvis_position[:, 2:3]
+        joint_q = qpos[:, root_qpos_size:]
+        joint_v = qvel[:, 6:]
 
         # Orientation-derived features from xquat
         up_proj = tu.quat_rotate(pelvis_xquat, up_vec)
@@ -209,8 +262,8 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         obs = torch.cat([
             height,               # 1
             pelvis_xquat,         # 4
-            lin_vel,              # 3
-            ang_vel,              # 3
+            linear_velocity,      # 3, world frame at pelvis origin
+            angular_velocity,     # 3, world frame
             joint_q,              # n_joint_q
             joint_v * 0.1,        # n_joint_v (scaled)
             act,                  # na
@@ -228,7 +281,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
                  + 0.5*(height - 0.6) - 0.005*energy
         """
         height = obs[:, 0]
-        # lin_vel starts at obs index 5; lin_vel[0] = pelvis_tx_dot = forward vel
+        # World-frame pelvis forward velocity starts at obs index 5.
         forward_vel = obs[:, 5]
         # up_z and heading are at fixed offsets from the end
         # up_z = obs[:, -(nu+2)], heading = obs[:, -(nu+1)]
@@ -263,11 +316,13 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             raise ValueError('MyoLeg26 observations require explicit muscle activation state (act)')
         if act.shape != (qpos.shape[0], self.mjm.na):
             raise ValueError(f'Expected act shape {(qpos.shape[0], self.mjm.na)}, got {tuple(act.shape)}')
-        pelvis_xquat = self._compute_pelvis_xquat(qpos)
+        return self._obs_from_state(qpos, qvel, act, self.actions)
+
+    def _obs_from_state(self, qpos, qvel, act, actions):
+        position, quat, linear, angular = self._compute_pelvis_state(qpos, qvel)
         return self._compute_obs(
-            qpos, qvel, act, pelvis_xquat, self.actions,
-            self.up_vec, self.heading_vec,
-            self.n_joint_q, self.n_joint_v,
+            qpos, qvel, act, position, quat, linear, angular, actions,
+            self.up_vec, self.heading_vec, self.root_qpos_size,
         )
 
     # ------------------------------------------------------------------
@@ -303,13 +358,9 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             qpos = wp.to_torch(self.warp_data.qpos)
             qvel = wp.to_torch(self.warp_data.qvel)
             act = wp.to_torch(self.warp_data.act)
-            pelvis_xquat = self._compute_pelvis_xquat(qpos)
-            self.obs_buf = self._compute_obs(
-                qpos, qvel, act, pelvis_xquat, actions,
-                self.up_vec, self.heading_vec,
-                self.n_joint_q, self.n_joint_v,
-            )
+            self.obs_buf = self._obs_from_state(qpos, qvel, act, actions)
             self.rew_buf = self._compute_reward(self.obs_buf, actions)
+            pelvis_position = self._compute_pelvis_state(qpos, qvel)[0]
             qpos_out, qvel_out, act_out = None, None, None
         else:
             qpos_in, qvel_in, act_in = self._state_inputs(qpos_in, qvel_in, act_in)
@@ -328,49 +379,38 @@ class MyoLeg26WalkEnv(MjWarpEnv):
 
             # Derived Warp kinematics still describe the last substep's input.
             # Compute orientation from the returned post-integration state.
-            pelvis_xquat = self._compute_pelvis_xquat(qpos_out)
-
-            self.obs_buf = self._compute_obs(
-                qpos_out, qvel_out, act_out, pelvis_xquat, actions,
-                self.up_vec, self.heading_vec,
-                self.n_joint_q, self.n_joint_v,
-            )
+            self.obs_buf = self._obs_from_state(qpos_out, qvel_out, act_out, actions)
             self.rew_buf = self._compute_reward(self.obs_buf, actions)
+            pelvis_position = self._compute_pelvis_state(qpos_out, qvel_out)[0]
 
-        self.reset_buf = torch.zeros_like(self.reset_buf)
         self.progress_buf += 1
-
-        # Early termination: pelvis height below threshold
-        if self.early_termination:
-            self.termination_buf = torch.where(
-                self.obs_buf[:, 0] < self.termination_height,
-                torch.ones_like(self.termination_buf),
-                torch.zeros_like(self.termination_buf),
-            )
-            self.reset_buf = torch.where(
-                self.termination_buf > 0,
-                torch.ones_like(self.reset_buf),
-                self.reset_buf,
-            )
-
-        # Save obs before reset for critic bootstrap
-        if not self.no_grad:
-            self.obs_buf_before_reset = self.obs_buf.clone()
-            self.extras = {
-                'obs_before_reset': self.obs_buf_before_reset,
-                'episode_end': self.termination_buf,
-            }
-
-        # Episode length termination
-        self.reset_buf = torch.where(
-            self.progress_buf >= self.episode_length,
-            torch.ones_like(self.reset_buf),
-            self.reset_buf,
-        )
+        height_failure = self.obs_buf[:, 0] < self.termination_height
+        terminated = (height_failure if self.early_termination
+                      else torch.zeros_like(self.progress_buf, dtype=torch.bool))
+        truncated = (self.progress_buf >= self.episode_length) & ~terminated
+        self.termination_buf = terminated.long()
+        self.reset_buf = (terminated | truncated).long()
+        self.obs_buf_before_reset = self.obs_buf.clone()
+        self.extras = {
+            'obs_before_reset': self.obs_buf_before_reset,
+            'pelvis_position_before_reset': pelvis_position.clone(),
+            'episode_end': self.termination_buf.clone(),
+            'terminated': terminated,
+            'truncated': truncated,
+            'failure_flags': {'height': height_failure},
+        }
 
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
             self._reset_warp_state(env_ids)
+            with torch.no_grad():
+                reset_obs = self.compute_obs(
+                    wp.to_torch(self.warp_data.qpos), wp.to_torch(self.warp_data.qvel),
+                    wp.to_torch(self.warp_data.act),
+                )
+            # The policy sees a reset state immediately; terminal observations
+            # and bridge outputs remain available for reward/bootstrap/BPTT.
+            self.obs_buf = torch.where(self.reset_buf[:, None].bool(), reset_obs, self.obs_buf)
 
         return self.obs_buf, self.rew_buf, self.reset_buf, self.extras, qpos_out, qvel_out, act_out
 
@@ -379,7 +419,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
     # ------------------------------------------------------------------
 
     def _reset_warp_state(self, env_ids):
-        """Reset Warp state for specified environments (no gradient)."""
+        """Reset complete integration state without perturbing dependent joints."""
         with torch.no_grad():
             qpos_torch = wp.to_torch(self.warp_data.qpos)
             qvel_torch = wp.to_torch(self.warp_data.qvel)
@@ -387,40 +427,28 @@ class MyoLeg26WalkEnv(MjWarpEnv):
 
             n = len(env_ids)
 
-            if self.stochastic_init and 'walk_left' in self.keyframe_qpos:
-                # Randomly choose walk_left or walk_right keyframe per env
-                choices = torch.randint(0, 2, (n,), device=self.device)
-                kf_names = ['walk_left', 'walk_right']
-                for i in range(n):
-                    eid = env_ids[i]
-                    kf = kf_names[choices[i].item()]
-                    qpos_torch[eid, :] = self.keyframe_qpos[kf].clone()
-                    qvel_torch[eid, :] = self.keyframe_qvel[kf].clone()
+            qpos_torch[env_ids, :] = self.start_qpos[env_ids, :].to(qpos_torch)
+            qvel_torch[env_ids, :] = self.start_qvel[env_ids, :].to(qvel_torch)
+            if self.stochastic_init:
+                # Only root coordinates are independently perturbed. Internal
+                # coordinates include joints constrained by tendon/via equalities.
+                qpos_torch[env_ids, 0] += 0.1 * (torch.rand(n, device=self.device) - 0.5)
+                height_index = 2 if self.model_contract == 'official' else 1
+                qpos_torch[env_ids, height_index] += 0.02 * torch.rand(n, device=self.device)
+                qvel_torch[env_ids, :6] += 0.1 * (torch.rand(n, 6, device=self.device) - 0.5)
+                if self.model_contract == 'official':
+                    yaw = 0.1 * (torch.rand(n, device=self.device) - 0.5)
+                    axis = qpos_torch.new_tensor([0.0, 0.0, 1.0]).expand(n, -1)
+                    rotation = tu.quat_from_angle_axis(yaw, axis)
+                    qpos_torch[env_ids, 3:7] = tu.quat_mul(rotation, qpos_torch[env_ids, 3:7])
+            if self.model_contract == 'official':
+                qpos_torch[env_ids, 3:7] = self._normalize_root_quat(qpos_torch[env_ids, 3:7])
 
-                # Small noise on joint angles (indices 6:nq)
-                qpos_torch[env_ids, 6:self.nq] += 0.02 * (
-                    torch.rand(n, self.nq - 6, device=self.device) - 0.5
-                ) * 2.0
-
-                # Small perturbation on pelvis position
-                qpos_torch[env_ids, 0] += 0.05 * (
-                    torch.rand(n, device=self.device) - 0.5
-                ) * 2.0   # forward
-                qpos_torch[env_ids, 1] += 0.02 * (
-                    torch.rand(n, device=self.device) - 0.5
-                ) * 2.0   # height
-
-                # Small random pelvis velocities
-                qvel_torch[env_ids, :6] = 0.1 * (
-                    torch.rand(n, 6, device=self.device) - 0.5
-                )
-            else:
-                qpos_torch[env_ids, :] = self.start_qpos[env_ids, :].clone()
-                qvel_torch[env_ids, :] = self.start_qvel[env_ids, :].clone()
-
-            # Reset muscle activations and stored actions
             act_torch[env_ids, :] = 0.0
-            self.actions[env_ids, :] = 0.0
+            wp.to_torch(self.warp_data.ctrl)[env_ids, :] = 0.0
+            wp.to_torch(self.warp_data.qacc_warmstart)[env_ids, :] = 0.0
+            wp.to_torch(self.warp_data.time)[env_ids] = 0.0
+            self.actions[env_ids, :] = -1.0  # signed action for zero excitation
 
         self.progress_buf[env_ids] = 0
 
@@ -431,6 +459,8 @@ class MyoLeg26WalkEnv(MjWarpEnv):
 
         if env_ids is not None:
             self._reset_warp_state(env_ids)
+            self.reset_buf[env_ids] = 0
+            self.termination_buf[env_ids] = 0
 
             with torch.no_grad():
                 qpos_view = wp.to_torch(self.warp_data.qpos)
