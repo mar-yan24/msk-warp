@@ -7,7 +7,7 @@ spatial tendons.  Based on the OpenSim Gait2392 reduced model (14 DOF,
 Key differences from AntEnv:
   - Pelvis uses 3 slide + 3 hinge joints (NOT a free joint), so nq == nv.
   - Muscle actuators with dyntype/gaintype/biastype = "muscle".
-  - Orientation obtained from warp_data.xquat (body world quaternion).
+  - Pelvis orientation computed differentiably from the three hinge coordinates.
   - Action space maps tanh[-1,1] -> muscle activation [0,1].
 """
 
@@ -82,18 +82,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         self.n_joint_q = self.nq - 6
         self.n_joint_v = self.nv - 6
 
-        # Pelvis body ID for reading xquat
-        self.pelvis_body_id = mujoco.mj_name2id(
-            self.mjm, mujoco.mjtObj.mjOBJ_BODY, 'pelvis',
-        )
-
-        # Basis vectors (z-up world frame)
-        self.up_vec = torch.tensor(
-            [0.0, 0.0, 1.0], device=device, dtype=torch.float32,
-        ).unsqueeze(0).expand(num_envs, -1)
-        self.heading_vec = torch.tensor(
-            [1.0, 0.0, 0.0], device=device, dtype=torch.float32,
-        ).unsqueeze(0).expand(num_envs, -1)
+        self._init_pelvis_kinematics()
 
         self._save_start_state()
         self.reset()
@@ -132,19 +121,60 @@ class MyoLeg26WalkEnv(MjWarpEnv):
     # Observation helpers
     # ------------------------------------------------------------------
 
-    def _get_pelvis_xquat(self):
-        """Read pelvis world-frame quaternion from warp_data (non-differentiable)."""
-        xquat_all = wp.to_torch(self.warp_data.xquat)
-        # xquat shape: (nworld, nbody, 4)  -- [w, x, y, z]
-        return xquat_all[:, self.pelvis_body_id, :].clone()
+    def _init_pelvis_kinematics(self):
+        """Cache the compiled root body's rotation and ordered hinge definition."""
+        self.pelvis_body_id = mujoco.mj_name2id(
+            self.mjm, mujoco.mjtObj.mjOBJ_BODY, 'pelvis',
+        )
+        bid = self.pelvis_body_id
+        if bid < 0 or self.mjm.body_parentid[bid] != 0:
+            raise ValueError('MyoLeg26 observations require pelvis to be a child of world')
+        start = int(self.mjm.body_jntadr[bid])
+        joints = np.arange(start, start + int(self.mjm.body_jntnum[bid]))
+        expected = [mujoco.mjtJoint.mjJNT_SLIDE] * 3 + [mujoco.mjtJoint.mjJNT_HINGE] * 3
+        if not np.array_equal(self.mjm.jnt_type[joints], expected):
+            raise ValueError('MyoLeg26 observations require three pelvis slides followed by three hinges')
+        hinges = joints[3:]
+        self._pelvis_hinge_qpos = tuple(int(i) for i in self.mjm.jnt_qposadr[hinges])
+        # Keep the model's precision; conversion in _compute_pelvis_xquat follows
+        # the state dtype (float32 in training, float64 for native-MuJoCo checks).
+        self._pelvis_base_quat = torch.tensor(self.mjm.body_quat[bid].copy(), device=self.device)
+        self._pelvis_hinge_axes = torch.tensor(self.mjm.jnt_axis[hinges].copy(), device=self.device)
+        self._pelvis_hinge_refs = torch.tensor(
+            self.mjm.qpos0[list(self._pelvis_hinge_qpos)].copy(), device=self.device,
+        )
+        # Anatomical axes in the pelvis's local frame. Its fixed base rotation
+        # maps local +Y (up) onto world +Z; local +X is forward.
+        self.up_vec = torch.tensor(
+            [0.0, 1.0, 0.0], device=self.device, dtype=torch.float32,
+        ).unsqueeze(0).expand(self.num_envs, -1)
+        self.heading_vec = torch.tensor(
+            [1.0, 0.0, 0.0], device=self.device, dtype=torch.float32,
+        ).unsqueeze(0).expand(self.num_envs, -1)
+
+    def _compute_pelvis_xquat(self, qpos):
+        """World quaternion [w, x, y, z] at the supplied state, without simulator reads.
+
+        MuJoCo composes same-body hinge rotations in model order, each around
+        its local axis, after the fixed body quaternion. Angles are relative
+        to qpos0; these are not interchangeable with a generic Euler convention.
+        """
+        quat = self._pelvis_base_quat.to(qpos).expand(qpos.shape[0], -1)
+        axes = self._pelvis_hinge_axes.to(qpos)
+        refs = self._pelvis_hinge_refs.to(qpos)
+        for i, adr in enumerate(self._pelvis_hinge_qpos):
+            rotation = tu.quat_from_angle_axis(
+                qpos[:, adr] - refs[i], axes[i].expand(qpos.shape[0], -1),
+            )
+            quat = tu.quat_mul(quat, rotation)
+        return quat
 
     @staticmethod
     def _compute_obs(qpos, qvel, pelvis_xquat, actions, up_vec, heading_vec,
                      n_joint_q, n_joint_v):
         """Compute observation from state tensors.
 
-        Differentiable in qpos, qvel, and actions.
-        pelvis_xquat is non-differentiable (from warp_data.xquat).
+        Differentiable in qpos, qvel, pelvis_xquat, and actions.
 
         Observation layout (147D for the default model):
           height(1) + xquat(4) + lin_vel(3) + ang_vel(3)
@@ -216,17 +246,8 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         return reward
 
     def compute_obs(self, qpos, qvel, act=None):
-        """Instance method wrapper for SHAC compatibility.
-
-        Writes state to warp_data and runs fwd_position to update xquat,
-        then reads the pelvis body quaternion.
-        """
-        wp.copy(self.warp_data.qpos, wp.from_torch(qpos.detach().contiguous()))
-        wp.copy(self.warp_data.qvel, wp.from_torch(qvel.detach().contiguous()))
-        mjw.fwd_position(self.warp_model, self.warp_data)
-        wp.synchronize()
-
-        pelvis_xquat = self._get_pelvis_xquat()
+        """Pure observation computation from the supplied tracked state."""
+        pelvis_xquat = self._compute_pelvis_xquat(qpos)
         return self._compute_obs(
             qpos, qvel, pelvis_xquat, self.actions,
             self.up_vec, self.heading_vec,
@@ -265,7 +286,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
 
             qpos = wp.to_torch(self.warp_data.qpos)
             qvel = wp.to_torch(self.warp_data.qvel)
-            pelvis_xquat = self._get_pelvis_xquat()
+            pelvis_xquat = self._compute_pelvis_xquat(qpos)
             self.obs_buf = self._compute_obs(
                 qpos, qvel, pelvis_xquat, actions,
                 self.up_vec, self.heading_vec,
@@ -288,9 +309,9 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             if qvel_out.requires_grad:
                 qvel_out.register_hook(lambda g: torch.nan_to_num(g, 0.0, 0.0, 0.0))
 
-            # Read pelvis xquat after step (warp_data updated by WarpSimStep)
-            wp.synchronize()
-            pelvis_xquat = self._get_pelvis_xquat()
+            # Derived Warp kinematics still describe the last substep's input.
+            # Compute orientation from the returned post-integration state.
+            pelvis_xquat = self._compute_pelvis_xquat(qpos_out)
 
             self.obs_buf = self._compute_obs(
                 qpos_out, qvel_out, pelvis_xquat, actions,
@@ -398,16 +419,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
                 qpos_view = wp.to_torch(self.warp_data.qpos)
                 qvel_view = wp.to_torch(self.warp_data.qvel)
 
-                # Run kinematics to update xquat after reset
-                mjw.fwd_position(self.warp_model, self.warp_data)
-                wp.synchronize()
-                pelvis_xquat = self._get_pelvis_xquat()
-
-                self.obs_buf = self._compute_obs(
-                    qpos_view, qvel_view, pelvis_xquat, self.actions,
-                    self.up_vec, self.heading_vec,
-                    self.n_joint_q, self.n_joint_v,
-                )
+                self.obs_buf = self.compute_obs(qpos_view, qvel_view)
 
         return self.obs_buf
 
@@ -417,15 +429,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         qpos = wp.to_torch(self.warp_data.qpos)
         qvel = wp.to_torch(self.warp_data.qvel)
 
-        mjw.fwd_position(self.warp_model, self.warp_data)
-        wp.synchronize()
-        pelvis_xquat = self._get_pelvis_xquat()
-
-        self.obs_buf = self._compute_obs(
-            qpos, qvel, pelvis_xquat, self.actions,
-            self.up_vec, self.heading_vec,
-            self.n_joint_q, self.n_joint_v,
-        )
+        self.obs_buf = self.compute_obs(qpos, qvel)
 
     def calculateReward(self):
         """Non-differentiable reward computation (unused in diff path)."""
