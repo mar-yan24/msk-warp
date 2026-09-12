@@ -55,7 +55,7 @@ def test_extreme_parameters_stay_strictly_inside_every_joint_range():
 def test_the_track_coordinate_is_never_a_degree_of_freedom():
     """Displacement is measured from wherever the cycle starts, so x must always begin at 0."""
     trajopt = _load_trajopt()
-    qpos, _, _ = trajopt.initial_state(torch.randn(32, 17), 6, "cpu")
+    qpos, _, _ = trajopt.initial_state(torch.randn(32, 11), 6, "cpu")
     assert torch.equal(qpos[:, 0], torch.zeros(32))
 
 
@@ -66,10 +66,27 @@ def test_a_motor_model_gets_an_empty_activation_vector():
 
 
 def test_the_parameterisation_is_differentiable():
+    """All eleven free parameters must carry signal -- and there are now eleven, not seventeen.
+
+    The initial activation left the parameter vector because it is determined by the control rather
+    than chosen (``docs/VALIDITY.md`` CL-02), so this used to pass a width of 17 and assert that all
+    seventeen columns received gradient. Six of them no longer exist.
+    """
     trajopt = _load_trajopt()
-    z = torch.randn(5, 17, requires_grad=True)
+    z = torch.randn(5, 11, requires_grad=True)
     qpos, qvel, act = trajopt.initial_state(z, 6, "cpu")
     (qpos.sum() + qvel.sum() + act.sum()).backward()
     assert z.grad is not None and torch.isfinite(z.grad).all()
     # x is constant, so column 0 of qpos contributes nothing; every free parameter still gets signal
     assert (z.grad.abs() > 0).all()
+
+
+def test_activation_is_constant_and_carries_no_gradient():
+    """The other half of CL-02: activation must not depend on the parameter vector at all."""
+    trajopt = _load_trajopt()
+    z = torch.randn(4, 11, requires_grad=True)
+    _, _, act = trajopt.initial_state(z, 6, "cpu")
+    assert torch.allclose(act, torch.full_like(act, 0.5))
+    # Stronger than "the gradient is zero": activation is not on the graph at all, so it has no
+    # grad_fn and backward() through it raises. That is the property CL-02 asks for.
+    assert act.grad_fn is None and not act.requires_grad

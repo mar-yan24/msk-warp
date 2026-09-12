@@ -66,6 +66,11 @@ QVEL_BOUND = (2.0, 2.0, 3.0, 5.0, 5.0, 5.0)
 
 TERMINATION_HEIGHT = -0.45
 
+#: Cycles run before the scored one, so activation reaches the limit cycle its own control
+#: implies. One suffices: the measured end-of-cycle activation gap falls 1.3e-06 after one
+#: cycle and 8.4e-12 after two. See `rollout` and docs/VALIDITY.md CL-02.
+WARMUP_CYCLES = 1
+
 
 def load_cfg(cfg_path):
     if not os.path.isabs(cfg_path) and (PACKAGE_ROOT / cfg_path).exists():
@@ -121,24 +126,22 @@ def initial_state(z, n_act_state, device):
         FOOT_BOUND * torch.tanh(z[:, 4:5]),                     # foot
     ], dim=1)
     qvel = qvel_bound * torch.tanh(z[:, 5:11])
-    act = torch.sigmoid(z[:, 11:11 + n_act_state]) if n_act_state else torch.zeros(z.shape[0], 0, device=device)
+    # Activation is NOT a decision variable. Under a T_c-periodic control the activation subsystem
+    # is autonomous -- MuJoCo's dyntype=muscle computes act_dot from (ctrl, act) alone -- so it has
+    # a unique globally attracting periodic solution act*, determined by the control (VALIDITY
+    # CL-02). The six sigmoid(z[:, 11:17]) parameters this used to carry were therefore redundant
+    # *and* inconsistent with periodicity, and the optimiser spent them: the celebrated per-muscle
+    # "activation closing errors" [0.166, 0.427, 0.858, 0.886, 0.369, 0.212] of the T_c 16 candidate
+    # are exactly |act_0 - act*|, a mis-specified initial condition rather than a trajectory that
+    # fails to close. Start neutral and let the warm-up cycles in `rollout` carry activation onto
+    # act* by themselves, which is exact because it uses the engine rather than a reimplementation.
+    act = torch.full((z.shape[0], n_act_state), 0.5, device=device) if n_act_state \
+        else torch.zeros(z.shape[0], 0, device=device)
     return qpos, qvel, act
 
 
-def rollout(env, u_logits, z, scales, cycle, n_act_state, device):
-    """One cycle from the parameterised initial state. Returns the objective's three terms.
-
-    Kept differentiable end to end: the adjoint runs from the objective back through every substep
-    of every control step to both the control sequence and the initial state.
-    """
-    qpos, qvel, act = initial_state(z, n_act_state, device)
-    start_x = qpos[:, 0]
-    # Mechanical state only: activation is excluded so the motor and muscle models are scored
-    # on one literal 11-component ruler (protocol amendment 1). Activation closure is enforced
-    # by the open-loop verification instead, which diverges if act does not return.
-    start_shape = shape_vector(qpos, qvel)
-
-    violation = torch.zeros(qpos.shape[0], device=device)
+def _cycle(env, u_logits, qpos, qvel, act, cycle, violation):
+    """One replay of the periodic control. Shared by the warm-up and the scored cycle."""
     for t in range(cycle):
         ctrl = env._to_ctrl(torch.tanh(u_logits[:, t]))
         qpos, qvel, act = WarpSimStep.apply(ctrl, qpos, qvel, act, env)
@@ -146,11 +149,42 @@ def rollout(env, u_logits, z, scales, cycle, n_act_state, device):
         qpos = qpos.clamp(-100.0, 100.0)
         qvel = qvel.clamp(-100.0, 100.0)
         violation = violation + torch.relu(TERMINATION_HEIGHT - qpos[:, 1])
+    return qpos, qvel, act, violation
+
+
+def rollout(env, u_logits, z, scales, cycle, n_act_state, device, warmup=WARMUP_CYCLES):
+    """Warm-up cycles, then one scored cycle. Returns the objective's three terms.
+
+    Kept differentiable end to end: the adjoint runs from the objective back through every substep
+    of every control step to both the control sequence and the initial state.
+
+    **The warm-up is what makes the residual mean what it says.** Activation is determined by the
+    control, not chosen (VALIDITY CL-02), and it converges onto its limit cycle geometrically -- the
+    measured end-of-cycle gap falls 1.3e-06, 8.4e-12, 4.2e-17 over three cycles. So after one
+    warm-up cycle the scored cycle *starts* on the activation manifold and therefore *ends* there
+    too, and activation closure is automatic rather than something the residual has to police.
+
+    That retires protocol amendment 1 instead of patching it. Amendment 1 excluded activation from
+    the residual and leaned on open-loop verification to catch non-closure; verification was later
+    cut from 10 cycles to 3 and the gap was never checked (VALIDITY IN-05). Putting activation back
+    in is not the fix either, because no activation scale is principled and the choice flips the
+    verdict by a factor of 26 (CL-01). Making closure structural removes the question.
+    """
+    qpos, qvel, act = initial_state(z, n_act_state, device)
+    violation = torch.zeros(qpos.shape[0], device=device)
+    for _ in range(warmup):
+        qpos, qvel, act, violation = _cycle(env, u_logits, qpos, qvel, act, cycle, violation)
+
+    start_x = qpos[:, 0]
+    # Mechanical state only -- and after the warm-up that IS the full state, because activation is
+    # on its own periodic solution and closes by construction.
+    start_shape = shape_vector(qpos, qvel)
+    qpos, qvel, act, violation = _cycle(env, u_logits, qpos, qvel, act, cycle, violation)
 
     dt = env.substeps * float(env.mjm.opt.timestep)
     velocity = (qpos[:, 0] - start_x) / (cycle * dt)
     residual = periodicity_residual(shape_vector(qpos, qvel), start_shape, scales)
-    return velocity, residual, violation / cycle
+    return velocity, residual, violation / ((warmup + 1) * cycle)
 
 
 @torch.no_grad()
@@ -160,6 +194,11 @@ def verify(env, u_logits, z, scales, cycle, n_act_state, device, cycles):
     An optimum is not yet a gait. This is the check the Phase 3 open-loop sweep lacked.
     """
     qpos, qvel, act = initial_state(z, n_act_state, device)
+    # Warm up exactly as `rollout` does, so verification starts on the same trajectory the residual
+    # was scored on. Without this the two would disagree about which cycle is the candidate.
+    violation = torch.zeros(qpos.shape[0], device=device)
+    for _ in range(WARMUP_CYCLES):
+        qpos, qvel, act, violation = _cycle(env, u_logits, qpos, qvel, act, cycle, violation)
     start_x = qpos[:, 0].clone()
     alive = torch.ones(qpos.shape[0], dtype=torch.bool, device=device)
     survived = torch.zeros(qpos.shape[0], device=device)
@@ -287,7 +326,9 @@ def main():
         )
 
     u_logits = torch.randn(args.worlds, args.cycle, env.num_actions, device=args.device, requires_grad=True)
-    z = torch.randn(args.worlds, 11 + n_act_state, device=args.device, requires_grad=True)
+    # 11, not 11 + n_act_state: the initial activation is determined by the control, so it is
+    # no longer a decision variable (VALIDITY CL-02).
+    z = torch.randn(args.worlds, 11, device=args.device, requires_grad=True)
     saved, already_done = None, 0
     if args.resume:
         saved = np.load(args.resume)

@@ -43,8 +43,8 @@ def _params(env, worlds, cycle, n_act_state, seed=0):
     generator = torch.Generator(device="cuda:0").manual_seed(seed)
     u = torch.randn(worlds, cycle, env.num_actions, device="cuda:0", generator=generator,
                     requires_grad=True)
-    z = torch.randn(worlds, 11 + n_act_state, device="cuda:0", generator=generator,
-                    requires_grad=True)
+    # 11 for both models: the initial activation left the parameterisation (VALIDITY CL-02).
+    z = torch.randn(worlds, 11, device="cuda:0", generator=generator, requires_grad=True)
     return u, z
 
 
@@ -65,21 +65,67 @@ def test_objective_gradient_reaches_controls_and_initial_state(kind, n_act_state
         assert grad.abs().max() > 0, f"{name} gradient is identically zero"
 
 
-def test_muscle_activation_parameters_receive_gradient():
-    """``ctrl`` reaches muscle force only through ``act``, so the initial-activation block of the
-    parameter vector must carry signal. A zero there is the silent failure v2 was built to catch."""
+def test_initial_activation_is_not_a_decision_variable():
+    """The replacement for a test that asserted the opposite, and was asserting the wrong thing.
+
+    It used to read: "``ctrl`` reaches muscle force only through ``act``, so the initial-activation
+    block of the parameter vector must carry signal. A zero there is the silent failure v2 was built
+    to catch." The premise is true and the conclusion does not follow. Under a ``T_c``-periodic
+    control the activation subsystem is autonomous -- ``dyntype=muscle`` computes ``act_dot`` from
+    ``(ctrl, act)`` alone -- so it has a unique globally attracting periodic solution ``act*`` fixed
+    by the control. Those six parameters were redundant *and* inconsistent with periodicity, and the
+    optimiser spent them: the ``T_c`` 16 candidate's per-muscle "activation closing errors"
+    ``[0.166, 0.427, 0.858, 0.886, 0.369, 0.212]`` are exactly ``|act_0 - act*|``
+    (``docs/VALIDITY.md`` CL-02).
+
+    So the parameter vector is 11 wide for both models, activation starts neutral, and the warm-up
+    cycle carries it onto ``act*``. ``ctrl`` still reaches force through ``act`` -- that is checked
+    where it belongs, on the control gradient.
+    """
     trajopt = _load_trajopt()
     worlds, cycle, n_act_state = 4, 3, 6
     env = _env("muscle", worlds)
     u, z = _params(env, worlds, cycle, n_act_state)
+    assert z.shape[1] == 11, "activation must not be back in the parameter vector"
+
+    _, _, act = trajopt.initial_state(z, n_act_state, "cuda:0")
+    assert act.shape == (worlds, n_act_state)
+    assert torch.allclose(act, torch.full_like(act, 0.5)), "activation starts neutral"
 
     velocity, residual, _ = trajopt.rollout(env, u, z, torch.ones(11, device="cuda:0"),
                                             cycle, n_act_state, "cuda:0")
     (velocity - residual).sum().backward()
+    assert torch.isfinite(u.grad).all() and u.grad.abs().max() > 0, (
+        "the control must still carry the whole actuation gradient")
 
-    activation_block = z.grad[:, 11:11 + n_act_state]
-    assert torch.isfinite(activation_block).all()
-    assert activation_block.abs().max() > 0, "initial activation received no gradient"
+
+def test_warmup_puts_activation_on_its_limit_cycle():
+    """After the warm-up the scored cycle starts *and ends* on ``act*``, so closure is structural.
+
+    Checked against the independent float64 CPU implementation in
+    :func:`msk_warp.analysis.orbit.activation_limit_cycle`, which integrates the activation ODE
+    alone. Agreement means the warm-up is doing what the residual now assumes.
+    """
+    import numpy as np
+    from msk_warp.analysis.orbit import activation_limit_cycle
+
+    trajopt = _load_trajopt()
+    worlds, cycle, n_act_state = 2, 8, 6
+    env = _env("muscle", worlds)
+    u, z = _params(env, worlds, cycle, n_act_state)
+
+    with torch.no_grad():
+        qpos, qvel, act = trajopt.initial_state(z, n_act_state, "cuda:0")
+        violation = torch.zeros(worlds, device="cuda:0")
+        for _ in range(trajopt.WARMUP_CYCLES):
+            qpos, qvel, act, violation = trajopt._cycle(env, u, qpos, qvel, act, cycle, violation)
+        ctrl = torch.stack([env._to_ctrl(torch.tanh(u[:, t])) for t in range(cycle)], dim=1)
+
+    for w in range(worlds):
+        want, _, _ = activation_limit_cycle(
+            env.mjm, ctrl[w].double().cpu().numpy(), substeps=env.substeps)
+        got = act[w].double().cpu().numpy()
+        assert np.abs(got - want).max() < 5e-3, (w, got, want)
 
 
 @pytest.mark.parametrize("kind,n_act_state", [("motor", 0), ("muscle", 6)])
