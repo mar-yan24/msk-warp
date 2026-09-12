@@ -31,7 +31,7 @@ def test_official_reference_signature_and_vendored_hashes(models):
     assert manifest["source"]["commit"] == PIN and manifest["source"]["clean"]
     assert (reference.nq, reference.nv, reference.nu, reference.na, reference.neq) == (47, 46, 26, 26, 28)
     assert reference.jnt_type[reference.joint("root").id] == mujoco.mjtJoint.mjJNT_FREE
-    assert reference.body_mass.sum() == pytest.approx(78.09046847904195, abs=1e-12)
+    assert reference.body_mass.sum() == pytest.approx(78.09046847904195, abs=1e-12, rel=0)
     for relative, digest in manifest["files"].items():
         path = (ASSETS / relative).resolve()
         assert path.is_relative_to(ASSETS.resolve())

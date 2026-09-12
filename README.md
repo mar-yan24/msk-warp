@@ -13,7 +13,7 @@ available as a comparison. The target is MyoLeg26; accelerated training on that 
 | Motor hopper | Working SHAC locomotion control, measured across three seeds. |
 | Muscle hopper | Activation gradients are threaded, but reliable forward locomotion has not been demonstrated. Tendon state-gradient defects remain. |
 | Ant | Historical PPO locomotion control; SHAC standing/fine-tuning failures and a free-root contact-gradient defect remain. |
-| MyoLeg26 | Target model: `nq = nv = 60`, 26 muscles. Baseline import and differentiability blockers remain; not a supported training recipe. |
+| MyoLeg26 | Pinned official beta model: `nq=47`, `nv=46`, 26 muscles. Explicit flat-ground collision task passes bounded native/Warp forward checks; autodiff training remains gated. |
 
 Trajectory optimization and CPU return-map shooting investigate candidate gaits. They are separate
 from policy learning. Finding an orbit does not establish robust policy control or training speed;
@@ -69,19 +69,57 @@ Environment construction checks the backend's model/data gradient contract. Cont
 use Newton with dense Jacobians and supported geometry pairs. Do not bypass those checks to label
 an unsupported model differentiable.
 
-## MyoLeg26 limitations
+## MyoLeg26 reference and task
 
-The baseline mesh model currently fails Warp import because a nonzero contact margin is incompatible
-with its enabled MULTICCD setting. Even after that is addressed, mesh contact derivatives remain
-unsupported in this pinned stack. Disabling MULTICCD in a test fixture does not validate contact fidelity.
-The policy observation also omits muscle activation state, and its effort term penalizes signed
-policy actions: zero action means 50% excitation, so this is not a physiological excitation cost.
+The reference is MyoHub's `myolegs26` at
+[`eb327acbae0fad12279495040607f5235d962328`](https://github.com/MyoHub/myo_sim/tree/eb327acbae0fad12279495040607f5235d962328),
+built with its canonical `myo_sim.load_spec` API. Upstream labels this reduced model **beta**;
+the preceding 80-muscle MyoLeg section of its documentation describes a different model.
+The selected model has a passive torso without arms, a quaternion free root, 28 equality constraints
+and total mass 78.090468479 kg. The old asset remains at `assets/myoleg/myoLeg26_BASELINE.xml`.
+Its arms, root coordinates, EDL/FDL gains, offsets and old keyframes are not carried into the new task.
 
-Pelvis orientation now comes from differentiable Torch kinematics using the compiled body rotation,
-ordered hinges and reference angles, evaluated at the post-integration state. Anatomical local +Y
-is now used for upright alignment. Native MuJoCo checks cover values and reward derivatives.
-This corrects a stale/detached orientation and changes standing reward by about +0.1 per step;
-prior MyoLeg observations and returns need rebaselining despite the unchanged 147-element layout.
+`assets/myoleg26/reference.xml` preserves the official assembly and demo scene.
+`assets/myoleg26/flat_boxes.xml` defines a separate task: 14 massless boxes measured from the
+original collision surfaces, articulated calcaneus/toe bodies, one ground plane and no self-contact.
+Body masses/inertias are unchanged; tests also check joint, tendon and actuator invariants.
+The boxes are a conservative approximation, not validated anatomical contact surfaces.
+The task uses Euler/Newton/dense, 2 ms physics steps and disabled solver warmstart.
+A nominal reset aligns forward with world +X and sets 1 mm foot clearance; it is not an equilibrium.
+
+The `myoleg26-walk-v1` task targets **1.0 m/s without imitation**. Its 145-value observation includes
+world pelvis pose/velocities, joint coordinates/velocities, all 26 muscle activations and previous
+commands. Pure Torch kinematics are checked against native MuJoCo, including root quaternion and
+velocity frame conventions. A signed action maps to excitation `u=(clamp(a,-1,1)+1)/2`;
+passive is `a=-1`, while neutral policy output `a=0` gives 50% excitation.
+Reward integrates forward/lateral velocity tracking, upright/heading factors and a
+`0.01*mean(u**2)` effort penalty over the control period. This is command effort, not metabolic energy.
+Episodes distinguish failures from time limits; policies receive reset observations, and timeouts
+bootstrap from preserved final observations. Old MyoLeg checkpoints and returns require rebaselining.
+
+The default official environment refuses gradient training because the pinned backend's free-root
+and tendon derivatives have unresolved failures. `allow_unvalidated_gradients=True` is a diagnostic
+override, not a training recipe. Primitive contact support alone does not validate those gradients.
+The legacy mesh asset still has its separate MULTICCD/margin import and mesh-derivative blockers.
+
+To reproduce assets from a clean checkout at the exact source pin, use a **new** output directory:
+
+```powershell
+.venv/Scripts/python.exe scripts/build_myoleg26_assets.py --source logs/upstream_myo_sim_20260912 --out logs/myoleg26_rebuild
+.venv/Scripts/python.exe scripts/check_myoleg26_task.py --out logs/myoleg26_task_check.json
+```
+
+The checked-in manifest records source, builder and asset hashes plus all task overrides.
+The diagnostic compares full native/Warp state at 1/4/16 physics steps and measures passive,
+neutral and random-action first episodes. Ten sampled seeds pass the bounded forward gate;
+this does not establish long-horizon engine equivalence or learned gait.
+`configs/experiments/myoleg26_ppo.yaml` is a forward-policy feasibility baseline.
+`configs/myoleg26_shac.yaml` uses the same task but remains blocked pending derivative validation.
+
+Validation includes 206 CPU unit tests and 58 GPU tests (three known backend expected failures).
+Sixteen passive, neutral and random-action episodes per condition all fail before four seconds.
+The PPO update/checkpoint test and a two-epoch run of the configured 64-actor baseline complete;
+neither is evidence of a learned gait or accelerated training.
 
 ## Verification and diagnostics
 
@@ -112,4 +150,6 @@ versioned record; preserve local research artifacts separately. Commit verified 
 - [Adaptive Horizon Actor-Critic / Georgiev et al., 2024](https://arxiv.org/abs/2405.17784)
 - [MuJoCo Warp upstream](https://github.com/google-deepmind/mujoco_warp), [PR #1423](https://github.com/google-deepmind/mujoco_warp/pull/1423), and [differentiability roadmap](https://github.com/google-deepmind/mujoco_warp/issues/500).
 
-License: Apache 2.0.
+Code license: Apache 2.0. Vendored MyoSim model attribution and applicable source notices are
+preserved in `msk_warp/assets/myoleg26/SOURCE_NOTICES.txt` and `LICENSE.upstream`;
+upstream identifies the reduced-leg model lineage as CC-BY 3.0.
