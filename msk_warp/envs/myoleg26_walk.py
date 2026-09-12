@@ -16,6 +16,8 @@ import mujoco_warp as mjw
 from msk_warp.envs.base_env import MjWarpEnv
 from msk_warp.backend import GradContractError
 from msk_warp.bridge import WarpSimStep
+from msk_warp.envs.myoleg26_task import MyoLegTaskContract, excitation_from_action
+from msk_warp.models.myoleg26 import COLLISION_PREFIX, FOOT_BODIES, GROUND_NAME
 import msk_warp.utils.torch_utils as tu
 
 
@@ -32,6 +34,7 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         model_contract='official',
         allow_unvalidated_gradients=False,
         action_strength=1.0,
+        target_speed=1.0,
         early_termination=True,
         njmax=1000,
         **kwargs,
@@ -96,9 +99,67 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         self.n_joint_v = self.nv - 6
 
         self._init_pelvis_kinematics()
+        self.control_dt = self.substeps * float(self.mjm.opt.timestep)
+        self.task_contract = None
+        if self.model_contract == 'official':
+            self._init_task_contract(target_speed)
 
         self._save_start_state()
         self.reset()
+
+    def _init_task_contract(self, target_speed=1.0):
+        """Bind the versioned objective and ground-contact body classification."""
+        self.task_contract = MyoLegTaskContract(target_speed=target_speed)
+        self.termination_height = self.task_contract.termination_height
+        self._ground_geom = mujoco.mj_name2id(self.mjm, mujoco.mjtObj.mjOBJ_GEOM, GROUND_NAME)
+        if self._ground_geom < 0:
+            raise ValueError(f'Official MyoLeg26 task requires ground geom {GROUND_NAME!r}')
+        nonfoot = np.zeros(self.mjm.ngeom, dtype=bool)
+        for geom in range(self.mjm.ngeom):
+            body = int(self.mjm.geom_bodyid[geom])
+            body_name = mujoco.mj_id2name(self.mjm, mujoco.mjtObj.mjOBJ_BODY, body)
+            name = mujoco.mj_id2name(self.mjm, mujoco.mjtObj.mjOBJ_GEOM, geom) or ''
+            collidable = bool(self.mjm.geom_contype[geom] | self.mjm.geom_conaffinity[geom])
+            # Include enabled original meshes in diagnostic collision variants;
+            # the main task enables only the named body collision proxies.
+            nonfoot[geom] = body != 0 and body_name not in FOOT_BODIES and (
+                name.startswith(COLLISION_PREFIX) or collidable
+            )
+        self._nonfoot_geoms = torch.tensor(nonfoot, device=self.device)
+
+    @torch.no_grad()
+    def _nonfoot_ground_contacts(self):
+        """Per-world physical contacts from the last physics solve's valid prefix.
+
+        Warp packs contacts across worlds into one buffer. Slots after nacon
+        retain old data. A contact is active geometrically when its distance is
+        below includemargin, independent of stale or unused pyramid addresses.
+        """
+        d = self.warp_data
+        count = int(wp.to_torch(d.nacon).reshape(-1)[0].item())
+        capacity = d.contact.geom.shape[0]
+        if count < 0 or count > capacity:
+            raise RuntimeError(f'MyoLeg26 contact buffer overflow or invalid count: {count} contacts, capacity {capacity}')
+        failures = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        if count == 0:
+            return failures
+        geoms = wp.to_torch(d.contact.geom)[:count].long()
+        worlds = wp.to_torch(d.contact.worldid)[:count].long()
+        dist = wp.to_torch(d.contact.dist)[:count]
+        margin = wp.to_torch(d.contact.includemargin)[:count]
+        valid = ((worlds >= 0) & (worlds < self.num_envs)
+                 & (geoms >= 0).all(dim=-1) & (geoms < self.mjm.ngeom).all(dim=-1))
+        ground = (geoms == self._ground_geom).any(dim=-1)
+        nonfoot = self._nonfoot_geoms[geoms.clamp(0, self.mjm.ngeom - 1)].any(dim=-1)
+        failed_worlds = worlds[valid & ground & nonfoot & (dist < margin)]
+        failures[failed_worlds] = True
+        return failures
+
+    @staticmethod
+    def _require_finite(**fields):
+        for name, value in fields.items():
+            if not torch.isfinite(value).all():
+                raise FloatingPointError(f'MyoLeg26 nonfinite {name}; refusing to continue this rollout')
 
     def _save_start_state(self):
         """Use the task standing keyframe, falling back to compiled qpos0.
@@ -341,12 +402,13 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             obs, rew, done, extras, qpos_out, qvel_out, act_out
         """
         actions = actions.view(self.num_envs, self.num_actions)
+        if self.model_contract == 'official':
+            self._require_finite(actions=actions)
         actions = torch.clamp(actions, -1.0, 1.0)
         self.actions = actions.detach().clone()
 
-        # Map tanh[-1,1] -> muscle activation [0,1]
-        activation = 0.5 * (actions + 1.0)
-        ctrl = activation * self.action_strength
+        # The task charges effort on the exact excitation sent to the model.
+        ctrl = excitation_from_action(actions) * self.action_strength
 
         if self.no_grad:
             ctrl_wp = wp.from_torch(ctrl.detach().contiguous())
@@ -358,16 +420,21 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             qpos = wp.to_torch(self.warp_data.qpos)
             qvel = wp.to_torch(self.warp_data.qvel)
             act = wp.to_torch(self.warp_data.act)
+            if self.model_contract == 'official':
+                self._require_finite(qpos=qpos, qvel=qvel, act=act)
             self.obs_buf = self._obs_from_state(qpos, qvel, act, actions)
-            self.rew_buf = self._compute_reward(self.obs_buf, actions)
             pelvis_position = self._compute_pelvis_state(qpos, qvel)[0]
             qpos_out, qvel_out, act_out = None, None, None
         else:
             qpos_in, qvel_in, act_in = self._state_inputs(qpos_in, qvel_in, act_in)
+            if self.model_contract == 'official':
+                self._require_finite(qpos_input=qpos_in, qvel_input=qvel_in, act_input=act_in)
             qpos_out, qvel_out, act_out = WarpSimStep.apply(ctrl, qpos_in, qvel_in, act_in, self)
-
-            qpos_out = qpos_out.clamp(-100.0, 100.0)
-            qvel_out = qvel_out.clamp(-100.0, 100.0)
+            if self.model_contract == 'official':
+                self._require_finite(qpos=qpos_out, qvel=qvel_out, act=act_out)
+            else:
+                qpos_out = qpos_out.clamp(-100.0, 100.0)
+                qvel_out = qvel_out.clamp(-100.0, 100.0)
 
             # Sanitize gradients flowing INTO bridge backward from downstream
             # obs/reward computation. (bridge._sanitize_and_clamp handles
@@ -380,12 +447,24 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             # Derived Warp kinematics still describe the last substep's input.
             # Compute orientation from the returned post-integration state.
             self.obs_buf = self._obs_from_state(qpos_out, qvel_out, act_out, actions)
-            self.rew_buf = self._compute_reward(self.obs_buf, actions)
             pelvis_position = self._compute_pelvis_state(qpos_out, qvel_out)[0]
 
+        if self.model_contract == 'official':
+            self._require_finite(observation=self.obs_buf)
+            reward_terms = self.task_contract.reward_terms(self.obs_buf, ctrl, self.control_dt)
+            self.rew_buf = reward_terms['locomotion_reward'] - reward_terms['effort_cost']
+            self._require_finite(reward=self.rew_buf)
+            failure_flags = self.task_contract.failures(self.obs_buf, self.num_actions)
+            failure_flags['nonfoot_ground_contact'] = self._nonfoot_ground_contacts()
+            failed = torch.stack(tuple(failure_flags.values())).any(dim=0)
+        else:
+            reward_terms = {}
+            self.rew_buf = self._compute_reward(self.obs_buf, actions)
+            failed = self.obs_buf[:, 0] < self.termination_height
+            failure_flags = {'height': failed}
+
         self.progress_buf += 1
-        height_failure = self.obs_buf[:, 0] < self.termination_height
-        terminated = (height_failure if self.early_termination
+        terminated = (failed if self.early_termination
                       else torch.zeros_like(self.progress_buf, dtype=torch.bool))
         truncated = (self.progress_buf >= self.episode_length) & ~terminated
         self.termination_buf = terminated.long()
@@ -397,7 +476,8 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             'episode_end': self.termination_buf.clone(),
             'terminated': terminated,
             'truncated': truncated,
-            'failure_flags': {'height': height_failure},
+            'failure_flags': failure_flags,
+            'reward_terms': {name: value.detach().clone() for name, value in reward_terms.items()},
         }
 
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)

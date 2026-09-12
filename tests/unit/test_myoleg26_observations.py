@@ -444,3 +444,164 @@ def test_autoreset_returns_reset_obs_and_preserves_terminal_state(env, monkeypat
     if not no_grad:
         torch.testing.assert_close(qpos_out, post_qpos)
         torch.testing.assert_close(act_out, post_act)
+
+
+def _mock_official_task(env, monkeypatch, no_grad=True):
+    _mock_warp_state(env, monkeypatch)
+    env.no_grad = no_grad
+    env.control_dt = env.substeps * float(env.mjm.opt.timestep)
+    env._init_task_contract()
+    env.stochastic_init = False
+    env.start_qpos = env.warp_data.qpos.clone()
+    env.start_qvel = env.warp_data.qvel.clone()
+    env.warp_model = object()
+    env.warp_data.nacon = torch.zeros(1, dtype=torch.long)
+    env.warp_data.contact = SimpleNamespace(
+        geom=torch.zeros((8, 2), dtype=torch.long),
+        worldid=torch.zeros(8, dtype=torch.long),
+        dist=torch.ones(8, dtype=torch.float64),
+        includemargin=torch.zeros(8, dtype=torch.float64),
+        efc_address=torch.full((8, 4), -1, dtype=torch.long),
+    )
+    monkeypatch.setattr(myoleg26_walk.mjw, 'step', lambda *_: None)
+    monkeypatch.setattr(WarpSimStep, 'apply', lambda *_: (
+        env.warp_data.qpos.clone(), env.warp_data.qvel.clone(), env.warp_data.act.clone(),
+    ))
+
+
+@pytest.mark.parametrize('no_grad', [True, False])
+@pytest.mark.parametrize('action,effort', [(-1.0, 0.0), (0.0, 0.25), (1.0, 1.0)])
+def test_official_step_uses_task_reward_and_exact_command_effort(official_env, monkeypatch, no_grad, action, effort):
+    env = official_env
+    _mock_official_task(env, monkeypatch, no_grad)
+    env.warp_data.qvel[:, 0] = 1.0
+    actions = torch.full_like(env.actions, action)
+    obs, reward, done, extras, *_ = env.step(
+        actions, env.warp_data.qpos, env.warp_data.qvel, env.warp_data.act,
+    )
+    assert env.task_contract.version == 'myoleg26-walk-v1'
+    assert env.task_contract.target_speed == 1.0
+    expected = env.control_dt * (1.0 - 0.01 * effort)
+    assert reward.item() == pytest.approx(expected, abs=1e-12)
+    assert extras['reward_terms']['excitation_effort'].item() == pytest.approx(effort)
+    torch.testing.assert_close(reward, env.task_contract.reward(
+        obs, myoleg26_walk.excitation_from_action(actions), env.control_dt,
+    ))
+    if no_grad:
+        torch.testing.assert_close(env.warp_data.ctrl, myoleg26_walk.excitation_from_action(actions))
+    assert not done.any()
+
+
+def test_official_step_retains_action_effort_gradient(official_env, monkeypatch):
+    env = official_env
+    _mock_official_task(env, monkeypatch, no_grad=False)
+    env.warp_data.qvel[:, 0] = 1.0
+    actions = torch.zeros_like(env.actions, requires_grad=True)
+    reward = env.step(actions, env.warp_data.qpos, env.warp_data.qvel, env.warp_data.act)[1]
+    grad = torch.autograd.grad(reward.sum(), actions)[0]
+    torch.testing.assert_close(grad, torch.full_like(actions, -env.control_dt * 0.01 * 0.5 / env.mjm.nu))
+
+
+def test_nonfoot_contacts_filter_valid_prefix_world_ids_and_include_margin(official_env, monkeypatch):
+    env = _observation_env(official_env.mjm, 'official', num_envs=7)
+    _mock_official_task(env, monkeypatch)
+    ground = env._ground_geom
+    foot = env.mjm.geom(myoleg26_walk.COLLISION_PREFIX + 'calcn_r').id
+    pelvis = env.mjm.geom(myoleg26_walk.COLLISION_PREFIX + 'pelvis').id
+    contact = env.warp_data.contact
+    contact.geom[:] = torch.tensor([
+        [ground, foot], [pelvis, ground], [ground, pelvis], [pelvis, ground],
+        [pelvis, foot], [-1, ground], [ground, pelvis], [ground, pelvis],
+    ])
+    contact.worldid[:] = torch.tensor([0, 1, 2, 3, 4, 5, 99, 6])
+    contact.dist[:] = -0.01
+    contact.dist[2:4] = 0.001
+    contact.includemargin[3] = 0.002
+    contact.efc_address[:] = 5  # Cannot make the separated slot 2 active.
+    env.warp_data.nacon[:] = 7  # Slot 7 is stale despite a plausible contact.
+    assert env._nonfoot_ground_contacts().tolist() == [False, True, False, True, False, False, False]
+    contact.dist[3] = contact.includemargin[3]
+    assert not env._nonfoot_ground_contacts()[3]
+    env.warp_data.nacon[:] = 0
+    assert not env._nonfoot_ground_contacts().any()
+    env.warp_data.nacon[:] = 9
+    with pytest.raises(RuntimeError, match='contact buffer overflow'):
+        env._nonfoot_ground_contacts()
+
+
+@pytest.mark.parametrize('height_drop', [0.0, 0.5])
+def test_nonfoot_contact_flag_matches_native_contacts(official_env, monkeypatch, height_drop):
+    env = official_env
+    _mock_official_task(env, monkeypatch)
+    data = mujoco.MjData(env.mjm)
+    data.qpos[:] = env.start_qpos[0].numpy()
+    data.qpos[2] -= height_drop
+    mujoco.mj_forward(env.mjm, data)
+    contacts = list(data.contact[:data.ncon])
+    env.warp_data.nacon[:] = data.ncon
+    env.warp_data.contact = SimpleNamespace(
+        geom=torch.tensor(np.array([c.geom for c in contacts], dtype=np.int64).reshape(-1, 2)),
+        worldid=torch.zeros(data.ncon, dtype=torch.long),
+        dist=torch.tensor([c.dist for c in contacts], dtype=torch.float64),
+        includemargin=torch.tensor([c.includemargin for c in contacts], dtype=torch.float64),
+    )
+    expected = False
+    for contact in contacts:
+        if contact.efc_address < 0 or env._ground_geom not in contact.geom:
+            continue
+        body = int(env.mjm.geom_bodyid[contact.geom[1] if contact.geom[0] == env._ground_geom else contact.geom[0]])
+        expected |= mujoco.mj_id2name(env.mjm, mujoco.mjtObj.mjOBJ_BODY, body) not in myoleg26_walk.FOOT_BODIES
+    assert env._nonfoot_ground_contacts().item() == expected
+    assert expected == (height_drop > 0)
+
+
+@pytest.mark.parametrize('cause', ['low_pelvis', 'low_upright', 'nonfoot_ground_contact', 'timeout'])
+@pytest.mark.parametrize('early_termination', [True, False])
+def test_official_named_failures_and_timeout_semantics(official_env, monkeypatch, cause, early_termination):
+    env = official_env
+    _mock_official_task(env, monkeypatch)
+    env.early_termination = early_termination
+    if cause == 'low_pelvis':
+        env.warp_data.qpos[:, 2] = 0.53
+    elif cause == 'low_upright':
+        tilt = torch.tensor([[2**-0.5, 2**-0.5, 0.0, 0.0]], dtype=torch.float64)
+        env.warp_data.qpos[:, 3:7] = myoleg26_walk.tu.quat_mul(tilt, env.warp_data.qpos[:, 3:7])
+    elif cause == 'nonfoot_ground_contact':
+        env.warp_data.nacon[:] = 1
+        env.warp_data.contact.geom[0] = torch.tensor([
+            env._ground_geom, env.mjm.geom(myoleg26_walk.COLLISION_PREFIX + 'pelvis').id,
+        ])
+        env.warp_data.contact.dist[0] = -0.001
+    else:
+        env.progress_buf[:] = env.episode_length - 1
+    _, _, done, extras, *_ = env.step(torch.full_like(env.actions, -1.0))
+    assert set(extras['failure_flags']) == {'nonfinite', 'low_pelvis', 'low_upright', 'nonfoot_ground_contact'}
+    assert not extras['failure_flags']['nonfinite'].any()
+    if cause != 'timeout':
+        assert extras['failure_flags'][cause].item()
+    assert extras['terminated'].item() == (early_termination and cause != 'timeout')
+    assert extras['truncated'].item() == (cause == 'timeout')
+    assert done.item() == (early_termination or cause == 'timeout')
+
+
+@pytest.mark.parametrize('no_grad', [True, False])
+def test_official_nonfinite_inputs_and_state_raise_without_sanitization(official_env, monkeypatch, no_grad):
+    env = official_env
+    _mock_official_task(env, monkeypatch, no_grad)
+    with pytest.raises(FloatingPointError, match='nonfinite actions'):
+        env.step(torch.full_like(env.actions, float('inf')))
+    env.warp_data.qvel[:, 0] = float('inf')
+    with pytest.raises(FloatingPointError, match='nonfinite qvel'):
+        env.step(env.actions, env.warp_data.qpos, env.warp_data.qvel, env.warp_data.act)
+
+
+def test_official_diagnostic_does_not_clip_large_finite_forward_state(official_env, monkeypatch):
+    env = official_env
+    _mock_official_task(env, monkeypatch, no_grad=False)
+    env.warp_data.qpos[:, 0] = 500.0
+    env.warp_data.qvel[:, 0] = 250.0
+    obs, reward, _, _, qpos, qvel, _ = env.step(
+        env.actions, env.warp_data.qpos, env.warp_data.qvel, env.warp_data.act,
+    )
+    assert obs[0, 5] == 250.0 and qpos[0, 0] == 500.0 and qvel[0, 0] == 250.0
+    assert torch.isfinite(reward).all()

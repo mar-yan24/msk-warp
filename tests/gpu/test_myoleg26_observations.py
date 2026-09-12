@@ -4,9 +4,12 @@ import mujoco
 import numpy as np
 import pytest
 import torch
+import warp as wp
+import mujoco_warp as mjw
 
 from msk_warp import backend
 from msk_warp.envs.myoleg26_walk import MyoLeg26WalkEnv
+from msk_warp.models.myoleg26 import FOOT_BODIES, GROUND_NAME
 
 
 def test_baseline_model_reports_multiccd_margin_incompatibility():
@@ -85,3 +88,35 @@ def test_official_forward_observations_and_autoreset_match_native():
             np.testing.assert_allclose(obs[world, 1:5].cpu(), native.xquat[env.pelvis_body_id], atol=3e-7)
             np.testing.assert_allclose(obs[world, 5:8].cpu(), jacp @ native.qvel, atol=3e-6)
             np.testing.assert_allclose(obs[world, 8:11].cpu(), jacr @ native.qvel, atol=3e-6)
+
+
+def test_official_nonfoot_contact_detection_matches_native_and_clears_stale_slots():
+    env = MyoLeg26WalkEnv(num_envs=2, no_grad=True, stochastic_init=False)
+    for fallen in (True, False):
+        env.reset()
+        if fallen:
+            wp.to_torch(env.warp_data.qpos)[1, 2] = .2
+        mjw.forward(env.warp_model, env.warp_data)
+        wp.synchronize()
+        actual = env._nonfoot_ground_contacts().cpu().numpy()
+        expected = []
+        qpos, qvel, act = env.state_tensors()
+        for world in range(env.num_envs):
+            native = mujoco.MjData(env.mjm)
+            native.qpos[:] = qpos[world].cpu().numpy()
+            native.qvel[:] = qvel[world].cpu().numpy()
+            native.act[:] = act[world].cpu().numpy()
+            mujoco.mj_forward(env.mjm, native)
+            ground = env.mjm.geom(GROUND_NAME).id
+            failed = False
+            for contact in native.contact:
+                if contact.dist >= contact.includemargin:
+                    continue
+                pair = (contact.geom1, contact.geom2)
+                if ground not in pair:
+                    continue
+                body = env.mjm.body(env.mjm.geom_bodyid[pair[1] if pair[0] == ground else pair[0]])
+                failed |= body.name not in FOOT_BODIES
+            expected.append(failed)
+        np.testing.assert_array_equal(actual, expected)
+        assert actual.tolist() == [False, fallen]
