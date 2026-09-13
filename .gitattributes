@@ -12,3 +12,7 @@ msk_warp/assets/myoleg26/meshes/* -text
 msk_warp/assets/myoleg26/textures/* -text
 msk_warp/models/myoleg26.py text eol=lf
 scripts/build_myoleg26_assets.py text eol=lf
+# Frozen baseline runner and manifest retain their recorded file hashes.
+msk_warp/analysis/myoleg26_baseline.py text eol=lf
+scripts/run_myoleg26_baseline.py text eol=lf
+msk_warp/configs/experiments/myoleg26_baseline_v1.json text eol=lf
