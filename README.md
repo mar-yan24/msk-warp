@@ -5,7 +5,7 @@ PyTorch owns the actor, critic, observations and rewards; a custom MuJoCo Warp b
 state and control derivatives. SHAC is the current policy-learning implementation, with PPO
 available as a comparison. The target is MyoLeg26; accelerated training on that target is unproven.
 
-## Current status (2026-09-12)
+## Current status (2026-09-13)
 
 | Environment | What is established |
 | --- | --- |
@@ -13,7 +13,7 @@ available as a comparison. The target is MyoLeg26; accelerated training on that 
 | Motor hopper | Working SHAC locomotion control, measured across three seeds. |
 | Muscle hopper | Activation gradients are threaded, but reliable forward locomotion has not been demonstrated. Tendon state-gradient defects remain. |
 | Ant | Historical PPO locomotion control; SHAC standing/fine-tuning failures and a free-root contact-gradient defect remain. |
-| MyoLeg26 | Pinned official beta model: `nq=47`, `nv=46`, 26 muscles. Explicit flat-ground collision task passes bounded native/Warp forward checks; autodiff training remains gated. |
+| MyoLeg26 | Pinned official beta model: `nq=47`, `nv=46`, 26 muscles. Five-seed PPO walking baseline failed its bounded behavior gate. Strict visited-state forward checks block derivative qualification; autodiff training remains guarded. |
 
 Trajectory optimization and CPU return-map shooting investigate candidate gaits. They are separate
 from policy learning. Finding an orbit does not establish robust policy control or training speed;
@@ -116,10 +116,67 @@ this does not establish long-horizon engine equivalence or learned gait.
 `configs/experiments/myoleg26_ppo.yaml` is a forward-policy feasibility baseline.
 `configs/myoleg26_shac.yaml` uses the same task but remains blocked pending derivative validation.
 
-Validation includes 206 CPU unit tests and 58 GPU tests (three known backend expected failures).
+Validation includes 297 CPU unit tests and 58 GPU tests (three known backend expected failures).
 Sixteen passive, neutral and random-action episodes per condition all fail before four seconds.
 The PPO update/checkpoint test and a two-epoch run of the configured 64-actor baseline complete;
 neither is evidence of a learned gait or accelerated training.
+
+### Frozen five-seed baseline and derivative gates
+
+`configs/experiments/myoleg26_baseline_v1.json` freezes the task, source/model hashes,
+backend/packages and five PPO seeds at 1,048,576 training control transitions each.
+All five completed: 5,242,880 training controls / 20,971,520 physics steps, plus
+77,712 evaluation controls / 310,848 physics steps. Inclusive batch wall time was
+3,905.04 s (65.08 min) on the RTX 4060 Laptop; training loops used 3,710.44 s and
+evaluation 168.92 s. Kernel caches were populated; brief CPU review/test activity
+occurred while the GPU was reserved for this batch. This is application wall time.
+
+No scheduled checkpoint met the four-second walking gate; selected-checkpoint
+confirmation had 0/160 survivors across five seeds. Mean episode duration was
+0.708 s and mean forward velocity -0.381 m/s. Selected epochs were 0/0/0/0/96.
+The preregistered ranking ignores subthreshold survival duration when all survival
+fractions are zero; its pre-failure speed error can favor an earlier fall. Preserve
+this result, but address that selection limitation in a separately frozen protocol.
+These results reject this bounded recipe as a successful walking baseline, not
+PPO or the model as unlearnable. They cannot establish time-to-gait acceleration.
+
+The selector captured 50 episode states from all five selected policies:
+27 double-support, 11 left-support and 12 right-support. Forty states therefore
+come from initially random actors. Shared reset/noise IDs create clustered data;
+there are 15 distinct reset IDs in this sample, not 50 IID initializations.
+The local checker compares actions, free-root/internal position tangents,
+velocities and activations against native float64 finite differences, with
+forward, epsilon-window, sanitizer and coverage prerequisites.
+
+In this run 65/100 forward cases exceeded the preregistered derivative-check
+tolerance (20/50 at one control step, 45/50 at four). This tolerance uses
+absolute 1e-4 for joint velocities, stricter than the prior task smoke's 1e-3;
+small constrained-joint velocity differences dominate, not a demonstrated
+catastrophic simulation failure. The population FD/AD stage stopped before
+measurement, and complete-policy qualification remained blocked. A separate
+one-state GPU plumbing check found clipped adjoints; it is not population evidence.
+Three fresh native/direct-Warp/bridge replays of the worst normalized case also
+show the mismatch in direct Warp; the first direct/bridge trajectories are
+bitwise identical. Direct Warp varies across repetitions. The numerical cause
+remains unisolated, so the result cannot be assigned to bridge plumbing alone.
+The previous-action observation also has an unresolved detached path in SHAC.
+Do not promote the beta asset or primitive collision support to validated gradients.
+
+Reproduce the bounded run in a new directory:
+
+```powershell
+.venv/Scripts/python.exe scripts/run_myoleg26_baseline.py --frozen-manifest msk_warp/configs/experiments/myoleg26_baseline_v1.json --outdir logs/myoleg26_baseline_replay
+```
+
+`scripts/select_myoleg26_states.py` verifies the freeze and selected-checkpoint
+provenance before constructing an archive. `scripts/check_myoleg26_derivatives.py`
+consumes it; `scripts/check_myoleg26_policy_gradient.py` fails closed on missing
+local evidence or fewer than 30 distinct reset IDs. A positive policy report
+would qualify sampled parameter directions of the complete stochastic objective,
+not prove its full high-dimensional gradient. `scripts/summarize_myoleg26_baseline.py`
+retains all five seeds and separate costs. Local artifacts are in
+`logs/myoleg26_ppo_baseline_v1*`, `logs/myoleg26_visited_v1*`,
+`logs/myoleg26_derivatives_v1.json` and `logs/myoleg26_policy_gradient_v1.json`.
 
 ## Verification and diagnostics
 
