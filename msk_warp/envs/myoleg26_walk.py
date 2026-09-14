@@ -405,7 +405,9 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         if self.model_contract == 'official':
             self._require_finite(actions=actions)
         actions = torch.clamp(actions, -1.0, 1.0)
-        self.actions = actions.detach().clone()
+        # The previous-action observation keeps its gradient path. The graph is
+        # cut selectively per reset row and released at trajectory boundaries.
+        self.actions = actions.clone()
 
         # The task charges effort on the exact excitation sent to the model.
         ctrl = excitation_from_action(actions) * self.action_strength
@@ -495,6 +497,53 @@ class MyoLeg26WalkEnv(MjWarpEnv):
         return self.obs_buf, self.rew_buf, self.reset_buf, self.extras, qpos_out, qvel_out, act_out
 
     # ------------------------------------------------------------------
+    # Previous-action history graph
+    # ------------------------------------------------------------------
+
+    def _detach_action_history(self):
+        """Release the previous-action graph, keeping the observed values.
+
+        A trajectory boundary ends the graph, not the episode: the policy must
+        still observe the action it actually last commanded.
+        """
+        self.actions = self.actions.detach().clone()
+
+    def _cut_action_history(self, env_ids):
+        """Out-of-place previous-action reset for the given worlds.
+
+        Reset rows become the passive command with no gradient path; every other
+        row keeps the graph it already had, including when a caller runs the
+        reset plumbing inside an outer ``torch.no_grad()``. Coverage is decided
+        by the actual row mask, so repeated ids cannot be mistaken for a full
+        reset. Values are identical to the in-place assignment this replaces.
+        """
+        history = self.actions
+        mask = torch.zeros((history.shape[0], 1), dtype=torch.bool, device=history.device)
+        mask[env_ids] = True
+        # Signed action for zero excitation, detached and in the history's dtype.
+        passive = history.detach().new_full((1, 1), -1.0)
+        if bool(mask.all()):
+            self.actions = passive.expand_as(history).clone()
+        elif history.requires_grad:
+            # Narrow re-enable: the survivors' graph would otherwise be dropped
+            # by an outer no-grad context. Ordinary no-grad execution never
+            # reaches this branch, because its history requires no gradient.
+            with torch.enable_grad():
+                self.actions = torch.where(mask, passive, history)
+        else:
+            self.actions = torch.where(mask, passive, history)
+
+    def clear_grad(self, rebuild=None):
+        """Cut the trajectory graph, including the previous-action history.
+
+        Zeroing the Warp gradient buffers does not release the torch graph that
+        ``compute_obs`` reads through the stored previous action, so the
+        boundary has to detach it explicitly.
+        """
+        self._detach_action_history()
+        super().clear_grad(rebuild=rebuild)
+
+    # ------------------------------------------------------------------
     # Reset
     # ------------------------------------------------------------------
 
@@ -528,8 +577,10 @@ class MyoLeg26WalkEnv(MjWarpEnv):
             wp.to_torch(self.warp_data.ctrl)[env_ids, :] = 0.0
             wp.to_torch(self.warp_data.qacc_warmstart)[env_ids, :] = 0.0
             wp.to_torch(self.warp_data.time)[env_ids] = 0.0
-            self.actions[env_ids, :] = -1.0  # signed action for zero excitation
 
+        # Outside the no-grad block above and out of place, so that surviving
+        # worlds keep the gradient path their observations depend on.
+        self._cut_action_history(env_ids)
         self.progress_buf[env_ids] = 0
 
     def reset(self, env_ids=None, force_reset=True):

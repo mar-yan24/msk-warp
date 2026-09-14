@@ -241,12 +241,26 @@ def test_actual_shac_forward_matches_independent_stochastic_reset_objective():
     assert actual == pytest.approx(expected, abs=2e-7)
 
 
+# A mid-rollout ending keeps a recurrent prefix on both sides of the reset, so
+# the previous-action feedback is exercised before it and after it.
+ENDING_CASES = {
+    'normal': [None, None, None, None],
+    'terminal': [None, 'terminal', None, None],
+    'timeout': [None, 'timeout', None, None],
+    'coincident': [None, 'both', None, None],
+}
+
+
+@pytest.mark.parametrize('ending', list(ENDING_CASES))
 @pytest.mark.parametrize('detach_action', [False, True])
-def test_complete_policy_negative_control_exposes_previous_action_detach(detach_action):
+def test_complete_policy_negative_control_exposes_previous_action_detach(detach_action, ending):
+    endings = ENDING_CASES[ending]
     actor, critic = TinyActor(), _critic()
     noise = torch.tensor([.4, -.2, .7, -.1]).reshape(4, 1, 1)
     wrapped = check.FixedNoiseActor(actor, noise)
-    shac = check.make_shac(ToyEnv(detach_action=detach_action), wrapped, critic, None, 4, .9, 0)
+    shac = check.make_shac(
+        ToyEnv(detach_action=detach_action, endings=list(endings)), wrapped, critic, None, 4, .9, 0,
+    )
     loss = shac.compute_actor_loss()
     loss.backward()
     ad = torch.nn.utils.parameters_to_vector([p.grad for p in actor.parameters()]).double().numpy()
@@ -256,9 +270,9 @@ def test_complete_policy_negative_control_exposes_previous_action_detach(detach_
     fd = []
     for direction in np.eye(len(theta)):
         torch.nn.utils.vector_to_parameters(torch.tensor(theta + 1e-5 * direction), reference.parameters())
-        plus = toy_native(reference, critic, noise.double(), [None] * 4)
+        plus = toy_native(reference, critic, noise.double(), endings)
         torch.nn.utils.vector_to_parameters(torch.tensor(theta - 1e-5 * direction), reference.parameters())
-        minus = toy_native(reference, critic, noise.double(), [None] * 4)
+        minus = toy_native(reference, critic, noise.double(), endings)
         fd.append((plus - minus) / 2e-5)
     # logstd is the first registered parameter and participates under fixed stochastic draws.
     assert abs(fd[0]) > 1e-4

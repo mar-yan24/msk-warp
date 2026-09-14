@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 from types import SimpleNamespace
 
 import mujoco
@@ -605,3 +607,237 @@ def test_official_diagnostic_does_not_clip_large_finite_forward_state(official_e
     )
     assert obs[0, 5] == 250.0 and qpos[0, 0] == 500.0 and qvel[0, 0] == 250.0
     assert torch.isfinite(reward).all()
+
+
+# ----------------------------------------------------------------------
+# Previous-action observation graph (previous-action history unit)
+#
+# These exercise the real ``compute_obs``, ``_reset_warp_state``, ``clear_grad``
+# and ``initialize_trajectory`` code paths. Only the Warp bridge is replaced,
+# by a differentiable CPU stub, so the gradient structure under test is the
+# environment's own and not the stub's.
+# ----------------------------------------------------------------------
+
+SIM_GAIN = 0.05
+
+
+def _mock_differentiable_bridge(env, monkeypatch):
+    """Autograd-correct, Warp-free stand-in for one control step.
+
+    The returned state depends on the excitation, so a multi-step rollout has a
+    genuine recurrent prefix through the state as well as through the action
+    history. Simulator buffers advance like the real bridge, detached.
+    """
+    nq, nv = env.mjm.nq, env.mjm.nv
+
+    def advance(ctrl, qpos_in, qvel_in, act_in):
+        push = torch.nn.functional.pad(SIM_GAIN * ctrl, (0, nv - ctrl.shape[-1]))
+        qvel_out = qvel_in + push
+        qpos_out = qpos_in + 1e-3 * torch.nn.functional.pad(push, (0, nq - nv))
+        act_out = act_in + 0.1 * (ctrl - act_in)
+        with torch.no_grad():
+            env.warp_data.qpos.copy_(qpos_out)
+            env.warp_data.qvel.copy_(qvel_out)
+            env.warp_data.act.copy_(act_out)
+        return qpos_out, qvel_out, act_out
+
+    def bridge_apply(ctrl, qpos_in, qvel_in, act_in, owner=None):
+        return advance(ctrl, qpos_in, qvel_in, act_in)
+
+    def no_grad_step(model, data):
+        with torch.no_grad():
+            advance(data.ctrl, data.qpos.clone(), data.qvel.clone(), data.act.clone())
+
+    monkeypatch.setattr(WarpSimStep, 'apply', bridge_apply)
+    monkeypatch.setattr(myoleg26_walk.mjw, 'step', no_grad_step)
+
+
+def _action_history_env(model, monkeypatch, num_envs=3, no_grad=False):
+    """Official-contract environment on the CPU seam with a differentiable step."""
+    env = _observation_env(model, 'official', num_envs=num_envs)
+    _mock_official_task(env, monkeypatch, no_grad=no_grad)
+    _mock_differentiable_bridge(env, monkeypatch)
+    return env
+
+
+def _interior_actions(env, value=0.2):
+    return torch.full((env.num_envs, env.mjm.nu), value, dtype=torch.float64, requires_grad=True)
+
+
+def _step_state(env):
+    return (env.warp_data.qpos.clone(), env.warp_data.qvel.clone(), env.warp_data.act.clone())
+
+
+def _expected_history_jacobian(env, reset_rows):
+    """Exact d(previous action)/d(action): identity per survivor row, else zero."""
+    nu = env.mjm.nu
+    expected = torch.zeros((env.num_envs, nu, env.num_envs, nu), dtype=torch.float64)
+    for world in range(env.num_envs):
+        if world in reset_rows:
+            continue
+        for entry in range(nu):
+            expected[world, entry, world, entry] = 1.0
+    return expected
+
+
+def _history_jacobian(env, reset_ids, outer_no_grad):
+    """Jacobian of the stored previous action wrt the action fed to ``step``."""
+    start = _step_state(env)
+    progress = env.progress_buf.clone()
+
+    def history(action):
+        env.progress_buf.copy_(progress)
+        env.actions = torch.full_like(env.actions, -1.0)
+        with torch.no_grad():
+            env.warp_data.qpos.copy_(start[0])
+            env.warp_data.qvel.copy_(start[1])
+            env.warp_data.act.copy_(start[2])
+        done = env.step(action, *start)[2]
+        assert not done.any(), 'the step itself must not reset in this control'
+        context = torch.no_grad() if outer_no_grad else contextlib.nullcontext()
+        with context:
+            env._reset_warp_state(reset_ids)
+        return env.actions
+
+    return torch.autograd.functional.jacobian(history, _interior_actions(env))
+
+
+@pytest.mark.parametrize('outer_no_grad', [False, True])
+def test_survivor_history_jacobian_is_identity_and_reset_rows_are_exactly_zero(
+    official_env, monkeypatch, outer_no_grad,
+):
+    env = _action_history_env(official_env.mjm, monkeypatch)
+    jacobian = _history_jacobian(env, torch.tensor([1]), outer_no_grad)
+    torch.testing.assert_close(jacobian, _expected_history_jacobian(env, {1}), rtol=0, atol=0)
+
+
+def test_repeated_reset_ids_are_not_read_as_a_full_reset(official_env, monkeypatch):
+    # Three ids on a three-world environment, all naming world 0: row coverage,
+    # not the id count, decides whether the whole history is dropped.
+    env = _action_history_env(official_env.mjm, monkeypatch)
+    jacobian = _history_jacobian(env, torch.tensor([0, 0, 0]), outer_no_grad=True)
+    torch.testing.assert_close(jacobian, _expected_history_jacobian(env, {0}), rtol=0, atol=0)
+
+
+def test_full_reset_restores_the_passive_command_without_the_old_graph(official_env, monkeypatch):
+    env = _action_history_env(official_env.mjm, monkeypatch)
+    actions = _interior_actions(env)
+    done = env.step(actions, *_step_state(env))[2]
+    assert not done.any()
+    assert env.actions.requires_grad, 'the step must keep the action-history graph'
+    with torch.no_grad():
+        env._reset_warp_state(torch.arange(env.num_envs))
+    assert torch.all(env.actions == -1.0)
+    assert not env.actions.requires_grad and env.actions.grad_fn is None
+
+
+def test_boundary_cut_keeps_previous_action_values_and_releases_the_graph(official_env, monkeypatch):
+    env = _action_history_env(official_env.mjm, monkeypatch)
+    monkeypatch.setattr(myoleg26_walk.MjWarpEnv, 'clear_grad', lambda self, rebuild=None: None)
+    env.step(_interior_actions(env), *_step_state(env))
+    assert env.actions.requires_grad
+    before = env.actions.detach().clone()
+    obs = env.initialize_trajectory()
+    assert env.actions.grad_fn is None and not env.actions.requires_grad
+    # The boundary releases the graph and keeps the observed values; it is not a
+    # mid-rollout return to the passive command.
+    torch.testing.assert_close(env.actions, before, rtol=0, atol=0)
+    assert not torch.any(env.actions == -1.0)
+    torch.testing.assert_close(obs[:, -env.mjm.nu:], before, rtol=0, atol=0)
+
+
+def _two_step_objective(env, weight):
+    """Loss over the boundary observation and two full control steps."""
+    env.progress_buf.zero_()
+    obs = env.initialize_trajectory()
+    loss = obs.sum()
+    qpos, qvel, act = _step_state(env)
+    for _ in range(2):
+        _, reward, done, _, qpos, qvel, act = env.step(torch.tanh(weight), qpos, qvel, act)
+        assert not done.any()
+        loss = loss + env.compute_obs(qpos, qvel, act).sum() + reward.sum()
+    return loss
+
+
+@pytest.mark.parametrize('cut_boundary', [True, False])
+def test_two_successive_backward_rounds_require_the_boundary_history_cut(
+    official_env, monkeypatch, cut_boundary,
+):
+    env = _action_history_env(official_env.mjm, monkeypatch, num_envs=2)
+    monkeypatch.setattr(myoleg26_walk.MjWarpEnv, 'clear_grad', lambda self, rebuild=None: None)
+    if not cut_boundary:
+        # Mutation negative: the masking work stays, only the boundary cut goes.
+        monkeypatch.setattr(env, '_detach_action_history', lambda: None)
+    weight = torch.full((2, env.mjm.nu), 0.3, dtype=torch.float64, requires_grad=True)
+
+    first = _two_step_objective(env, weight)
+    first.backward()
+    first_grad = weight.grad.detach().clone()
+    assert torch.isfinite(first_grad).all() and first_grad.abs().sum() > 0
+    weight.grad = None
+
+    second = _two_step_objective(env, weight)
+    if not cut_boundary:
+        with pytest.raises(RuntimeError, match='backward through the graph a second time'):
+            second.backward()
+        return
+    second.backward()  # no retain_graph, and no dependence on the released round
+    assert torch.isfinite(weight.grad).all() and weight.grad.abs().sum() > 0
+
+
+# Bitwise no-grad forward reference, captured from the pre-edit production source
+# at BASE 5497f5a7d6b9ad780574962194481c8a62cace7d by
+# logs/capture_task2_pre_edit_reference.py. It is an independent record of the
+# previous implementation's bytes, not a recomputation by the new code. Any
+# change is a real forward change and must not be re-captured to make it pass.
+PRE_EDIT_NO_GRAD_DIGEST = 'd6a691f858621f5c7704e77acc9aa6880c35b59308b96b31ac8230712679bbe7'
+PRE_EDIT_NO_GRAD_SPOT_HEX = (
+    '0x1.d51f0c33069e5p-1',  # height, world 0, normal control
+    '0x1.999999999999ap-3',  # previous action, world 1, after its timeout reset
+    '0x0.0p+0',              # forward velocity, world 2, on its terminal reset
+    '0x1.476f95de05b7dp-15',  # reward, world 1
+    '0x1.999999999999ap-3',  # stored history, world 1
+    '0x1.0f601797cc3a0p-1',  # pre-reset height, world 2
+)
+
+
+def _no_grad_reference_rollout(model, monkeypatch):
+    """Deterministic no-grad rollout over normal, timeout and terminal endings."""
+    env = _action_history_env(model, monkeypatch, num_envs=3, no_grad=True)
+    env.progress_buf.zero_()
+    env.progress_buf[1] = env.episode_length - 2  # world 1 times out on control 2
+    stream = []
+    for control in range(3):
+        actions = torch.full((3, env.mjm.nu), -0.4 + 0.3 * control, dtype=torch.float64)
+        actions[1] = 0.1 * control
+        if control == 2:
+            env.warp_data.qpos[2, 2] = 0.53  # world 2 falls: terminal, not timeout
+        obs, reward, done, extras, *rest = env.step(actions)
+        assert rest == [None, None, None]
+        if control == 1:
+            assert extras['truncated'].tolist() == [False, True, False]
+        if control == 2:
+            assert extras['terminated'].tolist() == [False, False, True]
+        stream += [obs, reward, env.actions, extras['obs_before_reset'], done.double()]
+    return stream
+
+
+def _stream_digest(stream):
+    digest = hashlib.sha256()
+    for tensor in stream:
+        assert not tensor.requires_grad and tensor.grad_fn is None
+        digest.update(np.ascontiguousarray(tensor.detach().numpy()).tobytes())
+    return digest.hexdigest()
+
+
+def _stream_spot_hex(stream):
+    obs, reward, history, before_reset, _ = stream[-5:]
+    return tuple(float(value).hex() for value in (
+        obs[0, 0], obs[1, -26], obs[2, 5], reward[1], history[1, 0], before_reset[2, 0],
+    ))
+
+
+def test_no_grad_forward_bytes_match_the_pre_edit_reference(official_env, monkeypatch):
+    stream = _no_grad_reference_rollout(official_env.mjm, monkeypatch)
+    assert _stream_spot_hex(stream) == PRE_EDIT_NO_GRAD_SPOT_HEX
+    assert _stream_digest(stream) == PRE_EDIT_NO_GRAD_DIGEST
