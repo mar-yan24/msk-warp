@@ -20,7 +20,10 @@ dependencies = [
 include = ["msk_warp*"]
 
 [tool.setuptools.package-data]
-msk_warp = ["assets/*.xml", "configs/*.yaml"]
+msk_warp = ["assets/*.xml", "assets/myoleg26/*.xml", "assets/myoleg26/*.json",
+            "assets/myoleg26/*.md", "assets/myoleg26/*.txt", "assets/myoleg26/LICENSE*",
+            "assets/myoleg26/meshes/*", "assets/myoleg26/textures/*",
+            "configs/*.yaml", "configs/experiments/*.yaml"]
 
 [project.optional-dependencies]
 dev = ["pytest"]

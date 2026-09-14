@@ -1,0 +1,3 @@
+# Both identities below are the same author. This file canonicalises them for
+# git log/shortlog/blame without rewriting history.
+Mark Yang <74079247+mar-yan24@users.noreply.github.com> <markyang2005@gmail.com>

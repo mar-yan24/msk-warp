@@ -1,14 +1,18 @@
+# Candidate comparison on the same task as experiments/myoleg26_ppo.yaml.
+# Construction intentionally fails until official free-root/tendon derivatives
+# pass task-level validation. Do not set allow_unvalidated_gradients for training.
 params:
   general:
-    seed: 42
+    seed: 0
     device: cuda:0
     logdir: logs/myoleg26
 
   env:
     name: MyoLeg26Walk
-    model_path: assets/myoleg/myoLeg26_BASELINE.xml
+    model_path: assets/myoleg26/flat_boxes.xml
+    model_contract: official
     num_actors: 64
-    episode_length: 1000
+    episode_length: 500
     stochastic_init: true
     substeps: 4
     action_strength: 1.0
@@ -17,8 +21,9 @@ params:
 
   network:
     actor: ActorStochasticMLP
+    actor_logstd_init: -1.0
     actor_mlp:
-      units: [256, 128, 64]
+      units: [128, 64]
       activation: elu
     critic: CriticMLP
     critic_mlp:
@@ -29,7 +34,7 @@ params:
     name: myoleg26_shac
     gamma: 0.99
     steps_num: 16
-    max_epochs: 2000
+    max_epochs: 500
     actor_learning_rate: 1e-3
     critic_learning_rate: 1e-3
     lr_schedule: linear

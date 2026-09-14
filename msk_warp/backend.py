@@ -8,9 +8,9 @@ Gradient contract, asserted at environment construction by :func:`assert_grad_co
 
 * Newton solver (constraint forces are differentiated implicitly through the retained Hessian)
 * Euler, RK4 or implicitfast integrator
-* every colliding geom-type pair has a differentiable contact proxy (plane/sphere/capsule
-  combinations); mesh, box, hfield, convex pairs give zero contact gradients silently upstream,
-  so they are rejected here
+* every colliding geom-type pair appears in the pinned backend's proxy registry
+  (including plane-box, sphere-box and capsule-box); mesh/hfield and unsupported
+  pairs are rejected here. Registry support does not establish derivative accuracy.
 * ``qpos``, ``qvel``, ``ctrl``, ``act`` (and the contact/efc arrays) carry ``.grad``
 * a one-step AD-vs-FD tripwire on the actuation path (``ctrl`` for motors, ``act`` for muscles)
 

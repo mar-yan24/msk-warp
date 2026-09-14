@@ -128,6 +128,9 @@ class PPO:
             (self.steps_num, self.num_envs),
             dtype=torch.float32, device=self.device,
         )
+        # Value of the final pre-reset state for time-limit truncations only.
+        # Keep this separate from rewards so episode metrics retain raw rewards.
+        self.buf_timeout_values = torch.zeros_like(self.buf_values)
         self.buf_advantages = torch.zeros(
             (self.steps_num, self.num_envs),
             dtype=torch.float32, device=self.device,
@@ -196,6 +199,16 @@ class PPO:
             self.buf_rewards[step] = rew
             self.buf_dones[step] = done.float()
             self.buf_values[step] = value
+            self.buf_timeout_values[step].zero_()
+            if 'terminated' in extras and 'truncated' in extras:
+                timeout = done.bool() & extras['truncated'].bool() & ~extras['terminated'].bool()
+                if timeout.any():
+                    # obs_new already belongs to the reset episode. Bootstrap
+                    # from the final state with the same frozen RMS as values.
+                    final_obs = extras['obs_before_reset'][timeout]
+                    if self.obs_rms is not None:
+                        final_obs = obs_rms_snapshot.normalize(final_obs)
+                    self.buf_timeout_values[step, timeout] = self.critic(final_obs).squeeze(-1)
 
             # Episode tracking
             self.episode_length += 1
@@ -229,7 +242,7 @@ class PPO:
 
     @torch.no_grad()
     def _compute_gae(self, last_value):
-        """Generalized Advantage Estimation."""
+        """GAE bootstraps timeouts but never propagates across an episode reset."""
         gae = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         next_value = last_value
 
@@ -237,7 +250,7 @@ class PPO:
             not_done = 1.0 - self.buf_dones[step]
             delta = (
                 self.buf_rewards[step]
-                + self.gamma * next_value * not_done
+                + self.gamma * (next_value * not_done + self.buf_timeout_values[step])
                 - self.buf_values[step]
             )
             gae = delta + self.gamma * self.gae_lambda * not_done * gae

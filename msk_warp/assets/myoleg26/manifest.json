@@ -1,0 +1,765 @@
+{
+  "assets": {
+    "meshes/hat_cervical.stl": {
+      "sha256": "1dfabded9875d6526892e937f7d47d204c40a75f03dc9948cd5f83bf41f5e7a6",
+      "source": "myo_sim/models/meshes/hat_cervical.stl"
+    },
+    "meshes/hat_jaw.stl": {
+      "sha256": "0f3bf4a2f419a755d26bbd0e46b81e19b497a6aab87da5f270f1db370ce0fb3b",
+      "source": "myo_sim/models/meshes/hat_jaw.stl"
+    },
+    "meshes/hat_skull.stl": {
+      "sha256": "c5eacbd85c96bc84ff48e595a8b59d1ddfab6026939e008e460348a5a672554c",
+      "source": "myo_sim/models/meshes/hat_skull.stl"
+    },
+    "meshes/l_bofoot.stl": {
+      "sha256": "e3cc26950da6a22ac921e937740408bba43193f1c422810716435a4dd39a0ad1",
+      "source": "myo_sim/models/meshes/l_bofoot.stl"
+    },
+    "meshes/l_femur.stl": {
+      "sha256": "d72e3bc4c1d0bbf76e189d50cd0594e3275169d1b2bf48370cb07d3d2a1a848d",
+      "source": "myo_sim/models/meshes/l_femur.stl"
+    },
+    "meshes/l_fibula.stl": {
+      "sha256": "1b31ecc2af2935d3602f977af1787c55551a2179d38a44bb015005698a1e1bae",
+      "source": "myo_sim/models/meshes/l_fibula.stl"
+    },
+    "meshes/l_foot.stl": {
+      "sha256": "4cb976c3d03dc47cbee8786999a572f580044976e149c1bdeffe27666a0e42f7",
+      "source": "myo_sim/models/meshes/l_foot.stl"
+    },
+    "meshes/l_pelvis.stl": {
+      "sha256": "6998661b30f05288f018ca3e4934ae45560b1fd62f638f339fcf4881aa16c1a4",
+      "source": "myo_sim/models/meshes/l_pelvis.stl"
+    },
+    "meshes/l_talus.stl": {
+      "sha256": "45cff977c3cf0e2da78832366630f662f20526a5c5ad4f753c268a58b10b3a6a",
+      "source": "myo_sim/models/meshes/l_talus.stl"
+    },
+    "meshes/l_tibia.stl": {
+      "sha256": "0b4392cf63f523dba4fa0d9fdd62cf2bf0b464eaeaad320103d33534fc9e5b60",
+      "source": "myo_sim/models/meshes/l_tibia.stl"
+    },
+    "meshes/lumbar1.stl": {
+      "sha256": "91c604e11ea1637908f005ad783c7da3dfdcc71d22dce59a3a5f7dee88c6c934",
+      "source": "myo_sim/models/meshes/lumbar1.stl"
+    },
+    "meshes/lumbar2.stl": {
+      "sha256": "bceb18d5b62691c28928db4279d63ee38a43c1e8e3aa512c832b4f0811a009fb",
+      "source": "myo_sim/models/meshes/lumbar2.stl"
+    },
+    "meshes/lumbar3.stl": {
+      "sha256": "cb7c9731a4ee455b2ed9f3379cd3e5a7065079aa7e3004b111d3f809fa2deaed",
+      "source": "myo_sim/models/meshes/lumbar3.stl"
+    },
+    "meshes/lumbar4.stl": {
+      "sha256": "7809048e49c9e6a2b64c61edc6a5fa7b8b43c8033103e483b238014b9300fe83",
+      "source": "myo_sim/models/meshes/lumbar4.stl"
+    },
+    "meshes/lumbar5.stl": {
+      "sha256": "6be51294721e971922ada46d05d63c823c6e2bae8f34ead9cd3a7b3f9937e405",
+      "source": "myo_sim/models/meshes/lumbar5.stl"
+    },
+    "meshes/myosuite_logo.msh": {
+      "sha256": "6dc356d095d68c2fb35942aaf1835b3ea32b3f50aca51bbde703a61f57bb6f07",
+      "source": "myo_sim/models/scene/myosuite_logo.msh"
+    },
+    "meshes/myosuite_scene_noFloor.msh": {
+      "sha256": "1f736f37affde496d3ee35d241760b52909f01cf453b6b13989e863f9a5286f0",
+      "source": "myo_sim/models/scene/myosuite_scene_noFloor.msh"
+    },
+    "meshes/r_bofoot.stl": {
+      "sha256": "39dae011e441c0018cba4a00664d4076f0bb8f86f73522567275ececf6f78db5",
+      "source": "myo_sim/models/meshes/r_bofoot.stl"
+    },
+    "meshes/r_femur.stl": {
+      "sha256": "7d6e76a58e964551824169d89ae4b6142617f947bfdbc4ee0a4328040acf9f63",
+      "source": "myo_sim/models/meshes/r_femur.stl"
+    },
+    "meshes/r_fibula.stl": {
+      "sha256": "2cb0f77671c5421abdec1643aab77b41af2c2b5a8eff49845b098b2393443354",
+      "source": "myo_sim/models/meshes/r_fibula.stl"
+    },
+    "meshes/r_foot.stl": {
+      "sha256": "e95cf6418432ea49488790364588246202b7ce54d6827bef49ac3406733d9f4f",
+      "source": "myo_sim/models/meshes/r_foot.stl"
+    },
+    "meshes/r_pelvis.stl": {
+      "sha256": "6eb7bbe904ce85566fc6afcde0935eda11ae12da341965616c7c798c9b2d7ee4",
+      "source": "myo_sim/models/meshes/r_pelvis.stl"
+    },
+    "meshes/r_talus.stl": {
+      "sha256": "96202bdab4836e8fede82d3897b4b1bbc6f1afd6fc77e87b8bb444212df2ae90",
+      "source": "myo_sim/models/meshes/r_talus.stl"
+    },
+    "meshes/r_tibia.stl": {
+      "sha256": "7c016de88550dab6bb33d3060ba7aa42b061ca78c5224b7d92a4c766f25ca15f",
+      "source": "myo_sim/models/meshes/r_tibia.stl"
+    },
+    "meshes/sacrum.stl": {
+      "sha256": "927ddbb64e811b2b03ad64eddb570cd40c0493f5b8cd5213d8d15a4502bfde10",
+      "source": "myo_sim/models/meshes/sacrum.stl"
+    },
+    "meshes/thoracic10_s.stl": {
+      "sha256": "0691176e6c566bfd5594170f9748856a19872a48efa8a3b3b0e3c2344e209315",
+      "source": "myo_sim/models/meshes/thoracic10_s.stl"
+    },
+    "meshes/thoracic11_s.stl": {
+      "sha256": "5c55c414cdb03eadb6a0805318f698b6afbcec55ad57b2bc87219c91d9dd95d7",
+      "source": "myo_sim/models/meshes/thoracic11_s.stl"
+    },
+    "meshes/thoracic12_s.stl": {
+      "sha256": "bb17b3983b74f7b49ab3a46418080ca774b67fd82baf266d388216d9889b2d89",
+      "source": "myo_sim/models/meshes/thoracic12_s.stl"
+    },
+    "meshes/thoracic1_s.stl": {
+      "sha256": "5ca7c8a26b4d98f5c7caefd1a6fb963322b8f425e21b60dd181e57c33cf03db2",
+      "source": "myo_sim/models/meshes/thoracic1_s.stl"
+    },
+    "meshes/thoracic2_s.stl": {
+      "sha256": "e4cb39e17803689f168a2e335dfe8f6d0b0d1e2f73f09090243aecf1edb4142d",
+      "source": "myo_sim/models/meshes/thoracic2_s.stl"
+    },
+    "meshes/thoracic3_s.stl": {
+      "sha256": "eb4e53ec5d4882e1150dfe56cc526b4cde02902928af2776f7cae03eb9aad8c6",
+      "source": "myo_sim/models/meshes/thoracic3_s.stl"
+    },
+    "meshes/thoracic4_s.stl": {
+      "sha256": "1bb845d525adfec04a48f0eb87afe4d3342bb7537f46e56b0aad2002e0b81398",
+      "source": "myo_sim/models/meshes/thoracic4_s.stl"
+    },
+    "meshes/thoracic5_s.stl": {
+      "sha256": "eaec4d5813d1856c8adbbf92e256fb2414d24fb6c95aaf8a8d2203e9599f9720",
+      "source": "myo_sim/models/meshes/thoracic5_s.stl"
+    },
+    "meshes/thoracic6_s.stl": {
+      "sha256": "5a0d7e4b222db5e60a2311cd6a2ebbb297d9f1fa4b7261f6322b1e493a345ab9",
+      "source": "myo_sim/models/meshes/thoracic6_s.stl"
+    },
+    "meshes/thoracic7_s.stl": {
+      "sha256": "83dcde7d23e654d3cdd5819386a7cc618ee69108457bbf9df9bdc5afeff8bdd4",
+      "source": "myo_sim/models/meshes/thoracic7_s.stl"
+    },
+    "meshes/thoracic8_s.stl": {
+      "sha256": "1d70ae9098156de03ec99fae3ce79e5b5519893e98774f16fa944ab33a0d0e5a",
+      "source": "myo_sim/models/meshes/thoracic8_s.stl"
+    },
+    "meshes/thoracic9_s.stl": {
+      "sha256": "545976b6e139ae38e5384d21e73a0e918c44e74aec6cfd9f26c59c979477f415",
+      "source": "myo_sim/models/meshes/thoracic9_s.stl"
+    },
+    "meshes/thorax.stl": {
+      "sha256": "8af304432bf2ca7d9c07de763badbb1df4fab7df7629d499329d5411fa46c212",
+      "source": "myo_sim/models/meshes/thorax.stl"
+    },
+    "textures/floor0.png": {
+      "sha256": "b6480ddfc8519607574fb08f98d6ee9673e3790014b1c5239641632d24752cf1",
+      "source": "myo_sim/models/scene/floor0.png"
+    },
+    "textures/myosuite_logo.png": {
+      "sha256": "6587db5da73706f355155f0c49f550afbe601f51029ef7aa89bcf4e73ff09698",
+      "source": "myo_sim/models/scene/myosuite_logo.png"
+    },
+    "textures/myosuite_scene.png": {
+      "sha256": "b14011caf35a0fcdfe32d287907149c7eae159e2e599f27c144dc97d2abc41ce",
+      "source": "myo_sim/models/scene/myosuite_scene.png"
+    }
+  },
+  "builder_sha256": {
+    "msk_warp/models/myoleg26.py": "d7ad9d78ba9cacc1e3e217921061555d38e8398faf54b29a46886d4346d2d4c7",
+    "scripts/build_myoleg26_assets.py": "9ea85118f8f341347152f7b1cabb24aa29996c82d3203372f909faa84210dad9"
+  },
+  "dimensions": {
+    "na": 26,
+    "nbody": 38,
+    "neq": 28,
+    "nq": 47,
+    "nu": 26,
+    "nv": 46
+  },
+  "export_adjustments": [
+    "upstream sanitize_spec_xml for nested defaults and collision-mask preservation",
+    "full-precision body/geom/site positions/orientations, task boxes and keyframes to avoid serializer rounding"
+  ],
+  "export_equivalence_fields": [
+    "geom_type",
+    "geom_bodyid",
+    "geom_dataid",
+    "geom_pos",
+    "geom_quat",
+    "geom_size",
+    "geom_friction",
+    "geom_solref",
+    "geom_solimp",
+    "geom_margin",
+    "geom_gap",
+    "geom_condim",
+    "geom_priority",
+    "geom_solmix",
+    "geom_contype",
+    "geom_conaffinity",
+    "pair_geom1",
+    "pair_geom2",
+    "pair_dim",
+    "pair_friction",
+    "pair_solref",
+    "pair_solreffriction",
+    "pair_solimp",
+    "pair_margin",
+    "pair_gap",
+    "key_time",
+    "key_qpos",
+    "key_qvel",
+    "key_act",
+    "key_ctrl"
+  ],
+  "files": {
+    "LICENSE.upstream": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "SOURCE_NOTICES.txt": "cadbaa6b4e8403c9da1925fab3dfe4055bd85e077f048a1dc493d777ed3d8cca",
+    "flat_boxes.xml": "e9f8d200bef20c5b2cc0c4581432d40b211c933746a3fc277561a632e4f6cea6",
+    "meshes/hat_cervical.stl": "1dfabded9875d6526892e937f7d47d204c40a75f03dc9948cd5f83bf41f5e7a6",
+    "meshes/hat_jaw.stl": "0f3bf4a2f419a755d26bbd0e46b81e19b497a6aab87da5f270f1db370ce0fb3b",
+    "meshes/hat_skull.stl": "c5eacbd85c96bc84ff48e595a8b59d1ddfab6026939e008e460348a5a672554c",
+    "meshes/l_bofoot.stl": "e3cc26950da6a22ac921e937740408bba43193f1c422810716435a4dd39a0ad1",
+    "meshes/l_femur.stl": "d72e3bc4c1d0bbf76e189d50cd0594e3275169d1b2bf48370cb07d3d2a1a848d",
+    "meshes/l_fibula.stl": "1b31ecc2af2935d3602f977af1787c55551a2179d38a44bb015005698a1e1bae",
+    "meshes/l_foot.stl": "4cb976c3d03dc47cbee8786999a572f580044976e149c1bdeffe27666a0e42f7",
+    "meshes/l_pelvis.stl": "6998661b30f05288f018ca3e4934ae45560b1fd62f638f339fcf4881aa16c1a4",
+    "meshes/l_talus.stl": "45cff977c3cf0e2da78832366630f662f20526a5c5ad4f753c268a58b10b3a6a",
+    "meshes/l_tibia.stl": "0b4392cf63f523dba4fa0d9fdd62cf2bf0b464eaeaad320103d33534fc9e5b60",
+    "meshes/lumbar1.stl": "91c604e11ea1637908f005ad783c7da3dfdcc71d22dce59a3a5f7dee88c6c934",
+    "meshes/lumbar2.stl": "bceb18d5b62691c28928db4279d63ee38a43c1e8e3aa512c832b4f0811a009fb",
+    "meshes/lumbar3.stl": "cb7c9731a4ee455b2ed9f3379cd3e5a7065079aa7e3004b111d3f809fa2deaed",
+    "meshes/lumbar4.stl": "7809048e49c9e6a2b64c61edc6a5fa7b8b43c8033103e483b238014b9300fe83",
+    "meshes/lumbar5.stl": "6be51294721e971922ada46d05d63c823c6e2bae8f34ead9cd3a7b3f9937e405",
+    "meshes/myosuite_logo.msh": "6dc356d095d68c2fb35942aaf1835b3ea32b3f50aca51bbde703a61f57bb6f07",
+    "meshes/myosuite_scene_noFloor.msh": "1f736f37affde496d3ee35d241760b52909f01cf453b6b13989e863f9a5286f0",
+    "meshes/r_bofoot.stl": "39dae011e441c0018cba4a00664d4076f0bb8f86f73522567275ececf6f78db5",
+    "meshes/r_femur.stl": "7d6e76a58e964551824169d89ae4b6142617f947bfdbc4ee0a4328040acf9f63",
+    "meshes/r_fibula.stl": "2cb0f77671c5421abdec1643aab77b41af2c2b5a8eff49845b098b2393443354",
+    "meshes/r_foot.stl": "e95cf6418432ea49488790364588246202b7ce54d6827bef49ac3406733d9f4f",
+    "meshes/r_pelvis.stl": "6eb7bbe904ce85566fc6afcde0935eda11ae12da341965616c7c798c9b2d7ee4",
+    "meshes/r_talus.stl": "96202bdab4836e8fede82d3897b4b1bbc6f1afd6fc77e87b8bb444212df2ae90",
+    "meshes/r_tibia.stl": "7c016de88550dab6bb33d3060ba7aa42b061ca78c5224b7d92a4c766f25ca15f",
+    "meshes/sacrum.stl": "927ddbb64e811b2b03ad64eddb570cd40c0493f5b8cd5213d8d15a4502bfde10",
+    "meshes/thoracic10_s.stl": "0691176e6c566bfd5594170f9748856a19872a48efa8a3b3b0e3c2344e209315",
+    "meshes/thoracic11_s.stl": "5c55c414cdb03eadb6a0805318f698b6afbcec55ad57b2bc87219c91d9dd95d7",
+    "meshes/thoracic12_s.stl": "bb17b3983b74f7b49ab3a46418080ca774b67fd82baf266d388216d9889b2d89",
+    "meshes/thoracic1_s.stl": "5ca7c8a26b4d98f5c7caefd1a6fb963322b8f425e21b60dd181e57c33cf03db2",
+    "meshes/thoracic2_s.stl": "e4cb39e17803689f168a2e335dfe8f6d0b0d1e2f73f09090243aecf1edb4142d",
+    "meshes/thoracic3_s.stl": "eb4e53ec5d4882e1150dfe56cc526b4cde02902928af2776f7cae03eb9aad8c6",
+    "meshes/thoracic4_s.stl": "1bb845d525adfec04a48f0eb87afe4d3342bb7537f46e56b0aad2002e0b81398",
+    "meshes/thoracic5_s.stl": "eaec4d5813d1856c8adbbf92e256fb2414d24fb6c95aaf8a8d2203e9599f9720",
+    "meshes/thoracic6_s.stl": "5a0d7e4b222db5e60a2311cd6a2ebbb297d9f1fa4b7261f6322b1e493a345ab9",
+    "meshes/thoracic7_s.stl": "83dcde7d23e654d3cdd5819386a7cc618ee69108457bbf9df9bdc5afeff8bdd4",
+    "meshes/thoracic8_s.stl": "1d70ae9098156de03ec99fae3ce79e5b5519893e98774f16fa944ab33a0d0e5a",
+    "meshes/thoracic9_s.stl": "545976b6e139ae38e5384d21e73a0e918c44e74aec6cfd9f26c59c979477f415",
+    "meshes/thorax.stl": "8af304432bf2ca7d9c07de763badbb1df4fab7df7629d499329d5411fa46c212",
+    "reference.xml": "52ac9d743ba6cdda356820c5003546d30b34b76124aca5a926e7d860f5779eef",
+    "textures/floor0.png": "b6480ddfc8519607574fb08f98d6ee9673e3790014b1c5239641632d24752cf1",
+    "textures/myosuite_logo.png": "6587db5da73706f355155f0c49f550afbe601f51029ef7aa89bcf4e73ff09698",
+    "textures/myosuite_scene.png": "b14011caf35a0fcdfe32d287907149c7eae159e2e599f27c144dc97d2abc41ce"
+  },
+  "invariant_fields": [
+    "body_parentid",
+    "body_mass",
+    "body_inertia",
+    "body_ipos",
+    "body_iquat",
+    "body_pos",
+    "body_quat",
+    "qpos0",
+    "jnt_type",
+    "jnt_qposadr",
+    "jnt_dofadr",
+    "jnt_bodyid",
+    "jnt_pos",
+    "jnt_axis",
+    "jnt_range",
+    "jnt_limited",
+    "jnt_stiffness",
+    "jnt_margin",
+    "dof_armature",
+    "dof_damping",
+    "dof_frictionloss",
+    "eq_type",
+    "eq_obj1id",
+    "eq_obj2id",
+    "eq_data",
+    "eq_solref",
+    "eq_solimp",
+    "eq_active0",
+    "site_pos",
+    "site_quat",
+    "site_bodyid",
+    "tendon_adr",
+    "tendon_num",
+    "tendon_range",
+    "tendon_limited",
+    "tendon_stiffness",
+    "tendon_damping",
+    "tendon_frictionloss",
+    "tendon_lengthspring",
+    "tendon_solref_lim",
+    "tendon_solimp_lim",
+    "wrap_type",
+    "wrap_objid",
+    "wrap_prm",
+    "actuator_trntype",
+    "actuator_trnid",
+    "actuator_gear",
+    "actuator_dyntype",
+    "actuator_gaintype",
+    "actuator_biastype",
+    "actuator_dynprm",
+    "actuator_gainprm",
+    "actuator_biasprm",
+    "actuator_lengthrange",
+    "actuator_ctrlrange",
+    "actuator_ctrllimited",
+    "actuator_actrange",
+    "actuator_actlimited",
+    "actuator_actadr",
+    "actuator_actnum"
+  ],
+  "model_options": {
+    "reference": {
+      "cone": 0,
+      "disableflags": 0,
+      "enableflags": 0,
+      "gravity": [
+        0.0,
+        0.0,
+        -9.81
+      ],
+      "impratio": 1.0,
+      "integrator": 0,
+      "iterations": 100,
+      "jacobian": 2,
+      "ls_iterations": 50,
+      "ls_tolerance": 0.01,
+      "solver": 2,
+      "timestep": 0.002,
+      "tolerance": 1e-08
+    },
+    "task": {
+      "cone": 0,
+      "disableflags": 512,
+      "enableflags": 0,
+      "gravity": [
+        0.0,
+        0.0,
+        -9.81
+      ],
+      "impratio": 1.0,
+      "integrator": 0,
+      "iterations": 100,
+      "jacobian": 0,
+      "ls_iterations": 50,
+      "ls_tolerance": 0.01,
+      "solver": 2,
+      "timestep": 0.002,
+      "tolerance": 1e-08
+    }
+  },
+  "mujoco_version": "3.10.0",
+  "reference_total_mass_kg": 78.09046847904195,
+  "schema_version": 1,
+  "source": {
+    "clean": true,
+    "commit": "eb327acbae0fad12279495040607f5235d962328",
+    "registry_name": "myolegs26",
+    "repository": "https://github.com/MyoHub/myo_sim.git"
+  },
+  "source_inputs": {
+    "myo_sim/__init__.py": "0ee10a0b84b778c73e9b1bef55935a1d6304a444b248b54b5159cbe268d31b46",
+    "myo_sim/build/compose.py": "2b43c64d0bd1992afb03157c948837f9adad5538ebc07934567ffd163b6b8993",
+    "myo_sim/build/utils.py": "4a77c8c4406e18a33a4225a08a48626ae0c814572e493ea799c124fda0d34e80",
+    "myo_sim/models/contacts/myolegs26_contacts.xml": "1fcae2cf77c9d25716a09b03bf78fd20c8830dd782b6d70f06390f102d2e5cd7",
+    "myo_sim/models/head/assets/myohead_rigid_chain.xml": "dd2cc88789ea8d6eaf17778502c018397459534b37c5b0e16ad5cd96c5639483",
+    "myo_sim/models/head/assets/myohead_simple_assets.xml": "62a81568c8fe06dc960501b886d9949ac23ce60acabe1c10f9b16c9ef9c2bbf4",
+    "myo_sim/models/leg/assets/myolegs26_assets.xml": "1a43527f9267fb49f0335f6d9b862bec3820af8093382668560da4b3e83859ca",
+    "myo_sim/models/leg/assets/myolegs26_chain.xml": "38c85fd22704c80216dd85aabf5a666dfc3f036c48fb7948521453e0a7d52884",
+    "myo_sim/models/leg/assets/myolegs26_muscle.xml": "3b19a44a31ecf5de1785f86ebcf0cfb5e8de07ec5c3c1d42d343a81dfeca9f55",
+    "myo_sim/models/leg/assets/myolegs26_tendon.xml": "09b188ae5a2e1ce293aa3d86bb62c992d24ab1e031e03e38973b2b7ab21f7304",
+    "myo_sim/models/scene/myosuite_scene.xml": "4221ec0daeb23960c7ec3acfe35728fd00705a8388e0625dbebd927688906ea2",
+    "myo_sim/models/sensors/myolegs26_sensors.xml": "d2ac42d73edea3b2119ab7104489afb62a093490c92a10c92621676f65fa767f",
+    "myo_sim/models/torso/assets/myotorso_assets.xml": "e4fe43686fdae380b1b5dd54e8e894211d360c793ea74f88006df1760f5f187d",
+    "myo_sim/models/torso/assets/myotorso_chain.xml": "5fca2d62ba4252c82df7417a28ec5fbbd2045588a829934b56c2c02827888521"
+  },
+  "task": {
+    "adjoint_status": "unvalidated; free-root and tendon gradient gates remain required",
+    "approximation": "conservative boxes; not an anatomically validated collision envelope",
+    "collision_fit": "body-frame AABB union of originally collidable source surfaces",
+    "foot_bodies": [
+      "calcn_r",
+      "toes_r",
+      "calcn_l",
+      "toes_l"
+    ],
+    "name": "flat_ground_body_boxes_no_self_contact",
+    "nominal_reset": {
+      "meaning": "nominal reference pose, not a demonstrated equilibrium",
+      "minimum_foot_clearance_m": 0.001,
+      "root_vertical_translation_m": -0.08381500020147145,
+      "root_yaw_radians": 1.5707963267948966
+    },
+    "proxies": [
+      {
+        "body": "torso",
+        "foot": false,
+        "geom": "task_collision_torso",
+        "half_size": [
+          0.11,
+          0.25906161519325854,
+          0.21999999999999997
+        ],
+        "position": [
+          0.010999999999999996,
+          0.15906161519325857,
+          0.0
+        ],
+        "source_geoms": [
+          {
+            "id": 25,
+            "name": "",
+            "type": "mjGEOM_CAPSULE"
+          },
+          {
+            "id": 26,
+            "name": "thorax_coll1",
+            "type": "mjGEOM_ELLIPSOID"
+          },
+          {
+            "id": 27,
+            "name": "thorax_coll2",
+            "type": "mjGEOM_CAPSULE"
+          },
+          {
+            "id": 28,
+            "name": "thorax_coll3",
+            "type": "mjGEOM_CAPSULE"
+          }
+        ]
+      },
+      {
+        "body": "neck",
+        "foot": false,
+        "geom": "task_collision_neck",
+        "half_size": [
+          0.05794677323180245,
+          0.08920265068373318,
+          0.050031218127769284
+        ],
+        "position": [
+          -0.019999999999999997,
+          0.45,
+          0.0
+        ],
+        "source_geoms": [
+          {
+            "id": 34,
+            "name": "hat_cervical_coll",
+            "type": "mjGEOM_CAPSULE"
+          }
+        ]
+      },
+      {
+        "body": "head",
+        "foot": false,
+        "geom": "task_collision_head",
+        "half_size": [
+          0.10951769898459476,
+          0.11613057776119917,
+          0.075
+        ],
+        "position": [
+          0.009517698984594758,
+          0.05886942223880082,
+          0.0
+        ],
+        "source_geoms": [
+          {
+            "id": 36,
+            "name": "hat_jaw_coll2",
+            "type": "mjGEOM_ELLIPSOID"
+          },
+          {
+            "id": 38,
+            "name": "hat_skull_coll",
+            "type": "mjGEOM_ELLIPSOID"
+          }
+        ]
+      },
+      {
+        "body": "pelvis",
+        "foot": false,
+        "geom": "task_collision_pelvis",
+        "half_size": [
+          0.07825350192627244,
+          0.10739849942114348,
+          0.1321679948075611
+        ],
+        "position": [
+          -0.07824350034243839,
+          -0.026393500104997622,
+          2.7755575615628914e-17
+        ],
+        "source_geoms": [
+          {
+            "id": 45,
+            "name": "pelvis_geom_1",
+            "type": "mjGEOM_MESH"
+          },
+          {
+            "id": 46,
+            "name": "pelvis_geom_2",
+            "type": "mjGEOM_MESH"
+          },
+          {
+            "id": 47,
+            "name": "pelvis_geom_3",
+            "type": "mjGEOM_MESH"
+          }
+        ]
+      },
+      {
+        "body": "femur_r",
+        "foot": false,
+        "geom": "task_collision_femur_r",
+        "half_size": [
+          0.035158499753697045,
+          0.2263555010788302,
+          0.04975149978715432
+        ],
+        "position": [
+          -0.0022565015208882815,
+          -0.2040074992034617,
+          0.012123499608980678
+        ],
+        "source_geoms": [
+          {
+            "id": 48,
+            "name": "femur_r_geom_1",
+            "type": "mjGEOM_MESH"
+          }
+        ]
+      },
+      {
+        "body": "tibia_r",
+        "foot": false,
+        "geom": "task_collision_tibia_r",
+        "half_size": [
+          0.02963349886326941,
+          0.1945639966169143,
+          0.035202499182885434
+        ],
+        "position": [
+          -0.002019499091225013,
+          -0.2125019893868639,
+          0.0045605000065943105
+        ],
+        "source_geoms": [
+          {
+            "id": 49,
+            "name": "tibia_r_geom_1",
+            "type": "mjGEOM_MESH"
+          },
+          {
+            "id": 50,
+            "name": "tibia_r_geom_2",
+            "type": "mjGEOM_MESH"
+          }
+        ]
+      },
+      {
+        "body": "talus_r",
+        "foot": false,
+        "geom": "task_collision_talus_r",
+        "half_size": [
+          0.02307050073966168,
+          0.015059000603469038,
+          0.020775499241763556
+        ],
+        "position": [
+          0.0055364990408986355,
+          -0.0011650003663130548,
+          -0.0003655002808955494
+        ],
+        "source_geoms": [
+          {
+            "id": 51,
+            "name": "talus_r_geom_1",
+            "type": "mjGEOM_MESH"
+          }
+        ]
+      },
+      {
+        "body": "calcn_r",
+        "foot": true,
+        "geom": "task_collision_calcn_r",
+        "half_size": [
+          0.09680850162704799,
+          0.026436999788373692,
+          0.04243299974812711
+        ],
+        "position": [
+          0.08700849873067082,
+          0.016598000458642497,
+          0.0031979992128382123
+        ],
+        "source_geoms": [
+          {
+            "id": 52,
+            "name": "calcn_r_geom_1",
+            "type": "mjGEOM_MESH"
+          }
+        ]
+      },
+      {
+        "body": "toes_r",
+        "foot": true,
+        "geom": "task_collision_toes_r",
+        "half_size": [
+          0.05645099854931128,
+          0.009092500024740359,
+          0.04592250158019073
+        ],
+        "position": [
+          0.020466999431013256,
+          -0.0010424997737878573,
+          0.008275499685833305
+        ],
+        "source_geoms": [
+          {
+            "id": 53,
+            "name": "toes_r_geom_1",
+            "type": "mjGEOM_MESH"
+          }
+        ]
+      },
+      {
+        "body": "femur_l",
+        "foot": false,
+        "geom": "task_collision_femur_l",
+        "half_size": [
+          0.035158499753697045,
+          0.22635550107883023,
+          0.04975149978715432
+        ],
+        "position": [
+          -0.0022565015208882815,
+          -0.20400749920346173,
+          -0.012123499608980678
+        ],
+        "source_geoms": [
+          {
+            "id": 54,
+            "name": "femur_l_geom_1",
+            "type": "mjGEOM_MESH"
+          }
+        ]
+      },
+      {
+        "body": "tibia_l",
+        "foot": false,
+        "geom": "task_collision_tibia_l",
+        "half_size": [
+          0.029633498863269405,
+          0.1945639966169142,
+          0.03520249918288543
+        ],
+        "position": [
+          -0.002019499091225011,
+          -0.21250198938686388,
+          -0.004560500006594305
+        ],
+        "source_geoms": [
+          {
+            "id": 55,
+            "name": "tibia_l_geom_1",
+            "type": "mjGEOM_MESH"
+          },
+          {
+            "id": 56,
+            "name": "tibia_l_geom_2",
+            "type": "mjGEOM_MESH"
+          }
+        ]
+      },
+      {
+        "body": "talus_l",
+        "foot": false,
+        "geom": "task_collision_talus_l",
+        "half_size": [
+          0.02307050073966168,
+          0.015059000603469036,
+          0.020775499241763556
+        ],
+        "position": [
+          0.0055364990408986355,
+          -0.001165000366313054,
+          0.00036550028089554765
+        ],
+        "source_geoms": [
+          {
+            "id": 57,
+            "name": "talus_l_geom_1",
+            "type": "mjGEOM_MESH"
+          }
+        ]
+      },
+      {
+        "body": "calcn_l",
+        "foot": true,
+        "geom": "task_collision_calcn_l",
+        "half_size": [
+          0.09680850162704799,
+          0.026436999788373692,
+          0.04243299974812711
+        ],
+        "position": [
+          0.08700849873067082,
+          0.016598000458642497,
+          -0.0031979992128382123
+        ],
+        "source_geoms": [
+          {
+            "id": 58,
+            "name": "calcn_l_geom_1",
+            "type": "mjGEOM_MESH"
+          }
+        ]
+      },
+      {
+        "body": "toes_l",
+        "foot": true,
+        "geom": "task_collision_toes_l",
+        "half_size": [
+          0.05645099854931128,
+          0.009092500024740359,
+          0.04592250158019073
+        ],
+        "position": [
+          0.020466999431013277,
+          -0.0010424997737878607,
+          -0.008275499685833312
+        ],
+        "source_geoms": [
+          {
+            "id": 59,
+            "name": "toes_l_geom_1",
+            "type": "mjGEOM_MESH"
+          }
+        ]
+      }
+    ],
+    "removed_explicit_pairs": 25,
+    "removed_world_geoms": [
+      "floor",
+      "",
+      "",
+      ""
+    ]
+  }
+}

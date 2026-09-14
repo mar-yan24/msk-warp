@@ -258,6 +258,32 @@ class SHAC:
             lr=self.critic_lr,
         )
 
+    def _bootstrap_reset_values(self, next_values, done, extra_info, obs_rms):
+        """Replace reset-episode values with final-state values for timeouts only.
+
+        Explicit termination takes precedence when a failure meets the time limit.
+        Environments without termination metadata retain the legacy length rule.
+        """
+        done = done.bool()
+        if 'terminated' in extra_info and 'truncated' in extra_info:
+            timeout = done & extra_info['truncated'].bool() & ~extra_info['terminated'].bool()
+        else:
+            timeout = done & (self.episode_length >= self.max_episode_length)
+
+        values = next_values.clone()
+        values[done] = 0.0
+        timeout_ids = timeout.nonzero(as_tuple=False).squeeze(-1)
+        if len(timeout_ids) > 0:
+            final_obs = extra_info['obs_before_reset'][timeout_ids]
+            valid = torch.isfinite(final_obs).all(dim=-1) & (final_obs.abs() <= 1e6).all(dim=-1)
+            valid_ids = timeout_ids[valid]
+            if len(valid_ids) > 0:
+                final_obs = final_obs[valid]
+                if obs_rms is not None:
+                    final_obs = obs_rms.normalize(final_obs)
+                values[valid_ids] = self.target_critic(final_obs).squeeze(-1)
+        return values
+
     def compute_actor_loss(self, deterministic=False):
         rew_acc = torch.zeros(
             (self.steps_num + 1, self.num_envs),
@@ -360,21 +386,10 @@ class SHAC:
 
             next_values[i + 1] = self.target_critic(obs).squeeze(-1)
 
-            for id in done_env_ids:
-                if (
-                    torch.isnan(extra_info['obs_before_reset'][id]).sum() > 0
-                    or torch.isinf(extra_info['obs_before_reset'][id]).sum() > 0
-                    or (torch.abs(extra_info['obs_before_reset'][id]) > 1e6).sum() > 0
-                ):
-                    next_values[i + 1, id] = 0.0
-                elif self.episode_length[id] < self.max_episode_length:
-                    next_values[i + 1, id] = 0.0
-                else:
-                    if self.obs_rms is not None:
-                        real_obs = obs_rms.normalize(extra_info['obs_before_reset'][id])
-                    else:
-                        real_obs = extra_info['obs_before_reset'][id]
-                    next_values[i + 1, id] = self.target_critic(real_obs).squeeze(-1)
+            next_values[i + 1] = self._bootstrap_reset_values(
+                next_values[i + 1], done, extra_info,
+                obs_rms if self.obs_rms is not None else None,
+            )
 
             if (next_values[i + 1] > 1e6).sum() > 0 or (next_values[i + 1] < -1e6).sum() > 0:
                 print('next value error')

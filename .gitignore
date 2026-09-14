@@ -32,7 +32,8 @@ outputs/
 .DS_Store
 Thumbs.db
 
-# Session docs
+# Local research notes, including the validity ledger (user request 2026-09-12).
+# Keep files on disk; code, tests and commit messages carry the versioned record.
 docs/
 
 # Claude
@@ -57,3 +58,7 @@ tests/data/plots/
 bench/
 scripts/env/
 CLAUDE.md
+
+# MuJoCo writes this when the engine emits a warning (e.g. the deliberate
+# instability regression in tests/unit/test_stability.py)
+MUJOCO_LOG.TXT

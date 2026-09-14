@@ -1,0 +1,1348 @@
+<mujoco model="myotorso_attach">
+  <compiler angle="radian" meshdir="." texturedir="." />
+  <option jacobian="dense">
+    <flag warmstart="disable" />
+  </option>
+  <size nkey="1" />
+  <visual>
+    <global elevation="-15" />
+    <headlight ambient="0.5 0.5 0.5" diffuse="0.5 0.5 0.5" />
+    <scale light="0.05" framewidth="0.005" />
+    <rgba actuator="0.7 0.4 0.4 1" actuatornegative="0.175 0.1 0.1 1" actuatorpositive="1 0 0 1" />
+  </visual>
+  <statistic extent="5" center="0 -1 1" />
+  <default>
+    <default class="myotorso">
+      <joint limited="true" armature="0.01" damping="0.5" />
+      <geom contype="0" conaffinity="0" margin="0.001" material="mat_myotorso" rgba="0.8 0.8 0.8 1" />
+      <site size="0.001 0.005 0.005" group="3" />
+      <tendon limited="false" width="0.005" rgba="0.95 0.3 0.3 1" />
+      <default class="myotorso_muscle">
+        <general ctrllimited="true" ctrlrange="0 1" dyntype="muscle" dynprm="0.01 0.04 0 0 0 0 0 0 0 0" gaintype="muscle" biastype="muscle" gainprm="0.75 1.05 -1 200 0.5 1.6 1.5 1.3 1.2" biasprm="0.75 1.05 -1 200 0.5 1.6 1.5 1.3 1.2" />
+      </default>
+      <default class="myotorso_back_wrap">
+        <geom type="cylinder" group="3" rgba="0.5 0.5 0.9 0.5" />
+      </default>
+      <default class="myotorso_sidesite">
+        <site size="0.0005 0.005 0.005" />
+      </default>
+      <default class="myotorso_wrap">
+        <geom group="3" rgba="0.19 0.83 0.78 0.2" />
+      </default>
+      <default class="myotorso_marker">
+        <site group="4" rgba="1 0.1 0.5 0.5" />
+      </default>
+      <default class="myotorso_motor">
+        <general gainprm="5" />
+      </default>
+      <default class="myotorso_coll">
+        <geom type="capsule" contype="1" group="4" material="MatSkin_myotorso" />
+      </default>
+    </default>
+    <default class="myohead">
+      <joint limited="true" armature="0.01" damping="0.5" />
+      <geom contype="0" conaffinity="0" margin="0.001" material="mat_myohead" rgba="0.8 0.8 0.8 1" />
+      <site size="0.001 0.005 0.005" group="3" />
+      <tendon width="0.001" rgba="0.95 0.3 0.3 1" />
+    </default>
+    <default class="myohead_coll">
+      <geom type="capsule" conaffinity="0" group="4" margin="0.001" rgba="0.8 0.7 0.5 0.25" />
+    </default>
+    <joint limited="true" armature="1e-05" damping="0.05" />
+    <geom margin="0.001" />
+    <site size="0.001 0.005 0.005" />
+    <tendon width="0.005" rgba="0.95 0.3 0.3 1" />
+    <default class="myolegs26_muscle">
+      <general ctrllimited="true" ctrlrange="0 1" dyntype="muscle" dynprm="0.01 0.04 0 0 0 0 0 0 0 0" gaintype="muscle" biastype="muscle" gainprm="0.75 1.05 -1 200 0.5 1.6 1.5 1.3 1.2" biasprm="0.75 1.05 -1 200 0.5 1.6 1.5 1.3 1.2" />
+    </default>
+    <default class="myolegs26_touch">
+      <site group="3" type="box" rgba="0.8 0.2 0.2 0.4" />
+    </default>
+  </default>
+  <asset>
+    <texture type="cube" colorspace="auto" name="tex_myotorso" builtin="flat" mark="cross" rgb1="1 1 1" rgb2="1 1 1" markrgb="1 0.9 0.9" width="127" height="762" />
+    <texture type="cube" colorspace="auto" name="tex_myohead" builtin="flat" mark="cross" rgb1="1 1 1" rgb2="1 1 1" markrgb="1 0.9 0.9" width="127" height="762" />
+    <texture type="2d" colorspace="linear" name="textscene" file="textures/myosuite_scene.png" />
+    <texture type="2d" colorspace="sRGB" name="texfloor" file="textures/floor0.png" />
+    <texture type="2d" colorspace="linear" name="textlogo" file="textures/myosuite_logo.png" />
+    <texture type="cube" colorspace="auto" name="myolegs_tex" builtin="flat" mark="cross" rgb1="1 1 1" rgb2="1 1 1" markrgb="1 0.9 0.9" width="127" height="762" />
+    <material name="mat_myotorso" texture="tex_myotorso" texuniform="true" />
+    <material name="MatSkin_myotorso" specular="0.2" shininess="0.1" reflectance="0.5" rgba="0.8 0.7 0.5 0.1" />
+    <material name="mat_myohead" texture="tex_myohead" texuniform="true" />
+    <material name="matscene" texture="textscene" />
+    <material name="matfloor" texture="texfloor" texuniform="true" reflectance="0.01" />
+    <material name="matlogo" texture="textlogo" />
+    <material name="myolegs_mat" texture="myolegs_tex" texuniform="true" />
+    <mesh name="sacrum_geom_1_sacrum" file="meshes/sacrum.stl" />
+    <mesh name="lumbar5_geom_1_lumbar5" file="meshes/lumbar5.stl" />
+    <mesh name="lumbar4_geom_1_lumbar4" file="meshes/lumbar4.stl" />
+    <mesh name="lumbar3_geom_1_lumbar3" file="meshes/lumbar3.stl" />
+    <mesh name="lumbar2_geom_1_lumbar2" file="meshes/lumbar2.stl" />
+    <mesh name="lumbar1_geom_1_lumbar1" file="meshes/lumbar1.stl" />
+    <mesh name="torso_geom_1_thoracic12_s" file="meshes/thoracic12_s.stl" />
+    <mesh name="torso_geom_2_thoracic11_s" file="meshes/thoracic11_s.stl" />
+    <mesh name="torso_geom_3_thoracic10_s" file="meshes/thoracic10_s.stl" />
+    <mesh name="torso_geom_4_thoracic9_s" file="meshes/thoracic9_s.stl" />
+    <mesh name="torso_geom_5_thoracic8_s" file="meshes/thoracic8_s.stl" />
+    <mesh name="torso_geom_6_thoracic7_s" file="meshes/thoracic7_s.stl" />
+    <mesh name="torso_geom_7_thoracic6_s" file="meshes/thoracic6_s.stl" />
+    <mesh name="torso_geom_8_thoracic5_s" file="meshes/thoracic5_s.stl" />
+    <mesh name="torso_geom_9_thoracic4_s" file="meshes/thoracic4_s.stl" />
+    <mesh name="torso_geom_10_thoracic3_s" file="meshes/thoracic3_s.stl" />
+    <mesh name="torso_geom_11_thoracic2_s" file="meshes/thoracic2_s.stl" />
+    <mesh name="torso_geom_12_thoracic1_s" file="meshes/thoracic1_s.stl" />
+    <mesh name="torso_geom_13_ribcage_s" file="meshes/thorax.stl" />
+    <mesh name="hat_cervical" file="meshes/hat_cervical.stl" />
+    <mesh name="hat_jaw" file="meshes/hat_jaw.stl" />
+    <mesh name="hat_skull" file="meshes/hat_skull.stl" />
+    <mesh name="meshscene" file="meshes/myosuite_scene_noFloor.msh" scale="0.01 0.01 0.01" />
+    <mesh name="logo" file="meshes/myosuite_logo.msh" />
+    <mesh name="pelvis_geom_1_sacrum" content_type="model/stl" file="meshes/sacrum.stl" />
+    <mesh name="pelvis_geom_2_pelvis" file="meshes/r_pelvis.stl" />
+    <mesh name="pelvis_geom_3_l_pelvis" file="meshes/l_pelvis.stl" />
+    <mesh name="femur_r_geom_1_femur" file="meshes/r_femur.stl" />
+    <mesh name="tibia_r_geom_1_tibia" file="meshes/r_tibia.stl" />
+    <mesh name="tibia_r_geom_2_fibula" file="meshes/r_fibula.stl" />
+    <mesh name="talus_r_geom_1_talus" file="meshes/r_talus.stl" />
+    <mesh name="calcn_r_geom_1_foot" file="meshes/r_foot.stl" />
+    <mesh name="toes_r_geom_1_bofoot" file="meshes/r_bofoot.stl" />
+    <mesh name="femur_l_geom_1_l_femur" file="meshes/l_femur.stl" />
+    <mesh name="tibia_l_geom_1_l_tibia" file="meshes/l_tibia.stl" />
+    <mesh name="tibia_l_geom_2_l_fibula" file="meshes/l_fibula.stl" />
+    <mesh name="talus_l_geom_1_l_talus" file="meshes/l_talus.stl" />
+    <mesh name="calcn_l_geom_1_l_foot" file="meshes/l_foot.stl" />
+    <mesh name="toes_l_geom_1_l_bofoot" file="meshes/l_bofoot.stl" />
+  </asset>
+  <worldbody>
+    <geom name="task_ground" size="7 7 0.10000000000000001" type="plane" conaffinity="2" group="1" rgba="0.8 0.85 0.9 1" contype="1" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+    <camera name="side_view" pos="-3 0 2.25" quat="0.601501 0.371748 -0.371748 -0.601501" mode="trackcom" />
+    <camera name="front_view" pos="0 -3 2.25" quat="0.850651 0.525731 0 0" mode="trackcom" />
+    <light pos="0 -3 3" dir="0 0.707107 -0.707107" diffuse="0.5 0.5 0.5" specular="0.25 0.25 0.25" mode="trackcom" />
+    <body name="Full Body" pos="0 0 1" quat="1 0 0 0">
+      <joint name="root" type="free" armature="0" damping="0" />
+      <site name="torso_root_attach" pos="0 0 0" size="0.01" quat="1 0 0 0" />
+      <body name="sacrum" childclass="myotorso" pos="0 0 0" euler="1.57079632679 -1.57079632679 0">
+        <inertial pos="0 0 0" quat="0.707107 0 0 0.707107" mass="7.486" diaginertia="0.08 0.075 0.03" />
+        <geom name="sacrum_geom_1" type="mesh" mesh="sacrum_geom_1_sacrum" contype="0" conaffinity="0" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+        <site name="Ps_L1_VB_Ps_L1_VB-P2_r" pos="-0.023800000000000002 -0.0080000000000000002 0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L1_TP_Ps_L1_TP-P2_r" pos="-0.023800000000000002 -0.0080000000000000002 0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L1_L2_IVD_Ps_L1_L2_IVD-P2_r" pos="-0.023800000000000002 -0.0080000000000000002 0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L2_TP_Ps_L2_TP-P2_r" pos="-0.023800000000000002 -0.0080000000000000002 0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L2_L3_IVD_Ps_L2_L3_IVD-P2_r" pos="-0.023800000000000002 -0.0080000000000000002 0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L3_TP_Ps_L3_TP-P2_r" pos="-0.023800000000000002 -0.0080000000000000002 0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L3_L4_IVD_Ps_L3_L4_IVD-P2_r" pos="-0.023800000000000002 -0.0080000000000000002 0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L4_TP_Ps_L4_TP-P2_r" pos="-0.023800000000000002 -0.0080000000000000002 0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L4_L5_IVD_Ps_L4_L5_IVD-P2_r" pos="-0.023800000000000002 -0.0080000000000000002 0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L5_TP_Ps_L5_TP-P2_r" pos="-0.023800000000000002 -0.0080000000000000002 0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L5_VB_Ps_L5_VB-P2_r" pos="-0.023800000000000002 -0.0080000000000000002 0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L1_VB_Ps_L1_VB-P2_l" pos="-0.023800000000000002 -0.0080000000000000002 -0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L1_TP_Ps_L1_TP-P2_l" pos="-0.023800000000000002 -0.0080000000000000002 -0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L1_L2_IVD_Ps_L1_L2_IVD-P2_l" pos="-0.023800000000000002 -0.0080000000000000002 -0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L2_TP_Ps_L2_TP-P2_l" pos="-0.023800000000000002 -0.0080000000000000002 -0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L2_L3_IVD_Ps_L2_L3_IVD-P2_l" pos="-0.023800000000000002 -0.0080000000000000002 -0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L3_TP_Ps_L3_TP-P2_l" pos="-0.023800000000000002 -0.0080000000000000002 -0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L3_L4_IVD_Ps_L3_L4_IVD-P2_l" pos="-0.023800000000000002 -0.0080000000000000002 -0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L4_TP_Ps_L4_TP-P2_l" pos="-0.023800000000000002 -0.0080000000000000002 -0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L4_L5_IVD_Ps_L4_L5_IVD-P2_l" pos="-0.023800000000000002 -0.0080000000000000002 -0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L5_TP_Ps_L5_TP-P2_l" pos="-0.023800000000000002 -0.0080000000000000002 -0.075899999999999995" quat="1 0 0 0" />
+        <site name="Ps_L5_VB_Ps_L5_VB-P2_l" pos="-0.023800000000000002 -0.0080000000000000002 -0.075899999999999995" quat="1 0 0 0" />
+        <site name="rect_abd_rect_abd-P1_r" pos="-0.041582000000000001 -0.047475999999999997 -0.010689000000000001" quat="1 0 0 0" />
+        <site name="rect_abd_rect_abd-P1_l" pos="-0.041582000000000001 -0.047475999999999997 0.010689000000000001" quat="1 0 0 0" />
+        <site name="IL_L1_IL_L1-P1_r" pos="-0.15941 0.059945999999999999 0.038294000000000002" quat="1 0 0 0" />
+        <site name="IL_L2_IL_L2-P1_r" pos="-0.150919 0.077176999999999996 0.042648999999999999" quat="1 0 0 0" />
+        <site name="IL_L3_IL_L3-P1_r" pos="-0.13691999999999999 0.088811000000000001 0.047510999999999998" quat="1 0 0 0" />
+        <site name="IL_L4_IL_L4-P1_r" pos="-0.13183800000000001 0.085597000000000006 0.044204" quat="1 0 0 0" />
+        <site name="IL_L1_IL_L1-P1_l" pos="-0.15941 0.059945999999999999 -0.038294000000000002" quat="1 0 0 0" />
+        <site name="IL_L2_IL_L2-P1_l" pos="-0.150919 0.077176999999999996 -0.042648999999999999" quat="1 0 0 0" />
+        <site name="IL_L3_IL_L3-P1_l" pos="-0.13691999999999999 0.088811000000000001 -0.047510999999999998" quat="1 0 0 0" />
+        <site name="IL_L4_IL_L4-P1_l" pos="-0.13183800000000001 0.085597000000000006 -0.044204" quat="1 0 0 0" />
+        <site name="IL_R5_IL_r5_R-P1_r" pos="-0.15629699999999999 0.063317999999999999 0.038972" quat="1 0 0 0" />
+        <site name="IL_R6_IL_r6_R-P1_r" pos="-0.14524999999999999 0.080007999999999996 0.042569999999999997" quat="1 0 0 0" />
+        <site name="IL_R7_IL_r7_R-P1_r" pos="-0.134159 0.087356000000000003 0.045870000000000001" quat="1 0 0 0" />
+        <site name="IL_R8_IL_r8_R-P1_r" pos="-0.137327 0.091900999999999997 0.050180000000000002" quat="1 0 0 0" />
+        <site name="IL_R9_IL_r9_R-P1_r" pos="-0.13331000000000001 0.093883999999999995 0.051139999999999998" quat="1 0 0 0" />
+        <site name="IL_R10_IL_r10_R-P1_r" pos="-0.130303 0.096750000000000003 0.053109000000000003" quat="1 0 0 0" />
+        <site name="IL_R11_IL_r11_R-P1_r" pos="-0.12746399999999999 0.098957000000000003 0.055469999999999998" quat="1 0 0 0" />
+        <site name="IL_R12_IL_r12_R-P1_r" pos="-0.12481299999999999 0.10112400000000001 0.057919999999999999" quat="1 0 0 0" />
+        <site name="IL_R5_IL_r5_R-P1_l" pos="-0.15629699999999999 0.063317999999999999 -0.038972" quat="1 0 0 0" />
+        <site name="IL_R6_IL_r6_R-P1_l" pos="-0.14524999999999999 0.080007999999999996 -0.042569999999999997" quat="1 0 0 0" />
+        <site name="IL_R7_IL_r7_R-P1_l" pos="-0.134159 0.087356000000000003 -0.045870000000000001" quat="1 0 0 0" />
+        <site name="IL_R8_IL_r8_R-P1_l" pos="-0.137327 0.091900999999999997 -0.050180000000000002" quat="1 0 0 0" />
+        <site name="IL_R9_IL_r9_R-P1_l" pos="-0.13331000000000001 0.093883999999999995 -0.051139999999999998" quat="1 0 0 0" />
+        <site name="IL_R10_IL_r10_R-P1_l" pos="-0.130303 0.096750000000000003 -0.053109999999999997" quat="1 0 0 0" />
+        <site name="IL_R11_IL_r11_R-P1_l" pos="-0.12746399999999999 0.098957000000000003 -0.055469999999999998" quat="1 0 0 0" />
+        <site name="IL_R12_IL_r12_R-P1_l" pos="-0.12481299999999999 0.10112400000000001 -0.057919999999999999" quat="1 0 0 0" />
+        <site name="LTpL_L4_pathpoint_r" pos="-0.150501 0.066487000000000004 0.037310000000000003" quat="1 0 0 0" />
+        <site name="LTpL_L3_pathpoint_r" pos="-0.158442 0.066489999999999994 0.0402" quat="1 0 0 0" />
+        <site name="LTpL_L2_pathpoint_r" pos="-0.159688 0.061969000000000003 0.041945999999999997" quat="1 0 0 0" />
+        <site name="LTpL_L1_pathpoint_r" pos="-0.161991 0.059193999999999997 0.043117000000000003" quat="1 0 0 0" />
+        <site name="LTpL_L4_pathpoint_l" pos="-0.150501 0.066487000000000004 -0.037310000000000003" quat="1 0 0 0" />
+        <site name="LTpL_L3_pathpoint_l" pos="-0.158442 0.066489999999999994 -0.0402" quat="1 0 0 0" />
+        <site name="LTpL_L2_pathpoint_l" pos="-0.159688 0.061969000000000003 -0.041945999999999997" quat="1 0 0 0" />
+        <site name="LTpL_L1_pathpoint_l" pos="-0.161991 0.059193999999999997 -0.043117000000000003" quat="1 0 0 0" />
+        <site name="QL_post_I.1-L3_I.1-P1_r" pos="-0.12146999999999999 0.095310000000000006 0.052019999999999997" quat="1 0 0 0" />
+        <site name="QL_post_I.2-L4_I.2-P1_r" pos="-0.11147 0.105308 0.059020000000000003" quat="1 0 0 0" />
+        <site name="QL_post_I.2-L3_I.2-P1_r" pos="-0.11147 0.105308 0.059020000000000003" quat="1 0 0 0" />
+        <site name="QL_post_I.2-L2_I.2-P1_r" pos="-0.11147 0.105308 0.059020000000000003" quat="1 0 0 0" />
+        <site name="QL_post_I.3-L1_I.3-P1_r" pos="-0.10477 0.11112 0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_post_I.3-L2_I.3-P1_r" pos="-0.10477 0.11112 0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_post_I.3-L3_I.3-P1_r" pos="-0.10477 0.11112 0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_post_I.1-L3_I.1-P1_l" pos="-0.12146999999999999 0.095310000000000006 -0.052019999999999997" quat="1 0 0 0" />
+        <site name="QL_post_I.2-L4_I.2-P1_l" pos="-0.11147 0.105308 -0.059020000000000003" quat="1 0 0 0" />
+        <site name="QL_post_I.2-L3_I.2-P1_l" pos="-0.11147 0.105308 -0.059020000000000003" quat="1 0 0 0" />
+        <site name="QL_post_I.2-L2_I.2-P1_l" pos="-0.11147 0.105308 -0.059020000000000003" quat="1 0 0 0" />
+        <site name="QL_post_I.3-L1_I.3-P1_l" pos="-0.10477 0.11112 -0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_post_I.3-L2_I.3-P1_l" pos="-0.10477 0.11112 -0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_post_I.3-L3_I.3-P1_l" pos="-0.10477 0.11112 -0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_ant_I.2-T12_I.2-P1_r" pos="-0.11147 0.105308 0.059020000000000003" quat="1 0 0 0" />
+        <site name="QL_ant_I.3-T12_I.3-P1_r" pos="-0.10477 0.11112 0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_ant_I.2-12.1_I.2-P2_r" pos="-0.11147 0.105308 0.059020000000000003" quat="1 0 0 0" />
+        <site name="QL_ant_I.3-12.1_I.3-P1_r" pos="-0.10477 0.11112 0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_ant_I.3-12.2_I.3-P1_r" pos="-0.10477 0.11112 0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_ant_I.3-12.3_I.3-P2_r" pos="-0.104767 0.11111500000000001 0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_ant_I.2-T12_I.2-P1_l" pos="-0.11147 0.105308 -0.059020000000000003" quat="1 0 0 0" />
+        <site name="QL_ant_I.3-T12_I.3-P1_l" pos="-0.10477 0.11112 -0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_ant_I.2-12.1_I.2-P2_l" pos="-0.11147 0.105308 -0.059020000000000003" quat="1 0 0 0" />
+        <site name="QL_ant_I.3-12.1_I.3-P1_l" pos="-0.10477 0.11112 -0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_ant_I.3-12.2_I.3-P1_l" pos="-0.10477 0.11112 -0.069169999999999995" quat="1 0 0 0" />
+        <site name="QL_ant_I.3-12.3_I.3-P2_l" pos="-0.104767 0.11111500000000001 -0.069169999999999995" quat="1 0 0 0" />
+        <site name="MF_m1t.3_MF_m1t.3-P1_r" pos="-0.14457300000000001 0.075421000000000002 0.038350000000000002" quat="1 0 0 0" />
+        <site name="MF_m2t.2_MF_m2t.2-P1_r" pos="-0.14733499999999999 0.070158999999999999 0.036849" quat="1 0 0 0" />
+        <site name="MF_m2t.3_MF_m2t.3-P1_r" pos="-0.14971999999999999 0.056998 0.034577999999999998" quat="1 0 0 0" />
+        <site name="MF_m3t.1_MF_m3t.1-P1_r" pos="-0.16450500000000001 0.014023000000000001 0.017100000000000001" quat="1 0 0 0" />
+        <site name="MF_m3t.2_MF_m3t.2-P1_r" pos="-0.15387500000000001 0.032938000000000002 0.021853999999999998" quat="1 0 0 0" />
+        <site name="MF_m3t.3_MF_m3t.3-P1_r" pos="-0.15387500000000001 0.032938000000000002 0.021853999999999998" quat="1 0 0 0" />
+        <site name="MF_m4t.2_MF_m4t.2-P1_r" pos="-0.16229199999999999 0.020341999999999999 0.015204000000000001" quat="1 0 0 0" />
+        <site name="MF_m4t.3_MF_m4t.3-P1_r" pos="-0.17082800000000001 0.0078189999999999996 0.012722000000000001" quat="1 0 0 0" />
+        <site name="MF_m5.laminar_MF_m5.laminar-P1_r" pos="-0.13420599999999999 0.060109999999999997 0.01238" quat="1 0 0 0" />
+        <site name="MF_m1t.3_MF_m1t.3-P1_l" pos="-0.14457300000000001 0.075421000000000002 -0.038350000000000002" quat="1 0 0 0" />
+        <site name="MF_m2t.2_MF_m2t.2-P1_l" pos="-0.14733499999999999 0.070158999999999999 -0.036849" quat="1 0 0 0" />
+        <site name="MF_m2t.3_MF_m2t.3-P1_l" pos="-0.14971999999999999 0.056998 -0.034577999999999998" quat="1 0 0 0" />
+        <site name="MF_m3t.1_MF_m3t.1-P1_l" pos="-0.16450500000000001 0.014023000000000001 -0.017100000000000001" quat="1 0 0 0" />
+        <site name="MF_m3t.2_MF_m3t.2-P1_l" pos="-0.15387500000000001 0.032938000000000002 -0.021853999999999998" quat="1 0 0 0" />
+        <site name="MF_m3t.3_MF_m3t.3-P1_l" pos="-0.15387500000000001 0.032938000000000002 -0.021853999999999998" quat="1 0 0 0" />
+        <site name="MF_m4t.2_MF_m4t.2-P1_l" pos="-0.16229199999999999 0.020341999999999999 -0.015204000000000001" quat="1 0 0 0" />
+        <site name="MF_m4t.3_MF_m4t.3-P1_l" pos="-0.17082800000000001 0.0078189999999999996 -0.012722000000000001" quat="1 0 0 0" />
+        <site name="MF_m5.laminar_MF_m5.laminar-P1_l" pos="-0.13420599999999999 0.060109999999999997 -0.01238" quat="1 0 0 0" />
+        <site name="EO5_EO5-P2_r" pos="-0.059265999999999999 0.108414 0.11382" quat="1 0 0 0" />
+        <site name="EO6_EO6-P2_r" pos="-0.070075999999999999 0.111137 0.10412" quat="1 0 0 0" />
+        <site name="IO1_IO1-P2_r" pos="-0.025649000000000002 0.049609 0.12246" quat="1 0 0 0" />
+        <site name="IO2_IO2-P2_r" pos="-0.034589000000000002 0.074566999999999994 0.12706999999999999" quat="1 0 0 0" />
+        <site name="IO3_IO3-P2_r" pos="-0.044679999999999997 0.095658999999999994 0.12243" quat="1 0 0 0" />
+        <site name="IO4_IO4-P2_r" pos="-0.05738 0.10789899999999999 0.11049" quat="1 0 0 0" />
+        <site name="IO5_IO5-P2_r" pos="-0.084889000000000006 0.11415400000000001 0.091450000000000004" quat="1 0 0 0" />
+        <site name="IO6_IO6-P2_r" pos="-0.1096 0.109856 0.069699999999999998" quat="1 0 0 0" />
+        <site name="EO5_EO5-P2_l" pos="-0.059265999999999999 0.108414 -0.11382" quat="1 0 0 0" />
+        <site name="EO6_EO6-P2_l" pos="-0.070075999999999999 0.111137 -0.10412" quat="1 0 0 0" />
+        <site name="IO1_IO1-P2_l" pos="-0.025649000000000002 0.049609 -0.12246" quat="1 0 0 0" />
+        <site name="IO2_IO2-P2_l" pos="-0.034589000000000002 0.074566999999999994 -0.12706999999999999" quat="1 0 0 0" />
+        <site name="IO3_IO3-P2_l" pos="-0.044679999999999997 0.095658999999999994 -0.12243" quat="1 0 0 0" />
+        <site name="IO4_IO4-P2_l" pos="-0.05738 0.10789899999999999 -0.11049" quat="1 0 0 0" />
+        <site name="IO5_IO5-P2_l" pos="-0.084889000000000006 0.11415400000000001 -0.091450000000000004" quat="1 0 0 0" />
+        <site name="IO6_IO6-P2_l" pos="-0.1096 0.109856 -0.069699999999999998" quat="1 0 0 0" />
+        <site name="LTpT_T7_LTpT_t7_R-P1_r" pos="-0.13131699999999999 0.060512700000000003 0.00027685999999999998" quat="1 0 0 0" />
+        <site name="LTpT_T8_LTpT_t8_R-P1_r" pos="-0.142901 0.050245600000000001 0.00037450999999999999" quat="1 0 0 0" />
+        <site name="LTpT_T9_LTpT_t9_R-P1_r" pos="-0.165822 0.0268352 0" quat="1 0 0 0" />
+        <site name="LTpT_T10_LTpT_t10_R-P1_r" pos="-0.164463 0.024561099999999999 0.01072" quat="1 0 0 0" />
+        <site name="LTpT_T11_LTpT_t11_R-P1_r" pos="-0.15764900000000001 0.030709400000000001 0.024039999999999999" quat="1 0 0 0" />
+        <site name="LTpT_T12_LTpT_t12_R-P1_r" pos="-0.14476 0.048800000000000003 0.02793" quat="1 0 0 0" />
+        <site name="LTpT_R7_LTpT_r7_R-P1_r" pos="-0.13131999999999999 0.060510000000000001 0.00027999999999999998" quat="1 0 0 0" />
+        <site name="LTpT_R8_LTpT_r8_R-P1_r" pos="-0.1429 0.050250000000000003 0.00036999999999999999" quat="1 0 0 0" />
+        <site name="LTpT_R9_LTpT_r9_R-P1_r" pos="-0.16582 0.0268352 0" quat="1 0 0 0" />
+        <site name="LTpT_R10_LTpT_r10_R-P1_r" pos="-0.16446 0.024559999999999998 0.01072" quat="1 0 0 0" />
+        <site name="LTpT_R11_LTpT_r11_R-P1_r" pos="-0.15765000000000001 0.030710000000000001 0.024039999999999999" quat="1 0 0 0" />
+        <site name="LTpT_R12_LTpT_r12_R-P1_r" pos="-0.14476 0.048800000000000003 0.02793" quat="1 0 0 0" />
+        <site name="LTpT_T7_LTpT_t7_R-P1_l" pos="-0.13131699999999999 0.060512700000000003 -0.00027685999999999998" quat="1 0 0 0" />
+        <site name="LTpT_T8_LTpT_t8_R-P1_l" pos="-0.142901 0.050245600000000001 -0.00037450999999999999" quat="1 0 0 0" />
+        <site name="LTpT_T9_LTpT_t9_R-P1_l" pos="-0.165822 0.0268352 0" quat="1 0 0 0" />
+        <site name="LTpT_T10_LTpT_t10_R-P1_l" pos="-0.164463 0.024561099999999999 -0.01072" quat="1 0 0 0" />
+        <site name="LTpT_T11_LTpT_t11_R-P1_l" pos="-0.15764900000000001 0.030709400000000001 -0.024039999999999999" quat="1 0 0 0" />
+        <site name="LTpT_T12_LTpT_t12_R-P1_l" pos="-0.14476 0.048800000000000003 0.02793" quat="1 0 0 0" />
+        <site name="LTpT_R7_LTpT_r7_R-P1_l" pos="-0.13131999999999999 0.060510000000000001 -0.00027999999999999998" quat="1 0 0 0" />
+        <site name="LTpT_R8_LTpT_r8_R-P1_l" pos="-0.1429 0.050250000000000003 -0.00036999999999999999" quat="1 0 0 0" />
+        <site name="LTpT_R9_LTpT_r9_R-P1_l" pos="-0.16582 0.0268352 0" quat="1 0 0 0" />
+        <site name="LTpT_R10_LTpT_r10_R-P1_l" pos="-0.16446 0.024559999999999998 -0.01072" quat="1 0 0 0" />
+        <site name="LTpT_R11_LTpT_r11_R-P1_l" pos="-0.15765000000000001 0.030710000000000001 -0.024039999999999999" quat="1 0 0 0" />
+        <site name="LTpT_R12_LTpT_r12_R-P1_l" pos="-0.14476 0.048800000000000003 -0.02793" quat="1 0 0 0" />
+        <site name="LTpL_L5_pathpoint_r" pos="-0.14124999999999999 0.073887700000000001 0.034867000000000002" quat="1 0 0 0" />
+        <site name="LTpL_L5_pathpoint_l" pos="-0.14124999999999999 0.073887700000000001 -0.034867000000000002" quat="1 0 0 0" />
+        <site name="MF_m1t.2_MF_m1t.2-P1_r" pos="-0.121424 0.083976599999999998 0.018839999999999999" quat="1 0 0 0" />
+        <site name="MF_m2t.1_MF_m2t.1-P1_r" pos="-0.120758 0.085218100000000005 0.02044" quat="1 0 0 0" />
+        <site name="MF_m3s_MF_m3s-P1_r" pos="-0.12151099999999999 0.083635799999999996 0.017420000000000001" quat="1 0 0 0" />
+        <site name="MF_m4s_MF_m4s-P1_r" pos="-0.14368900000000001 0.054709899999999999 0.01618" quat="1 0 0 0" />
+        <site name="MF_m4t.1_MF_m4t.1-P1_r" pos="-0.15223300000000001 0.041526500000000001 0.01536" quat="1 0 0 0" />
+        <site name="MF_m5s_MF_m5s-P1_r" pos="-0.13045499999999999 0.066270300000000004 0.01043" quat="1 0 0 0" />
+        <site name="MF_m5t.1_MF_m5t.1-P1_r" pos="-0.174067 0.0052292199999999997 0.010030000000000001" quat="1 0 0 0" />
+        <site name="MF_m5t.2_MF_m5t.2-P1_r" pos="-0.16311600000000001 0.025661799999999999 0.01171" quat="1 0 0 0" />
+        <site name="MF_m5t.3_MF_m5t.3-P1_r" pos="-0.15227599999999999 0.042584400000000001 0.011599999999999999" quat="1 0 0 0" />
+        <site name="MF_m4.laminar_MF_m4.laminar-P1_r" pos="-0.12536 0.077487899999999998 0.01934" quat="1 0 0 0" />
+        <site name="MF_m1t.2_MF_m1t.2-P1_l" pos="-0.121424 0.083976599999999998 -0.018839999999999999" quat="1 0 0 0" />
+        <site name="MF_m2t.1_MF_m2t.1-P1_l" pos="-0.120758 0.085218100000000005 -0.02044" quat="1 0 0 0" />
+        <site name="MF_m3s_MF_m3s-P1_l" pos="-0.12151099999999999 0.083635799999999996 -0.017420000000000001" quat="1 0 0 0" />
+        <site name="MF_m4s_MF_m4s-P1_l" pos="-0.14368900000000001 0.054709899999999999 -0.01618" quat="1 0 0 0" />
+        <site name="MF_m4t.1_MF_m4t.1-P1_l" pos="-0.15223300000000001 0.041526500000000001 -0.01536" quat="1 0 0 0" />
+        <site name="MF_m5s_MF_m5s-P1_l" pos="-0.13045499999999999 0.066270300000000004 -0.01043" quat="1 0 0 0" />
+        <site name="MF_m5t.1_MF_m5t.1-P1_l" pos="-0.174067 0.0052292199999999997 -0.010030000000000001" quat="1 0 0 0" />
+        <site name="MF_m5t.2_MF_m5t.2-P1_l" pos="-0.16311600000000001 0.025661799999999999 -0.01171" quat="1 0 0 0" />
+        <site name="MF_m5t.3_MF_m5t.3-P1_l" pos="-0.15227599999999999 0.042584400000000001 -0.011599999999999999" quat="1 0 0 0" />
+        <site name="MF_m4.laminar_MF_m4.laminar-P1_l" pos="-0.12536 0.077487899999999998 -0.01934" quat="1 0 0 0" />
+        <site name="ercspn_r_ercspn_r-P1" pos="-0.14000000000000001 0.043900000000000002 0.0436" quat="1 0 0 0" />
+        <site name="ercspn_l_ercspn_l-P1" pos="-0.14000000000000001 0.043900000000000002 -0.0436" quat="1 0 0 0" />
+        <site name="intobl_r_intobl_r-P1" pos="-0.040000000000000001 0.070000000000000007 0.1157" quat="1 0 0 0" />
+        <site name="intobl_l_intobl_l-P1" pos="-0.040000000000000001 0.070000000000000007 -0.1157" quat="1 0 0 0" />
+        <site name="extobl_r_extobl_r-P1" pos="-0.029999999999999999 -0.063600000000000004 0.01" quat="1 0 0 0" />
+        <site name="extobl_l_extobl_l-P1" pos="-0.029999999999999999 -0.063600000000000004 -0.01" quat="1 0 0 0" />
+        <body name="lumbar5" pos="-0.098000000000000004 0.070999999999999994 0" quat="1 0 0 0">
+          <inertial pos="0.053744 0.02 0" quat="0.707107 0 0 0.707107" mass="1.824" diaginertia="0.01765 0.01219 0.00546" />
+          <geom name="back_cylinder_s" class="myotorso_back_wrap" size="0.070000000000000007 0.13 0" pos="-0.14399999999999999 0.076799999999999993 0" contype="0" conaffinity="0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+          <geom name="pelvis_wrap" class="myotorso_wrap" size="0.050000000000000003 0.050000000000000003 0" pos="0 0.017500000000000002 0" type="cylinder" mass="0" contype="0" conaffinity="0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+          <geom name="lumbar5_geom_1" pos="-0.01 -0.01 0" type="mesh" mesh="lumbar5_geom_1_lumbar5" contype="0" conaffinity="0" euler="0 0 -0.29999999999999999" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+          <site name="back_cylinder_s_IL_L1_1_sidesite_r" class="myotorso_sidesite" pos="-0.034005800000000003 0.097789399999999999 -0.0010989400000000001" quat="1 0 0 0" />
+          <site name="back_cylinder_s_IL_L1_1_sidesite_l" class="myotorso_sidesite" pos="-0.034005800000000003 0.097789399999999999 0.0010989400000000001" quat="1 0 0 0" />
+          <site name="back_cylinder_s_IL_R5_1_sidesite_r" class="myotorso_sidesite" pos="-0.034004300000000001 0.075954400000000005 -0.012570100000000001" quat="1 0 0 0" />
+          <site name="back_cylinder_s_IL_R6_1_sidesite_r" class="myotorso_sidesite" pos="-0.034844899999999998 0.088684100000000002 -0.108783" quat="1 0 0 0" />
+          <site name="back_cylinder_s_IL_R5_1_sidesite_l" class="myotorso_sidesite" pos="-0.034004300000000001 0.075954400000000005 0.012570100000000001" quat="1 0 0 0" />
+          <site name="back_cylinder_s_IL_R6_1_sidesite_l" class="myotorso_sidesite" pos="-0.034844899999999998 0.088684100000000002 0.108783" quat="1 0 0 0" />
+          <site name="back_cylinder_s_LTpT_R12_4_sidesite_r" class="myotorso_sidesite" pos="-0.041099999999999998 0.1048 0.03882" quat="1 0 0 0" />
+          <site name="back_cylinder_s_LTpT_R12_2_sidesite_r" class="myotorso_sidesite" pos="-0.036909999999999998 0.069190000000000002 0.03508" quat="1 0 0 0" />
+          <site name="back_cylinder_s_LTpT_R12_1_sidesite_r" class="myotorso_sidesite" pos="-0.038589999999999999 0.049412900000000003 0.090226899999999999" quat="1 0 0 0" />
+          <site name="back_cylinder_s_LTpT_R12_4_sidesite_l" class="myotorso_sidesite" pos="-0.041099999999999998 0.1048 -0.03882" quat="1 0 0 0" />
+          <site name="back_cylinder_s_LTpT_R12_2_sidesite_l" class="myotorso_sidesite" pos="-0.036909999999999998 0.069190000000000002 -0.03508" quat="1 0 0 0" />
+          <site name="back_cylinder_s_LTpT_R12_1_sidesite_l" class="myotorso_sidesite" pos="-0.038589999999999999 0.049412900000000003 -0.090226899999999999" quat="1 0 0 0" />
+          <site name="back_cylinder_s_LTpL_L1_1_sidesite_r" class="myotorso_sidesite" pos="-0.037010099999999997 0.099085400000000004 -0.0777896" quat="1 0 0 0" />
+          <site name="back_cylinder_s_LTpL_L1_1_sidesite_l" class="myotorso_sidesite" pos="-0.037010099999999997 0.099085400000000004 0.0777896" quat="1 0 0 0" />
+          <site name="Ps_L5_TP_Ps_L5_TP-P1_r" pos="-0.0056200099999999999 0.0291398 0.02529" quat="1 0 0 0" />
+          <site name="Ps_L5_VB_Ps_L5_VB-P1_r" pos="0.01 0.012409999999999999 0.019" quat="1 0 0 0" />
+          <site name="Ps_L5_TP_Ps_L5_TP-P1_l" pos="-0.0056200099999999999 0.0291398 -0.02529" quat="1 0 0 0" />
+          <site name="Ps_L5_VB_Ps_L5_VB-P1_l" pos="0.01 0.012409999999999999 -0.019" quat="1 0 0 0" />
+          <site name="LTpT_T6_LTpT_t6_R-P1_r" pos="-0.036220000000000002 0.016150000000000001 0.00021000000000000001" quat="1 0 0 0" />
+          <site name="LTpT_R6_LTpT_r6_R-P1_r" pos="-0.036220000000000002 0.016150000000000001 0.00021000000000000001" quat="1 0 0 0" />
+          <site name="LTpT_T6_LTpT_t6_R-P1_l" pos="-0.036220000000000002 0.016150000000000001 -0.00021000000000000001" quat="1 0 0 0" />
+          <site name="LTpT_R6_LTpT_r6_R-P1_l" pos="-0.036220000000000002 0.016150000000000001 -0.00021000000000000001" quat="1 0 0 0" />
+          <site name="LTpL_L5_pathpoint_0_r" pos="-0.0103429 0.02665 0.0224" quat="1 0 0 0" />
+          <site name="LTpL_L5_pathpoint_0_l" pos="-0.0103429 0.02665 -0.0224" quat="1 0 0 0" />
+          <site name="MF_m1t.1_MF_m1t.1-P1_r" pos="-0.018634700000000001 0.036969700000000001 0.017590000000000001" quat="1 0 0 0" />
+          <site name="MF_m2s_MF_m2s-P1_r" pos="-0.018502899999999999 0.0376762 0.015810000000000001" quat="1 0 0 0" />
+          <site name="MF_m5s_MF_m5s-P2_r" pos="-0.030163800000000001 0.015389999999999999 0.0039300000000000003" quat="1 0 0 0" />
+          <site name="MF_m5t.1_MF_m5t.1-P2_r" pos="-0.03551 0.016863 0.0029299999999999999" quat="1 0 0 0" />
+          <site name="MF_m5t.2_MF_m5t.2-P2_r" pos="-0.034551600000000002 0.0159287 0.0027699999999999999" quat="1 0 0 0" />
+          <site name="MF_m5t.3_MF_m5t.3-P2_r" pos="-0.032822799999999999 0.015247 0.0023208299999999999" quat="1 0 0 0" />
+          <site name="MF_m3.laminar_MF_m3.laminar-P1_r" pos="-0.0187003 0.037442099999999999 0.01617" quat="1 0 0 0" />
+          <site name="MF_m5.laminar_l_MF_m5.laminar-P2_r" pos="-0.025899599999999998 0.017049999999999999 0.00564" quat="1 0 0 0" />
+          <site name="MF_m1t.1_MF_m1t.1-P1_l" pos="-0.018634700000000001 0.036969700000000001 -0.017590000000000001" quat="1 0 0 0" />
+          <site name="MF_m2s_MF_m2s-P1_l" pos="-0.018502899999999999 0.0376762 -0.015810000000000001" quat="1 0 0 0" />
+          <site name="MF_m5s_MF_m5s-P2_l" pos="-0.030163800000000001 0.015389999999999999 -0.0039300000000000003" quat="1 0 0 0" />
+          <site name="MF_m5t.1_MF_m5t.1-P2_l" pos="-0.03551 0.016863 -0.0029299999999999999" quat="1 0 0 0" />
+          <site name="MF_m5t.2_MF_m5t.2-P2_l" pos="-0.034551600000000002 0.0159287 -0.0027699999999999999" quat="1 0 0 0" />
+          <site name="MF_m5t.3_MF_m5t.3-P2_l" pos="-0.032822799999999999 0.015247 -0.0023208299999999999" quat="1 0 0 0" />
+          <site name="MF_m3.laminar_MF_m3.laminar-P1_l" pos="-0.0187003 0.037442099999999999 -0.01617" quat="1 0 0 0" />
+          <site name="MF_m5.laminar_l_MF_m5.laminar-P2_l" pos="-0.025899599999999998 0.017049999999999999 -0.00564" quat="1 0 0 0" />
+          <site name="lumbar_spine" class="myotorso_marker" pos="0.029999999999999999 0 0" quat="1 0 0 0" />
+          <site name="ercspn_r_ercspn_r-P2" pos="-0.055 0.11 0.0241" quat="1 0 0 0" />
+          <site name="ercspn_l_ercspn_l-P2" pos="-0.055 0.11 -0.0241" quat="1 0 0 0" />
+          <site name="intobl_r_intobl_r-P2" pos="0.070000000000000007 0.16 0.014999999999999999" quat="1 0 0 0" />
+          <site name="intobl_l_intobl_l-P2" pos="0.070000000000000007 0.16 -0.014999999999999999" quat="1 0 0 0" />
+          <site name="extobl_r_extobl_r-P2" pos="0.065000000000000002 0.11 0.11" quat="1 0 0 0" />
+          <site name="extobl_l_extobl_l-P2" pos="0.065000000000000002 0.11 -0.11" quat="1 0 0 0" />
+          <body name="Abdomen" pos="0.098000000000000004 0.071099999999999997 0" quat="1 0 0 0">
+            <inertial pos="0 0 0" mass="0.01" diaginertia="0.001 0.001 0.001" />
+            <site name="EO1_EO1-P1_r" pos="0.0065501999999999999 0.062743099999999996 0.030890000000000001" quat="1 0 0 0" />
+            <site name="EO2_EO2-P2_r" pos="0.0072332100000000003 0.0329565 0.036459999999999999" quat="1 0 0 0" />
+            <site name="EO3_EO3-P2_r" pos="0.0067714100000000003 0.0129967 0.04163" quat="1 0 0 0" />
+            <site name="EO4_EO4-P2_r" pos="0.0069513400000000003 -0.00599564 0.040329999999999998" quat="1 0 0 0" />
+            <site name="IO1_IO1-P1_r" pos="0.0030695100000000001 -0.040657600000000002 0.045379999999999997" quat="1 0 0 0" />
+            <site name="IO2_IO2-P1_r" pos="0.00068053000000000005 -0.0115304 0.051389999999999998" quat="1 0 0 0" />
+            <site name="IO3_IO3-P1_r" pos="0.0033809600000000001 0.0293052 0.041880000000000001" quat="1 0 0 0" />
+            <site name="EO1_EO1-P1_l" pos="0.0065501999999999999 0.062743099999999996 -0.030890000000000001" quat="1 0 0 0" />
+            <site name="EO2_EO2-P2_l" pos="0.0072332100000000003 0.0329565 -0.036459999999999999" quat="1 0 0 0" />
+            <site name="EO3_EO3-P2_l" pos="0.0067714100000000003 0.0129967 -0.04163" quat="1 0 0 0" />
+            <site name="EO4_EO4-P2_l" pos="0.0069513400000000003 -0.00599564 -0.040329999999999998" quat="1 0 0 0" />
+            <site name="IO1_IO1-P1_l" pos="0.0030695100000000001 -0.040657600000000002 -0.045379999999999997" quat="1 0 0 0" />
+            <site name="IO2_IO2-P1_l" pos="0.00068053000000000005 -0.0115304 -0.051389999999999998" quat="1 0 0 0" />
+            <site name="IO3_IO3-P1_l" pos="0.0033809600000000001 0.0293052 -0.041880000000000001" quat="1 0 0 0" />
+          </body>
+          <body name="lumbar4" pos="0.0089999999999999993 0.032099999999999997 0" quat="1 0 0 0">
+            <inertial pos="0.0170296 0.018 0" quat="0.707107 0 0 0.707107" mass="1.799" diaginertia="0.01643 0.01123 0.0052" />
+            <geom name="lumbar4_geom_1" pos="-0.0089999999999999993 -0.0040000000000000001 0" type="mesh" mesh="lumbar4_geom_1_lumbar4" contype="0" conaffinity="0" euler="0 0 -0.20000000000000001" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+            <site name="Ps_L4_TP_Ps_L4_TP-P1_r" pos="-0.015649 0.024946400000000001 0.025876799999999998" quat="1 0 0 0" />
+            <site name="Ps_L4_L5_IVD_Ps_L4_L5_IVD-P1_r" pos="0.0054196299999999999 0.0039475400000000003 0.0205966" quat="1 0 0 0" />
+            <site name="Ps_L4_TP_Ps_L4_TP-P1_l" pos="-0.015649 0.024946400000000001 -0.025876799999999998" quat="1 0 0 0" />
+            <site name="Ps_L4_L5_IVD_Ps_L4_L5_IVD-P1_l" pos="0.0054196299999999999 0.0039475400000000003 -0.0205966" quat="1 0 0 0" />
+            <site name="IL_L4_IL_L4-P2_r" pos="-0.021961999999999999 0.025582299999999999 0.031428699999999997" quat="1 0 0 0" />
+            <site name="IL_L4_IL_L4-P2_l" pos="-0.021961999999999999 0.025582299999999999 -0.031428699999999997" quat="1 0 0 0" />
+            <site name="LTpT_T4_LTpT_t4_R-P1_r" pos="-0.045785199999999998 0.0070598600000000003 0.00282" quat="1 0 0 0" />
+            <site name="LTpT_T5_LTpT_t5_R-P1_r" pos="-0.047300099999999998 0.0039696499999999999 8.0000000000000007e-05" quat="1 0 0 0" />
+            <site name="LTpT_T8_LTpT_t8_R-P2_r" pos="-0.046973899999999999 0.018044299999999999 0.0056573500000000002" quat="1 0 0 0" />
+            <site name="LTpT_T9_LTpT_t9_R-P2_r" pos="-0.046719999999999998 0.01796 0.0074799999999999997" quat="1 0 0 0" />
+            <site name="LTpT_T10_LTpT_t10_R-P2_r" pos="-0.046719999999999998 0.01796 0.01256" quat="1 0 0 0" />
+            <site name="LTpT_T11_LTpT_t11_R-P2_r" pos="-0.046719999999999998 0.017000000000000001 0.021940000000000001" quat="1 0 0 0" />
+            <site name="LTpT_T12_LTpT_t12_R-P2_r" pos="-0.046719999999999998 0.017000000000000001 0.025239999999999999" quat="1 0 0 0" />
+            <site name="LTpT_R4_LTpT_r4_R-P1_r" pos="-0.045785199999999998 0.0070598600000000003 0.0028201300000000001" quat="1 0 0 0" />
+            <site name="LTpT_R5_LTpT_r5_R-P1_r" pos="-0.047300099999999998 0.0039696499999999999 8.0000000000000007e-05" quat="1 0 0 0" />
+            <site name="LTpT_R7_LTpT_r7_R-P2_r" pos="-0.046720200000000003 0.0188294 0.0081295699999999992" quat="1 0 0 0" />
+            <site name="LTpT_R8_LTpT_r8_R-P2_r" pos="-0.046528800000000002 0.0181236 0.0113934" quat="1 0 0 0" />
+            <site name="LTpT_R9_LTpT_r9_R-P2_r" pos="-0.046720200000000003 0.0176814 0.0148901" quat="1 0 0 0" />
+            <site name="LTpT_R10_LTpT_r10_R-P2_r" pos="-0.046665400000000003 0.0168641 0.019439100000000001" quat="1 0 0 0" />
+            <site name="LTpT_R11_LTpT_r11_R-P2_r" pos="-0.046100000000000002 0.01796 0.029418799999999998" quat="1 0 0 0" />
+            <site name="LTpT_R12_LTpT_r12_R-P2_r" pos="-0.046719999999999998 0.017576600000000001 0.033507200000000001" quat="1 0 0 0" />
+            <site name="LTpT_T4_LTpT_t4_R-P1_l" pos="-0.045785199999999998 0.0070598600000000003 -0.00282" quat="1 0 0 0" />
+            <site name="LTpT_T5_LTpT_t5_R-P1_l" pos="-0.047300099999999998 0.0039696499999999999 -8.0000000000000007e-05" quat="1 0 0 0" />
+            <site name="LTpT_T8_LTpT_t8_R-P2_l" pos="-0.046973899999999999 0.018044299999999999 -0.0056573500000000002" quat="1 0 0 0" />
+            <site name="LTpT_T9_LTpT_t9_R-P2_l" pos="-0.046719999999999998 0.01796 -0.0074799999999999997" quat="1 0 0 0" />
+            <site name="LTpT_T10_LTpT_t10_R-P2_l" pos="-0.046719999999999998 0.01796 -0.01256" quat="1 0 0 0" />
+            <site name="LTpT_T11_LTpT_t11_R-P2_l" pos="-0.046719999999999998 0.017000000000000001 -0.021940000000000001" quat="1 0 0 0" />
+            <site name="LTpT_T12_LTpT_t12_R-P2_l" pos="-0.046719999999999998 0.017000000000000001 0.025239999999999999" quat="1 0 0 0" />
+            <site name="LTpT_R4_LTpT_r4_R-P1_l" pos="-0.045785199999999998 0.0070598600000000003 -0.0028201300000000001" quat="1 0 0 0" />
+            <site name="LTpT_R5_LTpT_r5_R-P1_l" pos="-0.047300099999999998 0.0039696499999999999 -8.0000000000000007e-05" quat="1 0 0 0" />
+            <site name="LTpT_R7_LTpT_r7_R-P2_l" pos="-0.046720200000000003 0.0188294 -0.0081295699999999992" quat="1 0 0 0" />
+            <site name="LTpT_R8_LTpT_r8_R-P2_l" pos="-0.046528800000000002 0.0181236 -0.0113934" quat="1 0 0 0" />
+            <site name="LTpT_R9_LTpT_r9_R-P2_l" pos="-0.046720200000000003 0.0176814 -0.0148901" quat="1 0 0 0" />
+            <site name="LTpT_R10_LTpT_r10_R-P2_l" pos="-0.046665400000000003 0.0168641 -0.019439100000000001" quat="1 0 0 0" />
+            <site name="LTpT_R11_LTpT_r11_R-P2_l" pos="-0.046100000000000002 0.01796 -0.029418799999999998" quat="1 0 0 0" />
+            <site name="LTpT_R12_LTpT_r12_R-P2_l" pos="-0.046719999999999998 0.017576600000000001 -0.033507200000000001" quat="1 0 0 0" />
+            <site name="LTpL_L4_pathpoint_0_r" pos="-0.020342900000000001 0.023053799999999999 0.022401600000000001" quat="1 0 0 0" />
+            <site name="LTpL_L4_pathpoint_0_l" pos="-0.020342900000000001 0.023053799999999999 -0.022401600000000001" quat="1 0 0 0" />
+            <site name="QL_post_I.2-L4_L4_TP-P2_r" pos="-0.021999999999999999 0.02605 0.030300000000000001" quat="1 0 0 0" />
+            <site name="QL_post_I.2-L4_L4_TP-P2_l" pos="-0.021999999999999999 0.02605 -0.030300000000000001" quat="1 0 0 0" />
+            <site name="QL_mid_L4-12.3_quadratus_lumb_mid_L4_1-P2_r" pos="-0.021382499999999999 0.030700000000000002 0.028060000000000002" quat="1 0 0 0" />
+            <site name="QL_mid_L4-12.3_quadratus_lumb_mid_L4_1-P2_l" pos="-0.021382499999999999 0.030700000000000002 -0.028060000000000002" quat="1 0 0 0" />
+            <site name="MF_m1s_MF_m1s-P1_r" pos="-0.030977500000000002 0.032395100000000003 0.017474400000000001" quat="1 0 0 0" />
+            <site name="MF_m4s_MF_m4s-P2_r" pos="-0.035381900000000001 -0.00021521999999999999 0.0022428399999999999" quat="1 0 0 0" />
+            <site name="MF_m4t.1_MF_m4t.1-P2_r" pos="-0.041802499999999999 0.00016820999999999999 0.00288018" quat="1 0 0 0" />
+            <site name="MF_m4t.2_MF_m4t.2-P2_r" pos="-0.042799999999999998 0.00017000000000000001 0.0028800000000000002" quat="1 0 0 0" />
+            <site name="MF_m4t.3_MF_m4t.3-P2_r" pos="-0.0441 0.00017000000000000001 0.0028800000000000002" quat="1 0 0 0" />
+            <site name="MF_m2.laminar_MF_m2.laminar-P1_r" pos="-0.030562200000000001 0.033503699999999997 0.01694" quat="1 0 0 0" />
+            <site name="MF_m4.laminar_MF_m4.laminar-P2_r" pos="-0.032115299999999999 0.0058134399999999996 0.00694" quat="1 0 0 0" />
+            <site name="MF_m1s_MF_m1s-P1_l" pos="-0.030977500000000002 0.032395100000000003 -0.017474400000000001" quat="1 0 0 0" />
+            <site name="MF_m4s_MF_m4s-P2_l" pos="-0.035381900000000001 -0.00021521999999999999 -0.0022428399999999999" quat="1 0 0 0" />
+            <site name="MF_m4t.1_MF_m4t.1-P2_l" pos="-0.041802499999999999 0.00016820999999999999 -0.00288018" quat="1 0 0 0" />
+            <site name="MF_m4t.2_MF_m4t.2-P2_l" pos="-0.042799999999999998 0.00017000000000000001 -0.0028800000000000002" quat="1 0 0 0" />
+            <site name="MF_m4t.3_MF_m4t.3-P2_l" pos="-0.0441 0.00017000000000000001 -0.0028800000000000002" quat="1 0 0 0" />
+            <site name="MF_m2.laminar_MF_m2.laminar-P1_l" pos="-0.030562200000000001 0.033503699999999997 -0.01694" quat="1 0 0 0" />
+            <site name="MF_m4.laminar_MF_m4.laminar-P2_l" pos="-0.032115299999999999 0.0058134399999999996 -0.00694" quat="1 0 0 0" />
+            <body name="lumbar3" pos="0.00059999999999999995 0.0332 0" quat="1 0 0 0">
+              <inertial pos="0.0136848 0.018 0" quat="0.707107 0 0 0.707107" mass="1.67" diaginertia="0.01608 0.01066 0.00551" />
+              <geom name="lumbar3_geom_1" pos="-0.0040000000000000001 -0.002 0" type="mesh" mesh="lumbar3_geom_1_lumbar3" contype="0" conaffinity="0" euler="0 0 -0.10000000000000001" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+              <site name="Ps_L3_TP_Ps_L3_TP-P1_r" pos="-0.024506500000000001 0.020728300000000002 0.028259900000000001" quat="1 0 0 0" />
+              <site name="Ps_L3_L4_IVD_Ps_L3_L4_IVD-P1_r" pos="0.00115193 0.00621063 0.0211533" quat="1 0 0 0" />
+              <site name="Ps_L3_TP_Ps_L3_TP-P1_l" pos="-0.024506500000000001 0.020728300000000002 -0.02826" quat="1 0 0 0" />
+              <site name="Ps_L3_L4_IVD_Ps_L3_L4_IVD-P1_l" pos="0.00115193 0.00621063 -0.0211533" quat="1 0 0 0" />
+              <site name="IL_L3_IL_L3-P2_r" pos="-0.029215999999999999 0.019988100000000002 0.0305391" quat="1 0 0 0" />
+              <site name="IL_L3_IL_L3-P2_l" pos="-0.029215999999999999 0.019988100000000002 -0.0305391" quat="1 0 0 0" />
+              <site name="LTpT_T3_LTpT_t3_R-P1_r" pos="-0.046201699999999998 -0.0034273799999999998 0.0040699999999999998" quat="1 0 0 0" />
+              <site name="LTpT_T8_LTpT_t8_R-P3_r" pos="-0.046749699999999998 0.0135459 0.0083163600000000001" quat="1 0 0 0" />
+              <site name="LTpT_T9_LTpT_t9_R-P3_r" pos="-0.046429499999999999 0.0138534 0.0096899800000000008" quat="1 0 0 0" />
+              <site name="LTpT_T10_LTpT_t10_R-P2_0_r" pos="-0.046100000000000002 0.014030000000000001 0.014409999999999999" quat="1 0 0 0" />
+              <site name="LTpT_T11_LTpT_t11_R-P3_r" pos="-0.050148199999999997 0.0134888 0.020885000000000001" quat="1 0 0 0" />
+              <site name="LTpT_T12_LTpT_t12_R-P3_r" pos="-0.049367399999999999 0.0140564 0.023897399999999999" quat="1 0 0 0" />
+              <site name="LTpT_R6_LTpT_r6_R-P2_r" pos="-0.046997400000000002 0.014733599999999999 0.010843999999999999" quat="1 0 0 0" />
+              <site name="LTpT_R7_LTpT_r7_R-P2_0_r" pos="-0.046100500000000003 0.0141694 0.0128553" quat="1 0 0 0" />
+              <site name="LTpT_R8_LTpT_r8_R-P2_0_r" pos="-0.045924800000000002 0.0135047 0.016039500000000002" quat="1 0 0 0" />
+              <site name="LTpT_R9_LTpT_r9_R-P2_0_r" pos="-0.046100500000000003 0.0130235 0.019582100000000002" quat="1 0 0 0" />
+              <site name="LTpT_R10_LTpT_r10_R-P2_0_r" pos="-0.0460454 0.012674 0.023453999999999999" quat="1 0 0 0" />
+              <site name="LTpT_R11_LTpT_r11_R-P3_r" pos="-0.046100000000000002 0.0139338 0.032577299999999997" quat="1 0 0 0" />
+              <site name="LTpT_R12_LTpT_r12_R-P2_0_r" pos="-0.046100000000000002 0.0136439 0.035873599999999999" quat="1 0 0 0" />
+              <site name="LTpT_T3_LTpT_t3_R-P1_l" pos="-0.046201699999999998 -0.0034273799999999998 -0.0040699999999999998" quat="1 0 0 0" />
+              <site name="LTpT_T8_LTpT_t8_R-P3_l" pos="-0.046749699999999998 0.0135459 -0.0083163600000000001" quat="1 0 0 0" />
+              <site name="LTpT_T9_LTpT_t9_R-P3_l" pos="-0.046429499999999999 0.0138534 -0.0096900000000000007" quat="1 0 0 0" />
+              <site name="LTpT_T10_LTpT_t10_R-P2_0_l" pos="-0.046100000000000002 0.014030000000000001 -0.014409999999999999" quat="1 0 0 0" />
+              <site name="LTpT_T11_LTpT_t11_R-P3_l" pos="-0.050148199999999997 0.0134888 -0.020885000000000001" quat="1 0 0 0" />
+              <site name="LTpT_T12_LTpT_t12_R-P3_l" pos="-0.049367399999999999 0.0140564 0.023897399999999999" quat="1 0 0 0" />
+              <site name="LTpT_R6_LTpT_r6_R-P2_l" pos="-0.046997400000000002 0.014733599999999999 -0.010843999999999999" quat="1 0 0 0" />
+              <site name="LTpT_R7_LTpT_r7_R-P2_0_l" pos="-0.046100500000000003 0.0141694 -0.0128553" quat="1 0 0 0" />
+              <site name="LTpT_R8_LTpT_r8_R-P2_0_l" pos="-0.045924800000000002 0.0135047 -0.016039500000000002" quat="1 0 0 0" />
+              <site name="LTpT_R9_LTpT_r9_R-P2_0_l" pos="-0.046100500000000003 0.0130235 -0.019582100000000002" quat="1 0 0 0" />
+              <site name="LTpT_R10_LTpT_r10_R-P2_0_l" pos="-0.0460454 0.012674 -0.023453999999999999" quat="1 0 0 0" />
+              <site name="LTpT_R11_LTpT_r11_R-P3_l" pos="-0.046100000000000002 0.0139338 -0.032577299999999997" quat="1 0 0 0" />
+              <site name="LTpT_R12_LTpT_r12_R-P2_0_l" pos="-0.046100000000000002 0.0136439 -0.035873599999999999" quat="1 0 0 0" />
+              <site name="LTpL_L3_pathpoint_0_r" pos="-0.029161099999999999 0.019630000000000002 0.019609999999999999" quat="1 0 0 0" />
+              <site name="LTpL_L3_pathpoint_0_l" pos="-0.029161099999999999 0.019630000000000002 -0.019609999999999999" quat="1 0 0 0" />
+              <site name="QL_post_I.1-L3_L3_TP-P2_r" pos="-0.029000000000000001 0.019630000000000002 0.030300000000000001" quat="1 0 0 0" />
+              <site name="QL_post_I.2-L3_L3_TP-P2_r" pos="-0.029000000000000001 0.019630000000000002 0.030300000000000001" quat="1 0 0 0" />
+              <site name="QL_post_I.3-L3_L3_TP-P2_r" pos="-0.029000000000000001 0.019630000000000002 0.030300000000000001" quat="1 0 0 0" />
+              <site name="QL_post_I.1-L3_L3_TP-P2_l" pos="-0.029000000000000001 0.019630000000000002 -0.030300000000000001" quat="1 0 0 0" />
+              <site name="QL_post_I.2-L3_L3_TP-P2_l" pos="-0.029000000000000001 0.019630000000000002 -0.030300000000000001" quat="1 0 0 0" />
+              <site name="QL_post_I.3-L3_L3_TP-P2_l" pos="-0.029000000000000001 0.019630000000000002 -0.030300000000000001" quat="1 0 0 0" />
+              <site name="QL_mid_L3-12.3_quadratus_lumb_mid_L3_1-P2_r" pos="-0.029361600000000002 0.021730699999999999 0.030380000000000001" quat="1 0 0 0" />
+              <site name="QL_mid_L3-12.2_quadratus_lumb_mid_L3_2-P3_r" pos="-0.029360000000000001 0.021729999999999999 0.030380000000000001" quat="1 0 0 0" />
+              <site name="QL_mid_L3-12.1_quadratus_lumb_mid_L3_3-P3_r" pos="-0.029360000000000001 0.021729999999999999 0.030380000000000001" quat="1 0 0 0" />
+              <site name="QL_mid_L3-12.3_quadratus_lumb_mid_L3_1-P2_l" pos="-0.029361600000000002 0.021730699999999999 -0.030380000000000001" quat="1 0 0 0" />
+              <site name="QL_mid_L3-12.2_quadratus_lumb_mid_L3_2-P3_l" pos="-0.029360000000000001 0.021729999999999999 -0.030380000000000001" quat="1 0 0 0" />
+              <site name="QL_mid_L3-12.1_quadratus_lumb_mid_L3_3-P3_l" pos="-0.029360000000000001 0.021729999999999999 -0.030380000000000001" quat="1 0 0 0" />
+              <site name="MF_m3s_MF_m3s-P2_r" pos="-0.037194900000000003 -0.0064532799999999996 0.0029073300000000001" quat="1 0 0 0" />
+              <site name="MF_m3t.1_MF_m3t.1-P2_r" pos="-0.043380000000000002 -0.0102252 0.0016621400000000001" quat="1 0 0 0" />
+              <site name="MF_m3t.2_MF_m3t.2-P2_r" pos="-0.043360000000000003 -0.01023 0.00266" quat="1 0 0 0" />
+              <site name="MF_m3t.3_MF_m3t.3-P2_r" pos="-0.043360000000000003 -0.01023 0.00266" quat="1 0 0 0" />
+              <site name="MF_m1.laminar_MF_m1.laminar-P1_r" pos="-0.0387085 0.025270000000000001 0.016910000000000001" quat="1 0 0 0" />
+              <site name="MF_m3.laminar_MF_m3.laminar-P2_r" pos="-0.035944200000000003 0.00069045 0.0063499999999999997" quat="1 0 0 0" />
+              <site name="MF_m3s_MF_m3s-P2_l" pos="-0.037194900000000003 -0.0064532799999999996 -0.0029073300000000001" quat="1 0 0 0" />
+              <site name="MF_m3t.1_MF_m3t.1-P2_l" pos="-0.043380000000000002 -0.0102252 -0.0016621400000000001" quat="1 0 0 0" />
+              <site name="MF_m3t.2_MF_m3t.2-P2_l" pos="-0.043360000000000003 -0.01023 -0.00266" quat="1 0 0 0" />
+              <site name="MF_m3t.3_MF_m3t.3-P2_l" pos="-0.043360000000000003 -0.01023 -0.00266" quat="1 0 0 0" />
+              <site name="MF_m1.laminar_MF_m1.laminar-P1_l" pos="-0.0387085 0.025270000000000001 -0.016910000000000001" quat="1 0 0 0" />
+              <site name="MF_m3.laminar_MF_m3.laminar-P2_l" pos="-0.035944200000000003 0.00069045 -0.0063499999999999997" quat="1 0 0 0" />
+              <body name="lumbar2" pos="-0.0067000000000000002 0.035099999999999999 0" quat="1 0 0 0">
+                <inertial pos="0.0245272 0.018 0" quat="0.707107 0 0 0.707107" mass="1.689" diaginertia="0.01682 0.01091 0.00591" />
+                <geom name="lumbar2_geom_1" type="mesh" mesh="lumbar2_geom_1_lumbar2" contype="0" conaffinity="0" pos="0 0 0" euler="0 0 0.10000000000000001" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                <site name="Ps_L2_TP_Ps_L2_TP-P1_r" pos="-0.021621399999999999 0.014586999999999999 0.022249000000000001" quat="1 0 0 0" />
+                <site name="Ps_L2_L3_IVD_Ps_L2_L3_IVD-P1_r" pos="0.0019625200000000001 0.0033851900000000002 0.021447899999999999" quat="1 0 0 0" />
+                <site name="Ps_L2_TP_Ps_L2_TP-P1_l" pos="-0.021621399999999999 0.014586999999999999 -0.022249000000000001" quat="1 0 0 0" />
+                <site name="Ps_L2_L3_IVD_Ps_L2_L3_IVD-P1_l" pos="0.0019625200000000001 0.0033851900000000002 -0.021447899999999999" quat="1 0 0 0" />
+                <site name="IL_L2_IL_L2-P2_r" pos="-0.029831900000000001 0.0116685 0.0285294" quat="1 0 0 0" />
+                <site name="IL_L2_IL_L2-P2_l" pos="-0.029831900000000001 0.0116685 -0.0285294" quat="1 0 0 0" />
+                <site name="IL_R5_IL_r5_R-P2_r" pos="-0.049629800000000002 0.0021113400000000002 0.041570000000000003" quat="1 0 0 0" />
+                <site name="IL_R6_IL_r6_R-P2_r" pos="-0.049214300000000002 0.0023661200000000002 0.044359999999999997" quat="1 0 0 0" />
+                <site name="IL_R7_IL_r7_R-P2_r" pos="-0.048664899999999997 0.0023738700000000001 0.047260000000000003" quat="1 0 0 0" />
+                <site name="IL_R8_IL_r8_R-P2_r" pos="-0.048197799999999999 0.0028552400000000002 0.050009999999999999" quat="1 0 0 0" />
+                <site name="IL_R9_IL_r9_R-P2_r" pos="-0.048352399999999997 0.00265461 0.05219" quat="1 0 0 0" />
+                <site name="IL_R10_IL_r10_R-P2_r" pos="-0.0480883 0.0026268400000000001 0.054670000000000003" quat="1 0 0 0" />
+                <site name="IL_R11_IL_r11_R-P2_r" pos="-0.047947099999999999 0.0027033700000000001 0.057689999999999998" quat="1 0 0 0" />
+                <site name="IL_R5_IL_r5_R-P2_l" pos="-0.049629800000000002 0.0021113400000000002 -0.041570000000000003" quat="1 0 0 0" />
+                <site name="IL_R6_IL_r6_R-P2_l" pos="-0.049214300000000002 0.0023661200000000002 -0.044359999999999997" quat="1 0 0 0" />
+                <site name="IL_R7_IL_r7_R-P2_l" pos="-0.048664899999999997 0.0023738700000000001 -0.047260000000000003" quat="1 0 0 0" />
+                <site name="IL_R8_IL_r8_R-P2_l" pos="-0.048197799999999999 0.0028552400000000002 -0.050009999999999999" quat="1 0 0 0" />
+                <site name="IL_R9_IL_r9_R-P2_l" pos="-0.048352399999999997 0.00265461 -0.05219" quat="1 0 0 0" />
+                <site name="IL_R10_IL_r10_R-P2_l" pos="-0.0480883 0.0026268400000000001 -0.054670000000000003" quat="1 0 0 0" />
+                <site name="IL_R11_IL_r11_R-P2_l" pos="-0.047947099999999999 0.0027033700000000001 -0.057689999999999998" quat="1 0 0 0" />
+                <site name="LTpT_T2_LTpT_t2_R-P1_r" pos="-0.044796099999999998 -0.0143228 0.0038300000000000001" quat="1 0 0 0" />
+                <site name="LTpT_T5_LTpT_t5_R-P2_r" pos="-0.043999999999999997 0.0044000000000000003 0.0064000000000000003" quat="1 0 0 0" />
+                <site name="LTpT_T6_LTpT_t6_R-P2_r" pos="-0.043999999999999997 0.0044000000000000003 0.0089999999999999993" quat="1 0 0 0" />
+                <site name="LTpT_T7_LTpT_t7_R-P2_r" pos="-0.043990000000000001 0.0044000000000000003 0.010999999999999999" quat="1 0 0 0" />
+                <site name="LTpT_T8_LTpT_t8_R-P2_0_r" pos="-0.045315899999999999 0.00310151 0.01094" quat="1 0 0 0" />
+                <site name="LTpT_T9_LTpT_t9_R-P3_0_r" pos="-0.0447163 0.0034730400000000002 0.0115" quat="1 0 0 0" />
+                <site name="LTpT_T10_LTpT_t10_R-P3_r" pos="-0.043999999999999997 0.0033800000000000002 0.01525" quat="1 0 0 0" />
+                <site name="LTpT_T11_LTpT_t11_R-P2_0_r" pos="-0.045999999999999999 0.0033800000000000002 0.01983" quat="1 0 0 0" />
+                <site name="LTpT_T12_LTpT_t12_R-P2_0_r" pos="-0.045802799999999998 0.0039833300000000002 0.022554299999999999" quat="1 0 0 0" />
+                <site name="LTpT_R4_LTpT_r4_R-P2_r" pos="-0.046332199999999997 0.0054562200000000003 0.011480000000000001" quat="1 0 0 0" />
+                <site name="LTpT_R5_LTpT_r5_R-P2_r" pos="-0.047433799999999998 0.0046326800000000001 0.014196200000000001" quat="1 0 0 0" />
+                <site name="LTpT_R6_LTpT_r6_R-P2_0_r" pos="-0.043999999999999997 0.0044000000000000003 0.014" quat="1 0 0 0" />
+                <site name="LTpT_R7_LTpT_r7_R-P2_1_r" pos="-0.043990000000000001 0.0043153200000000001 0.0172724" quat="1 0 0 0" />
+                <site name="LTpT_R8_LTpT_r8_R-P2_1_r" pos="-0.043990000000000001 0.0038800000000000002 0.020541400000000001" quat="1 0 0 0" />
+                <site name="LTpT_R9_LTpT_r9_R-P2_1_r" pos="-0.043990500000000002 0.0039367100000000004 0.024188399999999999" quat="1 0 0 0" />
+                <site name="LTpT_R10_LTpT_r10_R-P2_1_r" pos="-0.043935599999999998 0.00364643 0.027333" quat="1 0 0 0" />
+                <site name="LTpT_R11_LTpT_r11_R-P4_r" pos="-0.044023800000000002 0.0044799999999999996 0.035573399999999998" quat="1 0 0 0" />
+                <site name="LTpT_R12_LTpT_r12_R-P2_1_r" pos="-0.043999999999999997 0.0044000000000000003 0.038815299999999997" quat="1 0 0 0" />
+                <site name="LTpT_T2_LTpT_t2_R-P1_l" pos="-0.044796099999999998 -0.0143228 -0.0038300000000000001" quat="1 0 0 0" />
+                <site name="LTpT_T5_LTpT_t5_R-P2_l" pos="-0.043999999999999997 0.0044000000000000003 -0.0064000000000000003" quat="1 0 0 0" />
+                <site name="LTpT_T6_LTpT_t6_R-P2_l" pos="-0.043999999999999997 0.0044000000000000003 -0.0089999999999999993" quat="1 0 0 0" />
+                <site name="LTpT_T7_LTpT_t7_R-P2_l" pos="-0.043990000000000001 0.0044000000000000003 -0.010999999999999999" quat="1 0 0 0" />
+                <site name="LTpT_T8_LTpT_t8_R-P2_0_l" pos="-0.045315899999999999 0.00310151 -0.01094" quat="1 0 0 0" />
+                <site name="LTpT_T9_LTpT_t9_R-P3_0_l" pos="-0.0447163 0.0034730400000000002 -0.0115" quat="1 0 0 0" />
+                <site name="LTpT_T10_LTpT_t10_R-P3_l" pos="-0.043999999999999997 0.0033800000000000002 -0.01525" quat="1 0 0 0" />
+                <site name="LTpT_T11_LTpT_t11_R-P2_0_l" pos="-0.045999999999999999 0.0033800000000000002 -0.01983" quat="1 0 0 0" />
+                <site name="LTpT_T12_LTpT_t12_R-P2_0_l" pos="-0.045802799999999998 0.0039833300000000002 0.022554299999999999" quat="1 0 0 0" />
+                <site name="LTpT_R4_LTpT_r4_R-P2_l" pos="-0.046332199999999997 0.0054562200000000003 -0.011480000000000001" quat="1 0 0 0" />
+                <site name="LTpT_R5_LTpT_r5_R-P2_l" pos="-0.047433799999999998 0.0046326800000000001 -0.014196200000000001" quat="1 0 0 0" />
+                <site name="LTpT_R6_LTpT_r6_R-P2_0_l" pos="-0.043999999999999997 0.0044000000000000003 -0.014" quat="1 0 0 0" />
+                <site name="LTpT_R7_LTpT_r7_R-P2_1_l" pos="-0.043990000000000001 0.0043153200000000001 -0.0172724" quat="1 0 0 0" />
+                <site name="LTpT_R8_LTpT_r8_R-P2_1_l" pos="-0.043990000000000001 0.0038800000000000002 -0.020541400000000001" quat="1 0 0 0" />
+                <site name="LTpT_R9_LTpT_r9_R-P2_1_l" pos="-0.043990500000000002 0.0039367100000000004 -0.024188399999999999" quat="1 0 0 0" />
+                <site name="LTpT_R10_LTpT_r10_R-P2_1_l" pos="-0.043935599999999998 0.00364643 -0.027333" quat="1 0 0 0" />
+                <site name="LTpT_R11_LTpT_r11_R-P4_l" pos="-0.044023800000000002 0.0044799999999999996 -0.035573399999999998" quat="1 0 0 0" />
+                <site name="LTpT_R12_LTpT_r12_R-P2_1_l" pos="-0.043999999999999997 0.0044000000000000003 -0.038815299999999997" quat="1 0 0 0" />
+                <site name="LTpL_L2_pathpoint_0_r" pos="-0.028762699999999999 0.0125583 0.020299999999999999" quat="1 0 0 0" />
+                <site name="LTpL_L2_pathpoint_0_l" pos="-0.028762699999999999 0.0125583 -0.020299999999999999" quat="1 0 0 0" />
+                <site name="QL_post_I.2-L2_L2_TP-P2_r" pos="-0.031 0.012 0.030300000000000001" quat="1 0 0 0" />
+                <site name="QL_post_I.3-L2_L2_TP-P2_r" pos="-0.031 0.012 0.030300000000000001" quat="1 0 0 0" />
+                <site name="QL_post_I.2-L2_L2_TP-P2_l" pos="-0.031 0.012 -0.030300000000000001" quat="1 0 0 0" />
+                <site name="QL_post_I.3-L2_L2_TP-P2_l" pos="-0.031 0.012 -0.030300000000000001" quat="1 0 0 0" />
+                <site name="QL_mid_L2-12.1_QL_mid_L2-12.1-P1_0_r" pos="-0.029121399999999999 0.016895899999999998 0.02562" quat="1 0 0 0" />
+                <site name="QL_mid_L2-12.1_QL_mid_L2-12.1-P1_0_l" pos="-0.029121399999999999 0.016895899999999998 -0.02562" quat="1 0 0 0" />
+                <site name="MF_m2s_MF_m2s-P2_r" pos="-0.035834100000000001 -0.0117591 0.0035500000000000002" quat="1 0 0 0" />
+                <site name="MF_m2t.1_MF_m2t.1-P2_r" pos="-0.039559999999999998 -0.01839 0.00364" quat="1 0 0 0" />
+                <site name="MF_m2t.2_MF_m2t.2-P2_r" pos="-0.039559999999999998 -0.01839 0.00364" quat="1 0 0 0" />
+                <site name="MF_m2t.3_MF_m2t.3-P2_r" pos="-0.038808000000000002 -0.018738299999999999 0.0023653400000000001" quat="1 0 0 0" />
+                <site name="MF_m2.laminar_MF_m2.laminar-P2_r" pos="-0.032901 -0.0056100000000000004 0.0067400000000000003" quat="1 0 0 0" />
+                <site name="MF_m2s_MF_m2s-P2_l" pos="-0.035834100000000001 -0.0117591 -0.0035500000000000002" quat="1 0 0 0" />
+                <site name="MF_m2t.1_MF_m2t.1-P2_l" pos="-0.039559999999999998 -0.01839 -0.00364" quat="1 0 0 0" />
+                <site name="MF_m2t.2_MF_m2t.2-P2_l" pos="-0.039559999999999998 -0.01839 -0.00364" quat="1 0 0 0" />
+                <site name="MF_m2t.3_MF_m2t.3-P2_l" pos="-0.038808000000000002 -0.018738299999999999 -0.0023653400000000001" quat="1 0 0 0" />
+                <site name="MF_m2.laminar_MF_m2.laminar-P2_l" pos="-0.032901 -0.0056100000000000004 -0.0067400000000000003" quat="1 0 0 0" />
+                <body name="lumbar1" pos="-0.0114 0.028799999999999999 0" quat="1 0 0 0">
+                  <inertial pos="0.039 0.017 0" quat="0.707107 0 0 0.707107" mass="1.677" diaginertia="0.01753 0.01113 0.0064" />
+                  <geom name="lumbar1_geom_1" type="mesh" mesh="lumbar1_geom_1_lumbar1" contype="0" conaffinity="0" pos="0 0 0" euler="0 0 0.25" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                  <site name="Ps_L1_VB_Ps_L1_VB-P1_r" pos="-0.0101595 0.023269999999999999 0.02" quat="1 0 0 0" />
+                  <site name="Ps_L1_TP_Ps_L1_TP-P1_r" pos="-0.02325 0.0146584 0.022625200000000002" quat="1 0 0 0" />
+                  <site name="Ps_L1_L2_IVD_Ps_L1_L2_IVD-P1_r" pos="-0.00125362 0.00350798 0.020683400000000001" quat="1 0 0 0" />
+                  <site name="Ps_L1_VB_Ps_L1_VB-P1_l" pos="-0.0101595 0.023269999999999999 -0.02" quat="1 0 0 0" />
+                  <site name="Ps_L1_TP_Ps_L1_TP-P1_l" pos="-0.02325 0.0146584 -0.022625200000000002" quat="1 0 0 0" />
+                  <site name="Ps_L1_L2_IVD_Ps_L1_L2_IVD-P1_l" pos="-0.00125362 0.00350798 -0.020683400000000001" quat="1 0 0 0" />
+                  <site name="IL_L1_IL_L1-P2_r" pos="-0.030070199999999998 0.0155021 0.0291785" quat="1 0 0 0" />
+                  <site name="IL_L1_IL_L1-P2_l" pos="-0.030070199999999998 0.0155021 -0.0291785" quat="1 0 0 0" />
+                  <site name="LTpT_T1_LTpT_t1_R-P1_r" pos="-0.045974899999999999 -0.0105702 0.0032100000000000002" quat="1 0 0 0" />
+                  <site name="LTpT_T3_LTpT_t3_R-P2_r" pos="-0.037109999999999997 -0.014019999999999999 0.0050000000000000001" quat="1 0 0 0" />
+                  <site name="LTpT_T4_LTpT_t4_R-P2_r" pos="-0.037112899999999997 -0.014024699999999999 0.0061199999999999996" quat="1 0 0 0" />
+                  <site name="LTpT_T1_LTpT_t1_R-P1_l" pos="-0.045974899999999999 -0.0105702 -0.0032100000000000002" quat="1 0 0 0" />
+                  <site name="LTpT_T3_LTpT_t3_R-P2_l" pos="-0.037109999999999997 -0.014019999999999999 -0.0050000000000000001" quat="1 0 0 0" />
+                  <site name="LTpT_T4_LTpT_t4_R-P2_l" pos="-0.037112899999999997 -0.014024699999999999 -0.0061199999999999996" quat="1 0 0 0" />
+                  <site name="LTpL_L1_pathpoint_0_r" pos="-0.029075899999999998 0.015055499999999999 0.021795100000000001" quat="1 0 0 0" />
+                  <site name="LTpL_L1_pathpoint_0_l" pos="-0.029075899999999998 0.015055499999999999 -0.021795100000000001" quat="1 0 0 0" />
+                  <site name="QL_post_I.3-L1_L1_TP-P1_r" pos="-0.032636199999999997 0.0148767 0.029000000000000001" quat="1 0 0 0" />
+                  <site name="QL_post_I.3-L1_L1_TP-P1_l" pos="-0.032636199999999997 0.0148767 -0.029000000000000001" quat="1 0 0 0" />
+                  <site name="MF_m1s_MF_m1s-P2_r" pos="-0.034314499999999998 -0.0131463 0.0030168399999999998" quat="1 0 0 0" />
+                  <site name="MF_m1t.1_MF_m1t.1-P2_r" pos="-0.040938500000000003 -0.016004600000000001 0.0030963599999999998" quat="1 0 0 0" />
+                  <site name="MF_m1t.2_MF_m1t.2-P2_r" pos="-0.040939999999999997 -0.016 0.0030999999999999999" quat="1 0 0 0" />
+                  <site name="MF_m1t.3_MF_m1t.3-P2_r" pos="-0.040939999999999997 -0.016 0.0030999999999999999" quat="1 0 0 0" />
+                  <site name="MF_m1.laminar_MF_m1.laminar-P2_r" pos="-0.034101899999999997 -0.00560525 0.0061900000000000002" quat="1 0 0 0" />
+                  <site name="MF_m1s_MF_m1s-P2_l" pos="-0.034314499999999998 -0.0131463 -0.0030168399999999998" quat="1 0 0 0" />
+                  <site name="MF_m1t.1_MF_m1t.1-P2_l" pos="-0.040938500000000003 -0.016004600000000001 -0.0030963599999999998" quat="1 0 0 0" />
+                  <site name="MF_m1t.2_MF_m1t.2-P2_l" pos="-0.040939999999999997 -0.016 -0.0030999999999999999" quat="1 0 0 0" />
+                  <site name="MF_m1t.3_MF_m1t.3-P2_l" pos="-0.040939999999999997 -0.016 -0.0030999999999999999" quat="1 0 0 0" />
+                  <site name="MF_m1.laminar_MF_m1.laminar-P2_l" pos="-0.034101899999999997 -0.00560525 -0.0061900000000000002" quat="1 0 0 0" />
+                  <body name="torso" pos="0.0025000000000000001 -0.088999999999999996 0" quat="1 0 0 0">
+                    <inertial pos="0.0046 0.246 0" mass="18.619" diaginertia="0.165 0.15 0.125" />
+                    <geom name="torso_geom_1" pos="-0.016 0.11899999999999999 0" type="mesh" mesh="torso_geom_1_thoracic12_s" contype="0" conaffinity="0" quat="0.98006700000000002 0 0 0.19866900000000001" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="torso_geom_2" pos="-0.032000000000000001 0.14599999999999999 0" type="mesh" mesh="torso_geom_2_thoracic11_s" contype="0" conaffinity="0" quat="0.995004 0 0 0.099833400000000003" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="torso_geom_3" pos="-0.040000000000000001 0.17100000000000001 0" type="mesh" mesh="torso_geom_3_thoracic10_s" contype="0" conaffinity="0" quat="0.99718899999999999 0 0 0.074929700000000002" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="torso_geom_4" pos="-0.042999999999999997 0.19800000000000001 0" type="mesh" mesh="torso_geom_4_thoracic9_s" contype="0" conaffinity="0" quat="0.99875000000000003 0 0 0.049979200000000001" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="torso_geom_5" pos="-0.044999999999999998 0.223 0" type="mesh" mesh="torso_geom_5_thoracic8_s" contype="0" conaffinity="0" quat="0.99980000000000002 0 0 -0.019998700000000001" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="torso_geom_6" pos="-0.043999999999999997 0.249 0" type="mesh" mesh="torso_geom_6_thoracic7_s" contype="0" conaffinity="0" quat="0.99955000000000005 0 0 -0.029995500000000001" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="torso_geom_7" pos="-0.042999999999999997 0.27000000000000002 0" type="mesh" mesh="torso_geom_7_thoracic6_s" contype="0" conaffinity="0" quat="0.99955000000000005 0 0 -0.029995500000000001" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="torso_geom_8" pos="-0.041000000000000002 0.29199999999999998 0" type="mesh" mesh="torso_geom_8_thoracic5_s" contype="0" conaffinity="0" quat="0.99875000000000003 0 0 -0.049979200000000001" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="torso_geom_9" pos="-0.0395 0.314 0" type="mesh" mesh="torso_geom_9_thoracic4_s" contype="0" conaffinity="0" quat="0.99718899999999999 0 0 -0.074929700000000002" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="torso_geom_10" pos="-0.035999999999999997 0.33700000000000002 0" type="mesh" mesh="torso_geom_10_thoracic3_s" contype="0" conaffinity="0" quat="0.995004 0 0 -0.099833400000000003" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="torso_geom_11" pos="-0.032000000000000001 0.35799999999999998 0" type="mesh" mesh="torso_geom_11_thoracic2_s" contype="0" conaffinity="0" quat="0.99219800000000002 0 0 -0.12467499999999999" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="torso_geom_12" pos="-0.028000000000000001 0.375 0" type="mesh" mesh="torso_geom_12_thoracic1_s" contype="0" conaffinity="0" quat="0.98877099999999996 0 0 -0.14943799999999999" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="torso_geom_13" pos="0.028000000000000001 0.36499999999999999 0" type="mesh" mesh="torso_geom_13_ribcage_s" contype="0" conaffinity="0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom class="myotorso_coll" size="0.080000000000000002 0.076999999999999999 0" pos="0.035999999999999997 -0.02 0" contype="0" mass="0" conaffinity="0" euler="0 0 1.5700000000000001" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="thorax_coll1" class="myotorso_coll" size="0.26000000000000001 0.095000000000000001 0.14000000000000001" pos="0.016 0.16 0" type="ellipsoid" contype="0" mass="0" conaffinity="0" euler="0 0 1.7" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="thorax_coll2" class="myotorso_coll" size="0.11 0.065000000000000002 0" pos="0.010999999999999999 0.25 0" contype="0" mass="0" conaffinity="0" euler="0 0 1.5700000000000001" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="thorax_coll3" class="myotorso_coll" size="0.074999999999999997 0.14499999999999999 0" pos="-0.0089999999999999993 0.33500000000000002 0" contype="0" mass="0" conaffinity="0" euler="0 0 1.5700000000000001" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="back_cylinder_l" class="myotorso_back_wrap" size="0.17000000000000001 0.13 0" pos="-0.20999999999999999 0.040000000000000001 0" contype="0" conaffinity="0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="Chest_ellipsoid_r" size="0.072999999999999995 0 0" pos="0.0080000000000000002 0.20999999999999999 0.01" group="3" rgba="0.5 0.5 0.9 0.5" contype="0" conaffinity="0" quat="0.97516999999999998 -0.019833799999999999 -0.19767699999999999 0.097843399999999997" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="Chest_ellipsoid_l" size="0.072999999999999995 0 0" pos="0.0080000000000000002 0.20999999999999999 -0.01" group="3" rgba="0.5 0.5 0.9 0.5" contype="0" conaffinity="0" quat="0.97516999999999998 0.019833799999999999 0.19767699999999999 0.097843399999999997" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="Cylinder_abdomen" class="myotorso_back_wrap" size="0.089999999999999997 0.13 0" pos="0.22500000000000001 0.10000000000000001 0" contype="0" conaffinity="0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="task_collision_torso" size="0.11 0.25906161519325854 0.21999999999999997" pos="0.010999999999999996 0.15906161519325857 0" type="box" contype="2" conaffinity="1" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <site name="clavicle_l" class="myotorso_marker" pos="0.021000000000000001 0.39000000000000001 -0.058000000000000003" quat="1 0 0 0" />
+                    <site name="clavicle_r" class="myotorso_marker" pos="0.021000000000000001 0.39000000000000001 0.058000000000000003" quat="1 0 0 0" />
+                    <site name="clavicle_spine" class="myotorso_marker" pos="-0.01 0.40000000000000002 0" quat="1 0 0 0" />
+                    <site name="thoracis_spine" class="myotorso_marker" pos="-0.017999999999999999 0.19400000000000001 0" quat="1 0 0 0" />
+                    <site name="chest" class="myotorso_marker" pos="0.084000000000000005 0.221 0" quat="1 0 0 0" />
+                    <site name="Abs_sidesite" class="myotorso_sidesite" pos="0.029999999999999999 0.050000000000000003 0" quat="1 0 0 0" />
+                    <site name="Shoulder_l" pos="-0.11 0.29999999999999999 -0.070000000000000007" size="0.0005" rgba="0 1 0 1" quat="1 0 0 0" />
+                    <site name="Shoulder_r" pos="-0.11 0.29999999999999999 0.070000000000000007" size="0.0005" rgba="0 1 0 1" quat="1 0 0 0" />
+                    <site name="Chest_sidesite_r" class="myotorso_sidesite" pos="-0.020820000000000002 0.20999999999999999 0.078159999999999993" quat="1 0 0 0" />
+                    <site name="Chest_sidesite_l" class="myotorso_sidesite" pos="-0.020820000000000002 0.20999999999999999 -0.078159999999999993" quat="1 0 0 0" />
+                    <site name="rect_abd_rect_abd-P2_r" pos="0.088059999999999999 0.22256999999999999 -0.034450000000000001" quat="1 0 0 0" />
+                    <site name="rect_abd_rect_abd-P2_l" pos="0.088059999999999999 0.22256999999999999 0.034450000000000001" quat="1 0 0 0" />
+                    <site name="back_cylinder_l_IL_L2_1_sidesite_r" class="myotorso_sidesite" pos="-0.040329499999999997 -0.073260400000000003 -0.12052300000000001" quat="1 0 0 0" />
+                    <site name="back_cylinder_l_IL_L3_1_sidesite_r" class="myotorso_sidesite" pos="-0.108976 0.21722900000000001 0.0537206" quat="1 0 0 0" />
+                    <site name="back_cylinder_l_IL_L4_1_sidesite_r" class="myotorso_sidesite" pos="-0.046551200000000001 0.16206799999999999 -0.10054" quat="1 0 0 0" />
+                    <site name="back_cylinder_l_IL_L2_1_sidesite_l" class="myotorso_sidesite" pos="-0.040329499999999997 -0.073260400000000003 0.12052300000000001" quat="1 0 0 0" />
+                    <site name="back_cylinder_l_IL_L3_1_sidesite_l" class="myotorso_sidesite" pos="-0.108976 0.21722900000000001 -0.0537206" quat="1 0 0 0" />
+                    <site name="back_cylinder_l_IL_L4_1_sidesite_l" class="myotorso_sidesite" pos="-0.046551200000000001 0.16206799999999999 0.10054" quat="1 0 0 0" />
+                    <site name="IL_R5_IL_r5_R-P2_0_r" pos="-0.079280000000000003 0.17541499999999999 0.043270000000000003" quat="1 0 0 0" />
+                    <site name="IL_R5_IL_r5_R-P3_r" pos="-0.080787600000000001 0.20260900000000001 0.043400000000000001" quat="1 0 0 0" />
+                    <site name="IL_R5_IL_r5_R-P4_r" pos="-0.082701999999999998 0.23174 0.043770000000000003" quat="1 0 0 0" />
+                    <site name="IL_R5_IL_r5_R-P5_r" pos="-0.083585800000000002 0.26018799999999997 0.045010000000000001" quat="1 0 0 0" />
+                    <site name="IL_R5_IL_r5_R-P6_r" pos="-0.080848699999999996 0.280829 0.0453" quat="1 0 0 0" />
+                    <site name="IL_R5_IL_r5_R-P7_r" pos="-0.076137700000000003 0.30076399999999998 0.045569999999999999" quat="1 0 0 0" />
+                    <site name="IL_R6_IL_r6_R-P2_0_r" pos="-0.080084100000000005 0.173627 0.046149999999999997" quat="1 0 0 0" />
+                    <site name="IL_R6_IL_r6_R-P3_r" pos="-0.083302000000000001 0.205151 0.046429999999999999" quat="1 0 0 0" />
+                    <site name="IL_R6_IL_r6_R-P4_r" pos="-0.083959199999999998 0.23508799999999999 0.047280000000000003" quat="1 0 0 0" />
+                    <site name="IL_R6_IL_r6_R-P5_r" pos="-0.081604599999999999 0.262818 0.04827" quat="1 0 0 0" />
+                    <site name="IL_R6_IL_r6_R-P6_r" pos="-0.076212299999999997 0.27676499999999998 0.048590000000000001" quat="1 0 0 0" />
+                    <site name="IL_R7_IL_r7_R-P2_0_r" pos="-0.080348600000000006 0.174563 0.048660000000000002" quat="1 0 0 0" />
+                    <site name="IL_R7_IL_r7_R-P3_r" pos="-0.083355399999999996 0.20355400000000001 0.049180000000000001" quat="1 0 0 0" />
+                    <site name="IL_R7_IL_r7_R-P4_r" pos="-0.084365999999999997 0.234157 0.049549999999999997" quat="1 0 0 0" />
+                    <site name="IL_R7_IL_r7_R-P5_r" pos="-0.0792041 0.257745 0.050899699999999999" quat="1 0 0 0" />
+                    <site name="IL_R8_IL_r8_R-P2_0_r" pos="-0.079052300000000006 0.170344 0.051229999999999998" quat="1 0 0 0" />
+                    <site name="IL_R8_IL_r8_R-P3_r" pos="-0.0811061 0.20352600000000001 0.051049600000000001" quat="1 0 0 0" />
+                    <site name="IL_R8_IL_r8_R-P4_r" pos="-0.079717999999999997 0.227964 0.052290000000000003" quat="1 0 0 0" />
+                    <site name="IL_R9_IL_r9_R-P2_0_r" pos="-0.079489699999999996 0.17449600000000001 0.053710000000000001" quat="1 0 0 0" />
+                    <site name="IL_R9_IL_r9_R-P3_r" pos="-0.076939999999999995 0.193965 0.053789999999999998" quat="1 0 0 0" />
+                    <site name="IL_R10_IL_r10_R-P2_0_r" pos="-0.074957499999999996 0.16284199999999999 0.056230000000000002" quat="1 0 0 0" />
+                    <site name="IL_R11_IL_r11_R-P2_0_r" pos="-0.062439700000000001 0.135882 0.059900000000000002" quat="1 0 0 0" />
+                    <site name="IL_R12_IL_r12_R-P2_r" pos="-0.038334600000000003 0.106097 0.059400000000000001" quat="1 0 0 0" />
+                    <site name="IL_R5_IL_r5_R-P2_0_l" pos="-0.079280000000000003 0.17541499999999999 -0.043270000000000003" quat="1 0 0 0" />
+                    <site name="IL_R5_IL_r5_R-P3_l" pos="-0.080787600000000001 0.20260900000000001 -0.043400000000000001" quat="1 0 0 0" />
+                    <site name="IL_R5_IL_r5_R-P4_l" pos="-0.082701999999999998 0.23174 -0.043770000000000003" quat="1 0 0 0" />
+                    <site name="IL_R5_IL_r5_R-P5_l" pos="-0.083585800000000002 0.26018799999999997 -0.045010000000000001" quat="1 0 0 0" />
+                    <site name="IL_R5_IL_r5_R-P6_l" pos="-0.080848699999999996 0.280829 -0.0453" quat="1 0 0 0" />
+                    <site name="IL_R5_IL_r5_R-P7_l" pos="-0.076137700000000003 0.30076399999999998 -0.045569999999999999" quat="1 0 0 0" />
+                    <site name="IL_R6_IL_r6_R-P2_0_l" pos="-0.080084100000000005 0.173627 -0.046149999999999997" quat="1 0 0 0" />
+                    <site name="IL_R6_IL_r6_R-P3_l" pos="-0.083302000000000001 0.205151 -0.046429999999999999" quat="1 0 0 0" />
+                    <site name="IL_R6_IL_r6_R-P4_l" pos="-0.083959199999999998 0.23508799999999999 -0.047280000000000003" quat="1 0 0 0" />
+                    <site name="IL_R6_IL_r6_R-P5_l" pos="-0.081604599999999999 0.262818 -0.04827" quat="1 0 0 0" />
+                    <site name="IL_R6_IL_r6_R-P6_l" pos="-0.076212299999999997 0.27676499999999998 -0.048590000000000001" quat="1 0 0 0" />
+                    <site name="IL_R7_IL_r7_R-P2_0_l" pos="-0.080348600000000006 0.174563 -0.048660000000000002" quat="1 0 0 0" />
+                    <site name="IL_R7_IL_r7_R-P3_l" pos="-0.083355399999999996 0.20355400000000001 -0.049180000000000001" quat="1 0 0 0" />
+                    <site name="IL_R7_IL_r7_R-P4_l" pos="-0.084365999999999997 0.234157 -0.049549999999999997" quat="1 0 0 0" />
+                    <site name="IL_R7_IL_r7_R-P5_l" pos="-0.0792041 0.257745 -0.050900000000000001" quat="1 0 0 0" />
+                    <site name="IL_R8_IL_r8_R-P2_0_l" pos="-0.079052300000000006 0.170344 -0.051229999999999998" quat="1 0 0 0" />
+                    <site name="IL_R8_IL_r8_R-P3_l" pos="-0.0811061 0.20352600000000001 -0.051049999999999998" quat="1 0 0 0" />
+                    <site name="IL_R8_IL_r8_R-P4_l" pos="-0.079717999999999997 0.227964 -0.052290000000000003" quat="1 0 0 0" />
+                    <site name="IL_R9_IL_r9_R-P2_0_l" pos="-0.079489699999999996 0.17449600000000001 -0.053710000000000001" quat="1 0 0 0" />
+                    <site name="IL_R9_IL_r9_R-P3_l" pos="-0.076939999999999995 0.193965 -0.053789999999999998" quat="1 0 0 0" />
+                    <site name="IL_R10_IL_r10_R-P2_0_l" pos="-0.074957499999999996 0.16284199999999999 -0.056230000000000002" quat="1 0 0 0" />
+                    <site name="IL_R11_IL_r11_R-P2_0_l" pos="-0.062439700000000001 0.135882 -0.059900000000000002" quat="1 0 0 0" />
+                    <site name="IL_R12_IL_r12_R-P2_l" pos="-0.038334600000000003 0.106097 -0.059400000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T1_LTpT_t1_R-P2_r" pos="-0.052381700000000003 0.399196 0.02615" quat="1 0 0 0" />
+                    <site name="Chest_ellipsoid_LTpT_T1_1_sidesite_r" class="myotorso_sidesite" pos="-0.064589999999999995 0.22370000000000001 0.014250000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T2_LTpT_t2_R-P2_r" pos="-0.056128299999999999 0.38025500000000001 0.026540000000000001" quat="1 0 0 0" />
+                    <site name="Chest_ellipsoid_LTpT_T2_1_sidesite_r" class="myotorso_sidesite" pos="-0.064589999999999995 0.22370000000000001 0.014250000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T3_LTpT_t3_R-P2_0_r" pos="-0.065100099999999994 0.35885899999999998 0.02598" quat="1 0 0 0" />
+                    <site name="Chest_ellipsoid_LTpT_T3_2_sidesite_r" class="myotorso_sidesite" pos="-0.064589999999999995 0.22370000000000001 0.014250000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T4_LTpT_t4_R-P2_0_r" pos="-0.073253600000000002 0.337677 0.02615" quat="1 0 0 0" />
+                    <site name="Chest_ellipsoid_LTpT_T4_2_sidesite_r" class="myotorso_sidesite" pos="-0.064589999999999995 0.22370000000000001 0.014250000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T5_LTpT_t5_R-P2_0_r" pos="-0.076137800000000005 0.31462200000000001 0.028080000000000001" quat="1 0 0 0" />
+                    <site name="Chest_ellipsoid_LTpT_T5_2_sidesite_r" class="myotorso_sidesite" pos="-0.064589999999999995 0.22370000000000001 0.014250000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T6_LTpT_t6_R-P3_r" pos="-0.074797799999999998 0.18628600000000001 0.015469999999999999" quat="1 0 0 0" />
+                    <site name="LTpT_T6_LTpT_t6_R-P2_0_r" pos="-0.083379999999999996 0.289296 0.027660000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T7_LTpT_t7_R-P3_r" pos="-0.075955800000000004 0.18626000000000001 0.019560000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T7_LTpT_t7_R-P2_0_r" pos="-0.0822431 0.26309100000000002 0.02647" quat="1 0 0 0" />
+                    <site name="LTpT_T8_LTpT_t8_R-P2_1_r" pos="-0.080459199999999995 0.235899 0.025499999999999998" quat="1 0 0 0" />
+                    <site name="LTpT_T9_LTpT_t9_R-P2_0_r" pos="-0.076939999999999995 0.21835399999999999 0.026329999999999999" quat="1 0 0 0" />
+                    <site name="LTpT_T10_LTpT_t10_R-P2_1_r" pos="-0.069823300000000005 0.189776 0.018100000000000002" quat="1 0 0 0" />
+                    <site name="LTpT_T11_LTpT_t11_R-P2_1_r" pos="-0.060879000000000003 0.161718 0.01762" quat="1 0 0 0" />
+                    <site name="LTpT_T12_LTpT_t12_R-P2_1_r" pos="-0.052717 0.13133 0.018180000000000002" quat="1 0 0 0" />
+                    <site name="LTpT_R4_LTpT_r4_R-P2_0_r" pos="-0.076826099999999994 0.18568000000000001 0.025999999999999999" quat="1 0 0 0" />
+                    <site name="LTpT_R4_LTpT_r4_R-P3_r" pos="-0.077576800000000001 0.21098 0.028580000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_R4_LTpT_r4_R-P4_r" pos="-0.078296599999999994 0.23725599999999999 0.031120600000000002" quat="1 0 0 0" />
+                    <site name="LTpT_R4_LTpT_r4_R-P5_r" pos="-0.076808699999999994 0.26452599999999998 0.033519500000000001" quat="1 0 0 0" />
+                    <site name="LTpT_R4_LTpT_r4_R-P6_r" pos="-0.075537800000000002 0.329822 0.038390000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_R5_LTpT_r5_R-P2_0_r" pos="-0.079894900000000005 0.18435499999999999 0.029909999999999999" quat="1 0 0 0" />
+                    <site name="LTpT_R5_LTpT_r5_R-P3_r" pos="-0.079286899999999993 0.20943100000000001 0.031969999999999998" quat="1 0 0 0" />
+                    <site name="LTpT_R5_LTpT_r5_R-P4_r" pos="-0.080006599999999997 0.23689299999999999 0.034639999999999997" quat="1 0 0 0" />
+                    <site name="LTpT_R5_LTpT_r5_R-P5_r" pos="-0.077767100000000006 0.26325999999999999 0.036519999999999997" quat="1 0 0 0" />
+                    <site name="LTpT_R5_LTpT_r5_R-P6_r" pos="-0.074822200000000005 0.30382700000000001 0.039190000000000003" quat="1 0 0 0" />
+                    <site name="LTpT_R6_LTpT_r6_R-P2_1_r" pos="-0.079894900000000005 0.182502 0.031009999999999999" quat="1 0 0 0" />
+                    <site name="LTpT_R6_LTpT_r6_R-P3_r" pos="-0.080307299999999998 0.209123 0.034660799999999999" quat="1 0 0 0" />
+                    <site name="LTpT_R6_LTpT_r6_R-P4_r" pos="-0.080857999999999999 0.236432 0.037350000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_R6_LTpT_r6_R-P5_r" pos="-0.077491599999999994 0.26317099999999999 0.039520199999999998" quat="1 0 0 0" />
+                    <site name="LTpT_R6_LTpT_r6_R-P6_r" pos="-0.073609999999999995 0.28289300000000001 0.040099999999999997" quat="1 0 0 0" />
+                    <site name="LTpT_R7_LTpT_r7_R-P2_2_r" pos="-0.080348699999999995 0.18145500000000001 0.035490300000000002" quat="1 0 0 0" />
+                    <site name="LTpT_R7_LTpT_r7_R-P3_r" pos="-0.080857899999999996 0.20777200000000001 0.03959" quat="1 0 0 0" />
+                    <site name="LTpT_R7_LTpT_r7_R-P4_r" pos="-0.081868399999999994 0.23597299999999999 0.042250000000000003" quat="1 0 0 0" />
+                    <site name="LTpT_R7_LTpT_r7_R-P5_r" pos="-0.0792041 0.25942599999999999 0.04333" quat="1 0 0 0" />
+                    <site name="LTpT_R8_LTpT_r8_R-P2_2_r" pos="-0.081267099999999995 0.180838 0.040710000000000003" quat="1 0 0 0" />
+                    <site name="LTpT_R8_LTpT_r8_R-P3_r" pos="-0.081106200000000003 0.206371 0.043720000000000002" quat="1 0 0 0" />
+                    <site name="LTpT_R8_LTpT_r8_R-P4_r" pos="-0.079717999999999997 0.23052900000000001 0.046350000000000002" quat="1 0 0 0" />
+                    <site name="LTpT_R9_LTpT_r9_R-P2_2_r" pos="-0.080794199999999997 0.17882200000000001 0.043360000000000003" quat="1 0 0 0" />
+                    <site name="LTpT_R9_LTpT_r9_R-P3_r" pos="-0.080224199999999996 0.20036699999999999 0.0467599" quat="1 0 0 0" />
+                    <site name="LTpT_R10_LTpT_r10_R-P2_2_r" pos="-0.079189399999999993 0.172879 0.046890000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_R11_LTpT_r11_R-P2_0_r" pos="-0.065021599999999999 0.14765600000000001 0.045560000000000003" quat="1 0 0 0" />
+                    <site name="LTpT_R12_LTpT_r12_R-P2_2_r" pos="-0.045035100000000002 0.121644 0.046609999999999999" quat="1 0 0 0" />
+                    <site name="LTpT_T1_LTpT_t1_R-P2_l" pos="-0.052381700000000003 0.399196 -0.02615" quat="1 0 0 0" />
+                    <site name="Chest_ellipsoid_LTpT_T1_1_sidesite_l" class="myotorso_sidesite" pos="-0.064589999999999995 0.22370000000000001 -0.014250000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T2_LTpT_t2_R-P2_l" pos="-0.056128299999999999 0.38025500000000001 -0.026540000000000001" quat="1 0 0 0" />
+                    <site name="Chest_ellipsoid_LTpT_T2_1_sidesite_l" class="myotorso_sidesite" pos="-0.064589999999999995 0.22370000000000001 -0.014250000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T3_LTpT_t3_R-P2_0_l" pos="-0.065100099999999994 0.35885899999999998 -0.02598" quat="1 0 0 0" />
+                    <site name="Chest_ellipsoid_LTpT_T3_2_sidesite_l" class="myotorso_sidesite" pos="-0.064589999999999995 0.22370000000000001 -0.014250000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T4_LTpT_t4_R-P2_0_l" pos="-0.073253600000000002 0.337677 -0.02615" quat="1 0 0 0" />
+                    <site name="Chest_ellipsoid_LTpT_T4_2_sidesite_l" class="myotorso_sidesite" pos="-0.064589999999999995 0.22370000000000001 -0.014250000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T5_LTpT_t5_R-P2_0_l" pos="-0.076137800000000005 0.31462200000000001 -0.028080000000000001" quat="1 0 0 0" />
+                    <site name="Chest_ellipsoid_LTpT_T5_2_sidesite_l" class="myotorso_sidesite" pos="-0.064589999999999995 0.22370000000000001 -0.014250000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T6_LTpT_t6_R-P3_l" pos="-0.074797799999999998 0.18628600000000001 -0.015469999999999999" quat="1 0 0 0" />
+                    <site name="LTpT_T6_LTpT_t6_R-P2_0_l" pos="-0.083379999999999996 0.289296 -0.027660000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T7_LTpT_t7_R-P3_l" pos="-0.075955800000000004 0.18626000000000001 -0.019560000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_T7_LTpT_t7_R-P2_0_l" pos="-0.0822431 0.26309100000000002 -0.02647" quat="1 0 0 0" />
+                    <site name="LTpT_T8_LTpT_t8_R-P2_1_l" pos="-0.080459199999999995 0.235899 -0.025499999999999998" quat="1 0 0 0" />
+                    <site name="LTpT_T9_LTpT_t9_R-P2_0_l" pos="-0.076939999999999995 0.21835399999999999 -0.026329999999999999" quat="1 0 0 0" />
+                    <site name="LTpT_T10_LTpT_t10_R-P2_1_l" pos="-0.069823300000000005 0.189776 -0.018100000000000002" quat="1 0 0 0" />
+                    <site name="LTpT_T11_LTpT_t11_R-P2_1_l" pos="-0.060879000000000003 0.161718 -0.01762" quat="1 0 0 0" />
+                    <site name="LTpT_T12_LTpT_t12_R-P2_1_l" pos="-0.052717 0.13133 0.018180000000000002" quat="1 0 0 0" />
+                    <site name="LTpT_R4_LTpT_r4_R-P2_0_l" pos="-0.076826099999999994 0.18568000000000001 -0.025999999999999999" quat="1 0 0 0" />
+                    <site name="LTpT_R4_LTpT_r4_R-P3_l" pos="-0.077576800000000001 0.21098 -0.028580000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_R4_LTpT_r4_R-P4_l" pos="-0.078296599999999994 0.23725599999999999 -0.031119999999999998" quat="1 0 0 0" />
+                    <site name="LTpT_R4_LTpT_r4_R-P5_l" pos="-0.076808699999999994 0.26452599999999998 -0.033520000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_R4_LTpT_r4_R-P6_l" pos="-0.075537800000000002 0.329822 -0.038390000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_R5_LTpT_r5_R-P2_0_l" pos="-0.079894900000000005 0.18435499999999999 -0.029909999999999999" quat="1 0 0 0" />
+                    <site name="LTpT_R5_LTpT_r5_R-P3_l" pos="-0.079286899999999993 0.20943100000000001 -0.031969999999999998" quat="1 0 0 0" />
+                    <site name="LTpT_R5_LTpT_r5_R-P4_l" pos="-0.080006599999999997 0.23689299999999999 -0.034639999999999997" quat="1 0 0 0" />
+                    <site name="LTpT_R5_LTpT_r5_R-P5_l" pos="-0.077767100000000006 0.26325999999999999 -0.036519999999999997" quat="1 0 0 0" />
+                    <site name="LTpT_R5_LTpT_r5_R-P6_l" pos="-0.074822200000000005 0.30382700000000001 -0.039190000000000003" quat="1 0 0 0" />
+                    <site name="LTpT_R6_LTpT_r6_R-P2_1_l" pos="-0.079894900000000005 0.182502 -0.031009999999999999" quat="1 0 0 0" />
+                    <site name="LTpT_R6_LTpT_r6_R-P3_l" pos="-0.080307299999999998 0.209123 -0.034660000000000003" quat="1 0 0 0" />
+                    <site name="LTpT_R6_LTpT_r6_R-P4_l" pos="-0.080857999999999999 0.236432 -0.037350000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_R6_LTpT_r6_R-P5_l" pos="-0.077491599999999994 0.26317099999999999 -0.03952" quat="1 0 0 0" />
+                    <site name="LTpT_R6_LTpT_r6_R-P6_l" pos="-0.073609999999999995 0.28289300000000001 -0.040099999999999997" quat="1 0 0 0" />
+                    <site name="LTpT_R7_LTpT_r7_R-P2_2_l" pos="-0.080348699999999995 0.18145500000000001 -0.035490000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_R7_LTpT_r7_R-P3_l" pos="-0.080857899999999996 0.20777200000000001 -0.03959" quat="1 0 0 0" />
+                    <site name="LTpT_R7_LTpT_r7_R-P4_l" pos="-0.081868399999999994 0.23597299999999999 -0.042250000000000003" quat="1 0 0 0" />
+                    <site name="LTpT_R7_LTpT_r7_R-P5_l" pos="-0.0792041 0.25942599999999999 -0.04333" quat="1 0 0 0" />
+                    <site name="LTpT_R8_LTpT_r8_R-P2_2_l" pos="-0.081267099999999995 0.180838 -0.040710000000000003" quat="1 0 0 0" />
+                    <site name="LTpT_R8_LTpT_r8_R-P3_l" pos="-0.081106200000000003 0.206371 -0.043720000000000002" quat="1 0 0 0" />
+                    <site name="LTpT_R8_LTpT_r8_R-P4_l" pos="-0.079717999999999997 0.23052900000000001 -0.046350000000000002" quat="1 0 0 0" />
+                    <site name="LTpT_R9_LTpT_r9_R-P2_2_l" pos="-0.080794199999999997 0.17882200000000001 -0.043360000000000003" quat="1 0 0 0" />
+                    <site name="LTpT_R9_LTpT_r9_R-P3_l" pos="-0.080224199999999996 0.20036699999999999 -0.046760000000000003" quat="1 0 0 0" />
+                    <site name="LTpT_R10_LTpT_r10_R-P2_2_l" pos="-0.079189399999999993 0.172879 -0.046890000000000001" quat="1 0 0 0" />
+                    <site name="LTpT_R11_LTpT_r11_R-P2_0_l" pos="-0.065021599999999999 0.14765600000000001 -0.045560000000000003" quat="1 0 0 0" />
+                    <site name="LTpT_R12_LTpT_r12_R-P2_2_l" pos="-0.045035100000000002 0.121644 -0.046609999999999999" quat="1 0 0 0" />
+                    <site name="QL_mid_L3-12.3_quadratus_lumb_mid_L3_1-P1_r" pos="-0.041911499999999997 0.11237 0.051659999999999998" quat="1 0 0 0" />
+                    <site name="QL_mid_L3-12.2_quadratus_lumb_mid_L3_2-P2_r" pos="-0.042478200000000001 0.11922199999999999 0.043189999999999999" quat="1 0 0 0" />
+                    <site name="QL_mid_L3-12.1_quadratus_lumb_mid_L3_3-P2_r" pos="-0.041284500000000002 0.12820000000000001 0.031189999999999999" quat="1 0 0 0" />
+                    <site name="QL_mid_L2-12.1_QL_mid_L2-12.1-P1_r" pos="-0.041279999999999997 0.12820000000000001 0.031189999999999999" quat="1 0 0 0" />
+                    <site name="QL_mid_L4-12.3_quadratus_lumb_mid_L4_1-P1_r" pos="-0.0417825 0.112316 0.051670000000000001" quat="1 0 0 0" />
+                    <site name="QL_mid_L3-12.3_quadratus_lumb_mid_L3_1-P1_l" pos="-0.041911499999999997 0.11237 -0.051659999999999998" quat="1 0 0 0" />
+                    <site name="QL_mid_L3-12.2_quadratus_lumb_mid_L3_2-P2_l" pos="-0.042478200000000001 0.11922199999999999 -0.043189999999999999" quat="1 0 0 0" />
+                    <site name="QL_mid_L3-12.1_quadratus_lumb_mid_L3_3-P2_l" pos="-0.041284500000000002 0.12820000000000001 -0.031189999999999999" quat="1 0 0 0" />
+                    <site name="QL_mid_L2-12.1_QL_mid_L2-12.1-P1_l" pos="-0.041279999999999997 0.12820000000000001 -0.031189999999999999" quat="1 0 0 0" />
+                    <site name="QL_mid_L4-12.3_quadratus_lumb_mid_L4_1-P1_l" pos="-0.0417825 0.112316 -0.051670000000000001" quat="1 0 0 0" />
+                    <site name="QL_ant_I.2-T12_T12-P2_r" pos="-0.0142008 0.13014000000000001 0.01737" quat="1 0 0 0" />
+                    <site name="QL_ant_I.3-T12_T12-P2_r" pos="-0.0142008 0.13014000000000001 0.01737" quat="1 0 0 0" />
+                    <site name="QL_ant_I.2-12.1_12.1-P3_r" pos="-0.040280700000000003 0.124401 0.037449999999999997" quat="1 0 0 0" />
+                    <site name="QL_ant_I.3-12.1_12.1-P2_r" pos="-0.040280700000000003 0.124401 0.037449999999999997" quat="1 0 0 0" />
+                    <site name="QL_ant_I.3-12.2_12.2-P2_r" pos="-0.040239999999999998 0.11786000000000001 0.046080000000000003" quat="1 0 0 0" />
+                    <site name="QL_ant_I.3-12.3_12.3-P3_r" pos="-0.038010000000000002 0.111359 0.054519999999999999" quat="1 0 0 0" />
+                    <site name="QL_ant_I.2-T12_T12-P2_l" pos="-0.0142008 0.13014000000000001 -0.01737" quat="1 0 0 0" />
+                    <site name="QL_ant_I.3-T12_T12-P2_l" pos="-0.0142008 0.13014000000000001 -0.01737" quat="1 0 0 0" />
+                    <site name="QL_ant_I.2-12.1_12.1-P3_l" pos="-0.040280700000000003 0.124401 -0.037449999999999997" quat="1 0 0 0" />
+                    <site name="QL_ant_I.3-12.1_12.1-P2_l" pos="-0.040280700000000003 0.124401 -0.037449999999999997" quat="1 0 0 0" />
+                    <site name="QL_ant_I.3-12.2_12.2-P2_l" pos="-0.040239999999999998 0.11786000000000001 -0.046080000000000003" quat="1 0 0 0" />
+                    <site name="QL_ant_I.3-12.3_12.3-P3_l" pos="-0.038010000000000002 0.111359 -0.054519999999999999" quat="1 0 0 0" />
+                    <site name="EO1_EO1-P2_r" pos="0.088200000000000001 0.17799400000000001 0.095659999999999995" quat="1 0 0 0" />
+                    <site name="EO2_EO2-P1_r" pos="0.090589799999999998 0.14532999999999999 0.10478" quat="1 0 0 0" />
+                    <site name="EO3_EO3-P1_r" pos="0.085370100000000004 0.11332200000000001 0.10823000000000001" quat="1 0 0 0" />
+                    <site name="EO4_EO4-P1_r" pos="0.074560500000000002 0.091416399999999995 0.10410999999999999" quat="1 0 0 0" />
+                    <site name="EO5_EO5-P1_r" pos="0.016828099999999999 0.107959 0.11786000000000001" quat="1 0 0 0" />
+                    <site name="EO6_EO6-P1_r" pos="-0.0023320200000000002 0.092123200000000002 0.10511" quat="1 0 0 0" />
+                    <site name="IO4_IO4-P1_r" pos="0.076988600000000004 0.110032 0.1145" quat="1 0 0 0" />
+                    <site name="IO5_IO5-P1_r" pos="0.037420000000000002 0.094850000000000004 0.11111" quat="1 0 0 0" />
+                    <site name="IO6_IO6-P1_r" pos="0.0054439600000000003 0.084417900000000004 0.10000000000000001" quat="1 0 0 0" />
+                    <site name="EO1_EO1-P2_l" pos="0.088200000000000001 0.17799400000000001 -0.095659999999999995" quat="1 0 0 0" />
+                    <site name="EO2_EO2-P1_l" pos="0.090589799999999998 0.14532999999999999 -0.10478" quat="1 0 0 0" />
+                    <site name="EO3_EO3-P1_l" pos="0.085370100000000004 0.11332200000000001 -0.10823000000000001" quat="1 0 0 0" />
+                    <site name="EO4_EO4-P1_l" pos="0.074560500000000002 0.091416399999999995 -0.10410999999999999" quat="1 0 0 0" />
+                    <site name="EO5_EO5-P1_l" pos="0.016828099999999999 0.107959 -0.11786000000000001" quat="1 0 0 0" />
+                    <site name="EO6_EO6-P1_l" pos="-0.0023320200000000002 0.092123200000000002 -0.10511" quat="1 0 0 0" />
+                    <site name="IO4_IO4-P1_l" pos="0.076988600000000004 0.110032 -0.1145" quat="1 0 0 0" />
+                    <site name="IO5_IO5-P1_l" pos="0.037420000000000002 0.094850000000000004 -0.11111" quat="1 0 0 0" />
+                    <site name="IO6_IO6-P1_l" pos="0.0054439600000000003 0.084417900000000004 -0.10000000000000001" quat="1 0 0 0" />
+                    <body name="head_attach" pos="-0.0050000000000000001 -0.01 0" quat="1 0 0 0">
+                      <body name="neck" childclass="myohead" pos="0 0 0" quat="1 0 0 0">
+                        <geom name="hat_cervical" type="mesh" mesh="hat_cervical" contype="0" conaffinity="0" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                        <geom name="hat_cervical_coll" class="myohead_coll" size="0.050000000000000003 0.040000000000000001 0" pos="-0.02 0.45000000000000001 0" contype="0" mass="0" conaffinity="0" euler="1.5700000000000001 -0.20000000000000001 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                        <geom name="task_collision_neck" size="0.057946773231802452 0.089202650683733176 0.050031218127769284" pos="-0.019999999999999997 0.45000000000000001 0" type="box" contype="2" conaffinity="1" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                        <body name="head" pos="0 0.5 0" quat="1 0 0 0">
+                          <geom name="hat_jaw" pos="0 -0.5 0" type="mesh" mesh="hat_jaw" contype="0" conaffinity="0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                          <geom name="hat_jaw_coll2" class="myohead_coll" size="0.070000000000000007 0.12 0.065000000000000002" pos="0.025000000000000001 0.044999999999999998 0" type="ellipsoid" contype="0" mass="0" conaffinity="0" euler="0 0 0.69999999999999996" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                          <geom name="hat_skull" pos="0 -0.5 0" type="mesh" mesh="hat_skull" contype="0" conaffinity="0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                          <geom name="hat_skull_coll" class="myohead_coll" size="0.10000000000000001 0.10000000000000001 0.074999999999999997" pos="0 0.074999999999999997 0" type="ellipsoid" contype="0" mass="0" conaffinity="0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                          <geom name="task_collision_head" size="0.10951769898459476 0.11613057776119917 0.074999999999999997" pos="0.0095176989845947579 0.058869422238800817 0" type="box" contype="2" conaffinity="1" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                        </body>
+                      </body>
+                    </body>
+                    <body name="Arm_attachment" pos="0.02 0.37 0" euler="-1.57079632679 0 1.57079632679">
+                      <body name="chest_r" pos="0 0 0" euler="1.57079632679 -1.57079632679 0">
+                        <inertial pos="0 0 0" mass="0.001" diaginertia="1e-06 1e-06 1e-06" />
+                        <geom name="Thorax_ellipsoid" class="myotorso_wrap" size="0.080000000000000002 0 0" pos="-0.038600000000000002 -0.1273 0.070900000000000005" mass="0" contype="0" conaffinity="0" quat="0.98192000000000002 0.0056709300000000002 -0.166487 0.089907899999999999" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                        <geom name="thorax_ellipsoid_l" class="myotorso_wrap" size="0.080000000000000002 0 0" pos="-0.038600000000000002 -0.1273 -0.070900000000000005" mass="0" contype="0" conaffinity="0" quat="0.98192000000000002 -0.0056709300000000002 0.166487 0.089907899999999999" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                        <geom name="Thorax_ellipsoid_PECM2" class="myotorso_wrap" size="0.080000000000000002 0 0" pos="-0.038600000000000002 -0.1273 0.070900000000000005" mass="0" rgba="1 0 0 0" contype="0" conaffinity="0" quat="0.98192000000000002 0.0056709300000000002 -0.166487 0.089907899999999999" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                        <geom name="thorax_ellipsoid_PECM2_l" class="myotorso_wrap" size="0.080000000000000002 0 0" pos="-0.038600000000000002 -0.1273 -0.070900000000000005" mass="0" rgba="1 0 0 0" contype="0" conaffinity="0" quat="0.98192000000000002 -0.0056709300000000002 0.166487 0.089907899999999999" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                        <geom name="Thorax_ellipsoid_PECM3" class="myotorso_wrap" size="0.080000000000000002 0 0" pos="-0.038600000000000002 -0.1273 0.070900000000000005" mass="0" rgba="1 0 0 0" contype="0" conaffinity="0" quat="0.98192000000000002 0.0056709300000000002 -0.166487 0.089907899999999999" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                        <geom name="thorax_ellipsoid_PECM3_l" class="myotorso_wrap" size="0.080000000000000002 0 0" pos="-0.038600000000000002 -0.1273 -0.070900000000000005" mass="0" rgba="1 0 0 0" contype="0" conaffinity="0" quat="0.98192000000000002 -0.0056709300000000002 0.166487 0.089907899999999999" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                        <site name="PECM2_PECM2-P3_r" pos="0.03091 -0.039219999999999998 0.097049999999999997" quat="1 0 0 0" />
+                        <site name="PECM2_PECM2-P3_l" pos="0.03091 -0.039219999999999998 -0.097049999999999997" quat="1 0 0 0" />
+                        <site name="PECM2_PECM2-P4_r" pos="0.027689999999999999 -0.044979999999999999 0.022710000000000001" quat="1 0 0 0" />
+                        <site name="PECM2_PECM2-P4_l" pos="0.027689999999999999 -0.044979999999999999 -0.022710000000000001" quat="1 0 0 0" />
+                        <site name="Thorax_ellipsoid_PECM2_3_sidesite_r" pos="0.76139999999999997 0.67269999999999996 0.87090000000000001" quat="1 0 0 0" />
+                        <site name="Thorax_ellipsoid_PECM2_3_sidesite_l" pos="0.76139999999999997 0.67269999999999996 -0.87090000000000001" quat="1 0 0 0" />
+                        <site name="PECM3_PECM3-P3_r" pos="0.052499999999999998 -0.084169999999999995 0.089349999999999999" quat="1 0 0 0" />
+                        <site name="PECM3_PECM3-P3_l" pos="0.052499999999999998 -0.084169999999999995 -0.089349999999999999" quat="1 0 0 0" />
+                        <site name="PECM3_PECM3-P4_r" pos="0.057239999999999999 -0.11654 0.037870000000000001" quat="1 0 0 0" />
+                        <site name="PECM3_PECM3-P4_l" pos="0.057239999999999999 -0.11654 -0.037870000000000001" quat="1 0 0 0" />
+                        <site name="Thorax_ellipsoid_PECM3_3_sidesite_r" pos="0.76139999999999997 0.67269999999999996 0.87090000000000001" quat="1 0 0 0" />
+                        <site name="Thorax_ellipsoid_PECM3_3_sidesite_l" pos="0.76139999999999997 0.67269999999999996 -0.87090000000000001" quat="1 0 0 0" />
+                        <site name="LAT1_LAT1-P4_r" pos="-0.11859497376930025 -0.079928388492435526 0.068157061603091193" quat="1 0 0 0" />
+                        <site name="LAT1_LAT1-P4_l" pos="-0.11859497376930025 -0.079928388492435526 -0.068157061603091193" quat="1 0 0 0" />
+                        <site name="LAT1_LAT1-P5_r" pos="-0.11828 -0.10118000000000001 0.033160000000000002" quat="1 0 0 0" />
+                        <site name="LAT1_LAT1-P5_l" pos="-0.11828 -0.10118000000000001 -0.033160000000000002" quat="1 0 0 0" />
+                        <site name="LAT1_LAT1-P6_r" pos="-0.095780000000000004 -0.11724 0.0088199999999999997" quat="1 0 0 0" />
+                        <site name="LAT1_LAT1-P6_l" pos="-0.095780000000000004 -0.11724 -0.0088199999999999997" quat="1 0 0 0" />
+                        <site name="LAT2_LAT2-P4_r" pos="-0.12371858734822989 -0.12417032086185528 0.077034033720721373" quat="1 0 0 0" />
+                        <site name="LAT2_LAT2-P4_l" pos="-0.12371858734822989 -0.12417032086185528 -0.077034033720721373" quat="1 0 0 0" />
+                        <site name="LAT2_LAT2-P5_r" pos="-0.10992 -0.16908000000000001 0.02878" quat="1 0 0 0" />
+                        <site name="LAT2_LAT2-P5_l" pos="-0.10992 -0.16908000000000001 -0.02878" quat="1 0 0 0" />
+                        <site name="LAT2_LAT2-P6_r" pos="-0.071859999999999993 -0.18817999999999999 0.0081499999999999993" quat="1 0 0 0" />
+                        <site name="LAT2_LAT2-P6_l" pos="-0.071859999999999993 -0.18817999999999999 -0.0081499999999999993" quat="1 0 0 0" />
+                        <site name="LAT3_LAT3-P4_r" pos="-0.1204266823427011 -0.15954523000255943 0.092743411376397689" quat="1 0 0 0" />
+                        <site name="LAT3_LAT3-P4_l" pos="-0.1204266823427011 -0.15954523000255943 -0.092743411376397689" quat="1 0 0 0" />
+                        <site name="LAT3_LAT3-P5_r" pos="-0.11157 -0.19386999999999999 0.055320000000000001" quat="1 0 0 0" />
+                        <site name="LAT3_LAT3-P5_l" pos="-0.11157 -0.19386999999999999 -0.055320000000000001" quat="1 0 0 0" />
+                        <site name="LAT3_LAT3-P6_r" pos="-0.071169999999999997 -0.24858 0.0090699999999999999" quat="1 0 0 0" />
+                        <site name="LAT3_LAT3-P6_l" pos="-0.071169999999999997 -0.24858 -0.0090699999999999999" quat="1 0 0 0" />
+                        <site name="C7_marker_r" class="myotorso_marker" pos="-0.056129999999999999 0.055280000000000003 -0.0015100000000000001" quat="1 0 0 0" />
+                        <site name="C7_marker_l" class="myotorso_marker" pos="-0.056129999999999999 0.055280000000000003 0.0015100000000000001" quat="1 0 0 0" />
+                        <site name="TMAJ_LAT_PEC_CORBhh_sphere_PECM2_2_sidesite_r" pos="0.051024800000000002 -0.016091999999999999 -0.057345300000000002" rgba="1 0 0 0" quat="1 0 0 0" />
+                        <site name="TMAJ_LAT_PEC_CORBhh_sphere_PECM2_2_sidesite_l" pos="0.051024800000000002 -0.016091999999999999 0.057345300000000002" rgba="1 0 0 0" quat="1 0 0 0" />
+                        <body name="cervical_spine" pos="-0.036339999999999997 0.025000000000000001 0" quat="1 0 0 0">
+                          <site name="arm_attach_r" pos="0.044674999999999999 -0.018069999999999999 0.025465000000000002" size="0.01" quat="1 0 0 0" />
+                          <site name="arm_attach_l" pos="0.044674999999999999 -0.018069999999999999 -0.025465000000000002" size="0.01" quat="1 0 0 0" />
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+      <frame name="legs_attach">
+        <body name="myolegs26_root" pos="0 0 0" quat="1 0 0 0">
+          <site name="legs26_root_attach" pos="0 0 0" size="0.01" quat="1 0 0 0" />
+          <body name="pelvis" pos="0 0 0" quat="0.5 0.5 -0.5 -0.5">
+            <inertial pos="-0.0707 0 0" mass="11.777" diaginertia="0.1028 0.0871 0.0579" />
+            <geom name="pelvis_geom_1" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="pelvis_geom_1_sacrum" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+            <geom name="pelvis_geom_2" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="pelvis_geom_2_pelvis" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+            <geom name="pelvis_geom_3" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="pelvis_geom_3_l_pelvis" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+            <geom name="task_collision_pelvis" size="0.078253501926272437 0.10739849942114348 0.13216799480756111" pos="-0.078243500342438391 -0.026393500104997622 2.7755575615628914e-17" type="box" contype="2" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" conaffinity="1" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+            <site name="pelvis" pos="0 0 0" size="0.02" group="4" quat="1 0 0 0" />
+            <site name="abd_r_glut_med2_r-P1" pos="-0.085500000000000007 0.044499999999999998 0.076600000000000001" quat="1 0 0 0" />
+            <site name="add_r_add_mag1_r-P1" pos="-0.073200000000000001 -0.1174 0.025499999999999998" quat="1 0 0 0" />
+            <site name="hamstrings_r_semimem_r-P1" pos="-0.1192 -0.097470000000000001 0.071510000000000004" quat="1 0 0 0" />
+            <site name="glut_max_r_glut_max2_r-P1" pos="-0.13489999999999999 0.017600000000000001 0.056300000000000003" quat="1 0 0 0" />
+            <site name="glut_max_r_glut_max2_r-P2" pos="-0.1376 -0.051999999999999998 0.091399999999999995" quat="1 0 0 0" />
+            <site name="iliopsoas_r_psoas_r-P1" pos="-0.064699999999999994 0.088700000000000001 0.028899999999999999" quat="1 0 0 0" />
+            <site name="iliopsoas_r_psoas_r-P2" pos="-0.023800000000000002 -0.057000000000000002 0.075899999999999995" quat="1 0 0 0" />
+            <site name="rect_fem_r_rect_fem_r-P1" pos="-0.029499999999999998 -0.031099999999999999 0.096799999999999997" quat="1 0 0 0" />
+            <site name="abd_l_glut_med2_l-P1" pos="-0.085500000000000007 0.044499999999999998 -0.076600000000000001" quat="1 0 0 0" />
+            <site name="add_l_add_mag1_l-P1" pos="-0.073200000000000001 -0.1174 -0.025499999999999998" quat="1 0 0 0" />
+            <site name="hamstrings_l_semimem_l-P1" pos="-0.1192 -0.097470000000000001 -0.071510000000000004" quat="1 0 0 0" />
+            <site name="glut_max_l_glut_max2_l-P1" pos="-0.13489999999999999 0.017600000000000001 -0.056300000000000003" quat="1 0 0 0" />
+            <site name="glut_max_l_glut_max2_l-P2" pos="-0.1376 -0.051999999999999998 -0.091399999999999995" quat="1 0 0 0" />
+            <site name="iliopsoas_l_psoas_l-P1" pos="-0.064699999999999994 0.088700000000000001 -0.028899999999999999" quat="1 0 0 0" />
+            <site name="iliopsoas_l_psoas_l-P2" pos="-0.023800000000000002 -0.057000000000000002 -0.075899999999999995" quat="1 0 0 0" />
+            <site name="rect_fem_l_rect_fem_l-P1" pos="-0.029499999999999998 -0.031099999999999999 -0.096799999999999997" quat="1 0 0 0" />
+            <body name="femur_r" pos="-0.070699999999999999 -0.066100000000000006 0.083500000000000005" quat="1 0 0 0">
+              <inertial pos="0 -0.2 0" quat="0.5 0.5 -0.5 0.5" mass="9.3014" diaginertia="0.1412 0.145 0.0351" />
+              <joint name="hip_flexion_r" pos="0 0 0" axis="0 0 1" range="-0.349 2.356" />
+              <joint name="hip_adduction_r" pos="0 0 0" axis="1 0 0" range="-0.873 0.524" />
+              <joint name="hip_rotation_r" pos="0 0 0" axis="0 1 0" range="-0.698 0.698" />
+              <geom name="femur_r_geom_1" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="femur_r_geom_1_femur" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+              <geom name="task_collision_femur_r" size="0.035158499753697045 0.22635550107883021 0.049751499787154319" pos="-0.0022565015208882815 -0.2040074992034617 0.012123499608980678" type="box" contype="2" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" conaffinity="1" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+              <site name="abd_r_glut_med2_r-P2" pos="-0.0258 -0.0057999999999999996 0.052699999999999997" quat="1 0 0 0" />
+              <site name="add_r_add_mag1_r-P2" pos="-0.0044999999999999997 -0.1211 0.0339" quat="1 0 0 0" />
+              <site name="bifemsh_r_bifemsh_r-P1" pos="0.0050000000000000001 -0.21110000000000001 0.023400000000000001" quat="1 0 0 0" />
+              <site name="glut_max_r_glut_max2_r-P3" pos="-0.042599999999999999 -0.052999999999999999 0.0293" quat="1 0 0 0" />
+              <site name="glut_max_r_glut_max2_r-P4" pos="-0.015599999999999999 -0.1016 0.0419" quat="1 0 0 0" />
+              <site name="iliopsoas_r_psoas_r-P4" pos="0.0016000000000000001 -0.050700000000000002 0.0038" quat="1 0 0 0" />
+              <site name="iliopsoas_r_psoas_r-P5" pos="-0.018800000000000001 -0.059700000000000003 0.0104" quat="1 0 0 0" />
+              <site name="vasti_r_vas_int_r-P1" pos="0.029000000000000001 -0.19239999999999999 0.031" quat="1 0 0 0" />
+              <site name="vasti_r_vas_int_r-P2" pos="0.033500000000000002 -0.2084 0.028500000000000001" quat="1 0 0 0" />
+              <site name="vasti_r_vas_int_r-P3" pos="0.048000000000000001 -0.34999999999999998 0.0054999999999999997" quat="1 0 0 0" />
+              <site name="gastroc_r_med_gas_r-P1" pos="-0.019 -0.39290000000000003 -0.0235" quat="1 0 0 0" />
+              <site name="rect_fem_r_rect_fem_r-P2" pos="0.048000000000000001 -0.34999999999999998 -0.0054999999999999997" quat="1 0 0 0" />
+              <body name="tibia_r" pos="-0.0036389999999999999 -0.39500000000000002 0" quat="1 0 0 0">
+                <inertial pos="0 -0.1867 0" quat="0.5 0.5 -0.5 0.5" mass="3.7075" diaginertia="0.0511 0.0504 0.0051" />
+                <joint name="knee_r_translation1" pos="0 0 0" axis="1 0 0" type="slide" range="-0.001935 0.007749" />
+                <joint name="knee_r_translation2" pos="0 0 0" axis="0 1 0" type="slide" range="-0.0276 0.0001" />
+                <joint name="knee_angle_r" pos="0 0 0" axis="0 0 1" range="-2.531 0" />
+                <geom name="tibia_r_geom_1" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="tibia_r_geom_1_tibia" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                <geom name="tibia_r_geom_2" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="tibia_r_geom_2_fibula" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                <geom name="task_collision_tibia_r" size="0.029633498863269409 0.19456399661691429 0.035202499182885434" pos="-0.0020194990912250129 -0.2125019893868639 0.0045605000065943105" type="box" contype="2" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" conaffinity="1" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                <site name="hamstrings_r_semimem_r-P3" pos="-0.027 -0.047710000000000002 -0.019570000000000001" quat="1 0 0 0" />
+                <site name="bifemsh_r_bifemsh_r-P2" pos="-0.030099999999999998 -0.035999999999999997 0.029430000000000001" quat="1 0 0 0" />
+                <site name="bifemsh_r_bifemsh_r-P3" pos="-0.023400000000000001 -0.056300000000000003 0.034299999999999997" quat="1 0 0 0" />
+                <site name="soleus_r_soleus_r-P1" pos="-0.0023999999999999998 -0.15329999999999999 0.0071000000000000004" quat="1 0 0 0" />
+                <site name="tib_ant_r_tib_ant_r-P1" pos="0.017899999999999999 -0.16239999999999999 0.0115" quat="1 0 0 0" />
+                <site name="tib_ant_r_tib_ant_r-P2" pos="0.032899999999999999 -0.39510000000000001 -0.0177" quat="1 0 0 0" />
+                <site name="edl_r-P1" pos="-0.016 -0.1157 0.020500000000000001" quat="1 0 0 0" />
+                <site name="edl_r-P2" pos="0.016400000000000001 -0.376 0.0112" quat="1 0 0 0" />
+                <site name="fdl_r-P1" pos="-0.0023 -0.1832 -0.0018" quat="1 0 0 0" />
+                <site name="fdl_r-P2" pos="-0.017600000000000001 -0.36449999999999999 -0.0124" quat="1 0 0 0" />
+                <body name="talus_r" pos="0 -0.40000000000000002 0" quat="1 0 0 0">
+                  <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001" />
+                  <joint name="ankle_angle_r" pos="0 0 0" axis="0 0 1" range="-1.134 0.349" />
+                  <geom name="talus_r_geom_1" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="talus_r_geom_1_talus" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                  <geom name="task_collision_talus_r" size="0.02307050073966168 0.015059000603469038 0.020775499241763556" pos="0.0055364990408986355 -0.0011650003663130548 -0.00036550028089554938" type="box" contype="2" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" conaffinity="1" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                  <body name="calcn_r" pos="-0.048770000000000001 -0.041950000000000001 0.00792" quat="1 0 0 0">
+                    <inertial pos="0.1 0.03 0" quat="0 0.707107 0 0.707107" mass="1.25" diaginertia="0.00041 0.00039 0.00014" />
+                    <geom name="calcn_r_geom_1" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="calcn_r_geom_1_foot" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="task_collision_calcn_r" size="0.096808501627047988 0.026436999788373692 0.042432999748127108" pos="0.087008498730670819 0.016598000458642497 0.0031979992128382123" type="box" contype="2" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" conaffinity="1" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <site name="gastroc_r_med_gas_r-P3" pos="0 0.031 -0.0053" quat="1 0 0 0" />
+                    <site name="soleus_r_soleus_r-P2" pos="0 0.031 -0.0053" quat="1 0 0 0" />
+                    <site name="tib_ant_r_tib_ant_r-P3" pos="0.1166 0.0178 -0.030499999999999999" quat="1 0 0 0" />
+                    <site name="edl_r-P3" pos="0.091899999999999996 0.035999999999999997 0.00080000000000000004" quat="1 0 0 0" />
+                    <site name="edl_r-P4" pos="0.16159999999999999 0.0054999999999999997 0.012999999999999999" quat="1 0 0 0" />
+                    <site name="fdl_r-P3" pos="0.0436 0.0315 -0.028000000000000001" quat="1 0 0 0" />
+                    <site name="fdl_r-P4" pos="0.070800000000000002 0.017600000000000001 -0.0263" quat="1 0 0 0" />
+                    <site name="fdl_r-P5" pos="0.1658 -0.0080999999999999996 0.011599999999999999" quat="1 0 0 0" />
+                    <site name="r_foot_touch" class="myolegs26_touch" pos="0.01 -0.002 -0.01" size="0.03 0.02 0.03" quat="1 0 0 0" />
+                    <site name="r_heel_btm" pos="0.01 -0.0080000000000000002 -0.01" size="0.01" group="3" rgba="0 1 0 0.4" quat="1 0 0 0" />
+                    <site name="r_toe_btm" pos="0.17000000000000001 -0.0030000000000000001 -0.01" quat="0.99875026039496628 0 0 0.049979169270678331" size="0.01" group="3" rgba="0 1 0 0.4" />
+                    <body name="toes_r" pos="0.17879999999999999 -0.002 0.00108" quat="1 0 0 0">
+                      <inertial pos="0.0346 0.006 -0.0175" quat="0.707107 0 0 0.707107" mass="0.2166" diaginertia="0.0001 0.0001 0.0001" />
+                      <joint name="mtp_angle_r" pos="0 0 0" axis="0 0 1" range="-0.523599 0.523599" damping="0.5" />
+                      <geom name="toes_r_geom_1" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="toes_r_geom_1_bofoot" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                      <geom name="task_collision_toes_r" size="0.056450998549311279 0.009092500024740359 0.045922501580190733" pos="0.020466999431013256 -0.0010424997737878573 0.0082754996858333055" type="box" contype="2" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" conaffinity="1" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                      <site name="edl_r-P5" pos="0.00029999999999999997 0.0047000000000000002 0.015299999999999999" quat="1 0 0 0" />
+                      <site name="edl_r-P6" pos="0.044299999999999999 -0.00040000000000000002 0.025000000000000001" quat="1 0 0 0" />
+                      <site name="fdl_r-P6" pos="-0.0019 -0.0077999999999999996 0.0147" quat="1 0 0 0" />
+                      <site name="fdl_r-P7" pos="0.028500000000000001 -0.0071000000000000004 0.021499999999999998" quat="1 0 0 0" />
+                      <site name="fdl_r-P8" pos="0.0441 -0.0060000000000000001 0.024199999999999999" quat="1 0 0 0" />
+                      <site name="r_toes_touch" class="myolegs26_touch" pos="0 -0.002 0.01" quat="0.7316888688738209 0 0.68163876002333412 0" size="0.05 0.025 0.075" />
+                    </body>
+                  </body>
+                </body>
+                <body name="hamstrings_r_semimem_r-P2" pos="-0.034290000000000001 -0.03601 -0.019570000000000001" quat="1 0 0 0">
+                  <inertial pos="0 0 -0.01957" mass="0.001" diaginertia="1e-08 1e-08 1e-08" />
+                  <joint name="hamstrings_r_semimem_r-P2_x" pos="0 0 0" axis="1 0 0" type="slide" range="-0.00051 0.00729" />
+                  <joint name="hamstrings_r_semimem_r-P2_y" pos="0 0 0" axis="0 1 0" type="slide" range="-0.0117 0.00082" />
+                  <site name="hamstrings_r_semimem_r-P2" pos="0 0 0" quat="1 0 0 0" />
+                </body>
+                <body name="rect_fem_r_rect_fem_r-P3" pos="0.062590000000000007 0.020320000000000001 0.0013990000000000001" quat="1 0 0 0">
+                  <inertial pos="0 0 0.001399" mass="0.001" diaginertia="1e-08 1e-08 1e-08" />
+                  <joint name="rect_fem_r_rect_fem_r-P3_x" pos="0 0 0" axis="1 0 0" type="slide" range="-0.04701 0.01071" />
+                  <joint name="rect_fem_r_rect_fem_r-P3_y" pos="0 0 0" axis="0 1 0" type="slide" range="-0.0877 0.00499" />
+                  <site name="rect_fem_r_rect_fem_r-P3" pos="0 0 0" quat="1 0 0 0" />
+                </body>
+                <body name="vasti_r_vas_int_r-P4" pos="0.056469999999999999 0.024760000000000001 0.001799" quat="1 0 0 0">
+                  <inertial pos="0 0 0.001799" mass="0.001" diaginertia="1e-08 1e-08 1e-08" />
+                  <joint name="vasti_r_vas_int_r-P4_x" pos="0 0 0" axis="1 0 0" type="slide" range="-0.048197 0.01197" />
+                  <joint name="vasti_r_vas_int_r-P4_y" pos="0 0 0" axis="0 1 0" type="slide" range="-0.09333 0.00276" />
+                  <site name="vasti_r_vas_int_r-P4" pos="0 0 0" quat="1 0 0 0" />
+                </body>
+              </body>
+              <body name="gastroc_r_med_gas_r-P2" pos="-0.026069999999999999 -0.39889999999999998 -0.024979999999999999" quat="1 0 0 0">
+                <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08" />
+                <joint name="gastroc_r_med_gas_r-P2_x" pos="0 0 0" axis="1 0 0" type="slide" range="-0.00393 0.00707" />
+                <joint name="gastroc_r_med_gas_r-P2_y" pos="0 0 0" axis="0 1 0" type="slide" range="-0.0033 0.006" />
+                <joint name="gastroc_r_med_gas_r-P2_z" pos="0 0 0" axis="0 0 1" type="slide" range="-0.00082 0.00148" />
+                <site name="gastroc_r_med_gas_r-P2" pos="0 0 0" quat="1 0 0 0" />
+              </body>
+            </body>
+            <body name="femur_l" pos="-0.070699999999999999 -0.066100000000000006 -0.083500000000000005" quat="1 0 0 0">
+              <inertial pos="0 -0.2 0" quat="0.5 0.5 -0.5 0.5" mass="9.3014" diaginertia="0.1412 0.145 0.0351" />
+              <joint name="hip_flexion_l" pos="0 0 0" axis="0 0 1" range="-0.349 2.356" />
+              <joint name="hip_adduction_l" pos="0 0 0" axis="1 0 0" range="-0.873 0.524" />
+              <joint name="hip_rotation_l" pos="0 0 0" axis="0 1 0" range="-0.698 0.698" />
+              <geom name="femur_l_geom_1" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="femur_l_geom_1_l_femur" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+              <geom name="task_collision_femur_l" size="0.035158499753697045 0.22635550107883023 0.049751499787154319" pos="-0.0022565015208882815 -0.20400749920346173 -0.012123499608980678" type="box" contype="2" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" conaffinity="1" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+              <site name="abd_l_glut_med2_l-P2" pos="-0.0258 -0.0057999999999999996 -0.052699999999999997" quat="1 0 0 0" />
+              <site name="add_l_add_mag1_l-P2" pos="-0.0044999999999999997 -0.1211 -0.0339" quat="1 0 0 0" />
+              <site name="bifemsh_l_bifemsh_l-P1" pos="0.0050000000000000001 -0.21110000000000001 -0.023400000000000001" quat="1 0 0 0" />
+              <site name="glut_max_l_glut_max2_l-P3" pos="-0.042599999999999999 -0.052999999999999999 -0.0293" quat="1 0 0 0" />
+              <site name="glut_max_l_glut_max2_l-P4" pos="-0.015599999999999999 -0.1016 -0.0419" quat="1 0 0 0" />
+              <site name="iliopsoas_l_psoas_l-P4" pos="0.0016000000000000001 -0.050700000000000002 -0.0038" quat="1 0 0 0" />
+              <site name="iliopsoas_l_psoas_l-P5" pos="-0.018800000000000001 -0.059700000000000003 -0.0104" quat="1 0 0 0" />
+              <site name="vasti_l_vas_int_l-P1" pos="0.029000000000000001 -0.19239999999999999 -0.031" quat="1 0 0 0" />
+              <site name="vasti_l_vas_int_l-P2" pos="0.033500000000000002 -0.2084 -0.028500000000000001" quat="1 0 0 0" />
+              <site name="vasti_l_vas_int_l-P3" pos="0.048000000000000001 -0.34999999999999998 -0.0054999999999999997" quat="1 0 0 0" />
+              <site name="gastroc_l_med_gas_l-P1" pos="-0.019 -0.39290000000000003 0.0235" quat="1 0 0 0" />
+              <site name="rect_fem_l_rect_fem_l-P2" pos="0.048000000000000001 -0.34999999999999998 0.0054999999999999997" quat="1 0 0 0" />
+              <body name="tibia_l" pos="-0.0036389999999999999 -0.39500000000000002 0" quat="1 0 0 0">
+                <inertial pos="0 -0.1867 0" quat="0.5 0.5 -0.5 0.5" mass="3.7075" diaginertia="0.0511 0.0504 0.0051" />
+                <joint name="knee_l_translation1" pos="0 0 0" axis="1 0 0" type="slide" range="-0.001935 0.007749" />
+                <joint name="knee_l_translation2" pos="0 0 0" axis="0 1 0" type="slide" range="-0.0276 0.0001" />
+                <joint name="knee_angle_l" pos="0 0 0" axis="0 0 1" range="-2.531 0" />
+                <geom name="tibia_l_geom_1" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="tibia_l_geom_1_l_tibia" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                <geom name="tibia_l_geom_2" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="tibia_l_geom_2_l_fibula" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                <geom name="task_collision_tibia_l" size="0.029633498863269405 0.1945639966169142 0.035202499182885427" pos="-0.0020194990912250112 -0.21250198938686388 -0.0045605000065943053" type="box" contype="2" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" conaffinity="1" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                <site name="hamstrings_l_semimem_l-P3" pos="-0.027 -0.047710000000000002 0.019570000000000001" quat="1 0 0 0" />
+                <site name="bifemsh_l_bifemsh_l-P2" pos="-0.030099999999999998 -0.035999999999999997 -0.029430000000000001" quat="1 0 0 0" />
+                <site name="bifemsh_l_bifemsh_l-P3" pos="-0.023400000000000001 -0.056300000000000003 -0.034299999999999997" quat="1 0 0 0" />
+                <site name="soleus_l_soleus_l-P1" pos="-0.0023999999999999998 -0.15329999999999999 -0.0071000000000000004" quat="1 0 0 0" />
+                <site name="tib_ant_l_tib_ant_l-P1" pos="0.017899999999999999 -0.16239999999999999 -0.0115" quat="1 0 0 0" />
+                <site name="tib_ant_l_tib_ant_l-P2" pos="0.032899999999999999 -0.39510000000000001 0.0177" quat="1 0 0 0" />
+                <site name="edl_l-P1" pos="-0.016 -0.1157 -0.020500000000000001" quat="1 0 0 0" />
+                <site name="edl_l-P2" pos="0.016400000000000001 -0.376 -0.0112" quat="1 0 0 0" />
+                <site name="fdl_l-P1" pos="-0.0023 -0.1832 0.0018" quat="1 0 0 0" />
+                <site name="fdl_l-P2" pos="-0.017600000000000001 -0.36449999999999999 0.0124" quat="1 0 0 0" />
+                <body name="talus_l" pos="0 -0.40000000000000002 0" quat="1 0 0 0">
+                  <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001" />
+                  <joint name="ankle_angle_l" pos="0 0 0" axis="0 0 1" range="-1.134 0.349" />
+                  <geom name="talus_l_geom_1" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="talus_l_geom_1_l_talus" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                  <geom name="task_collision_talus_l" size="0.02307050073966168 0.015059000603469036 0.020775499241763556" pos="0.0055364990408986355 -0.0011650003663130539 0.00036550028089554765" type="box" contype="2" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" conaffinity="1" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                  <body name="calcn_l" pos="-0.048770000000000001 -0.041950000000000001 -0.00792" quat="1 0 0 0">
+                    <inertial pos="0.1 0.03 0" quat="0 0.707107 0 0.707107" mass="1.25" diaginertia="0.00041 0.00039 0.00014" />
+                    <geom name="calcn_l_geom_1" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="calcn_l_geom_1_l_foot" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <geom name="task_collision_calcn_l" size="0.096808501627047988 0.026436999788373692 0.042432999748127108" pos="0.087008498730670819 0.016598000458642497 -0.0031979992128382123" type="box" contype="2" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" conaffinity="1" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                    <site name="gastroc_l_med_gas_l-P3" pos="0 0.031 0.0053" quat="1 0 0 0" />
+                    <site name="soleus_l_soleus_l-P2" pos="0 0.031 0.0053" quat="1 0 0 0" />
+                    <site name="tib_ant_l_tib_ant_l-P3" pos="0.1166 0.0178 0.030499999999999999" quat="1 0 0 0" />
+                    <site name="edl_l-P3" pos="0.091899999999999996 0.035999999999999997 -0.00080000000000000004" quat="1 0 0 0" />
+                    <site name="edl_l-P4" pos="0.16159999999999999 0.0054999999999999997 -0.012999999999999999" quat="1 0 0 0" />
+                    <site name="fdl_l-P3" pos="0.0436 0.0315 0.028000000000000001" quat="1 0 0 0" />
+                    <site name="fdl_l-P4" pos="0.070800000000000002 0.017600000000000001 0.0263" quat="1 0 0 0" />
+                    <site name="fdl_l-P5" pos="0.1658 -0.0080999999999999996 -0.011599999999999999" quat="1 0 0 0" />
+                    <site name="l_foot_touch" class="myolegs26_touch" pos="0.01 -0.002 0.01" size="0.03 0.02 0.03" quat="1 0 0 0" />
+                    <site name="l_heel_btm" pos="0.01 -0.0080000000000000002 0.01" size="0.01" group="3" rgba="0 1 0 0.4" quat="1 0 0 0" />
+                    <site name="l_toe_btm" pos="0.17000000000000001 -0.0030000000000000001 0.01" size="0.01" group="3" rgba="0 1 0 0.4" quat="1 0 0 0" />
+                    <body name="toes_l" pos="0.17879999999999999 -0.002 -0.00108" quat="1 0 0 0">
+                      <inertial pos="0.0346 0.006 -0.0175" quat="0 0.707107 0 0.707107" mass="0.2166" diaginertia="0.0001 0.0001 0.0001" />
+                      <joint name="mtp_angle_l" pos="0 0 0" axis="0 0 1" range="-0.523599 0.523599" damping="0.5" />
+                      <geom name="toes_l_geom_1" type="mesh" contype="0" conaffinity="0" material="myolegs_mat" rgba="0.8 0.8 0.8 1" mesh="toes_l_geom_1_l_bofoot" pos="0 0 0" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                      <geom name="task_collision_toes_l" size="0.056450998549311279 0.009092500024740359 0.045922501580190733" pos="0.020466999431013277 -0.0010424997737878607 -0.0082754996858333124" type="box" contype="2" group="4" mass="0" rgba="0.2 0.6 0.9 0.25" conaffinity="1" quat="1 0 0 0" friction="1 0.0050000000000000001 0.0001" solref="0.02 1" solimp="0.90000000000000002 0.94999999999999996 0.001 0.5 2" margin="0.001" />
+                      <site name="l_toes_touch" class="myolegs26_touch" pos="0 -0.002 0.01" quat="0.7316888688738209 0 0.68163876002333412 0" size="0.05 0.025 0.075" />
+                      <site name="edl_l-P5" pos="0.00029999999999999997 0.0047000000000000002 -0.015299999999999999" quat="1 0 0 0" />
+                      <site name="edl_l-P6" pos="0.044299999999999999 -0.00040000000000000002 -0.025000000000000001" quat="1 0 0 0" />
+                      <site name="fdl_l-P6" pos="-0.0019 -0.0077999999999999996 -0.0147" quat="1 0 0 0" />
+                      <site name="fdl_l-P7" pos="0.028500000000000001 -0.0071000000000000004 -0.021499999999999998" quat="1 0 0 0" />
+                      <site name="fdl_l-P8" pos="0.0441 -0.0060000000000000001 -0.024199999999999999" quat="1 0 0 0" />
+                    </body>
+                  </body>
+                </body>
+                <body name="hamstrings_l_semimem_l-P2" pos="-0.034290000000000001 -0.03601 0.01891" quat="1 0 0 0">
+                  <inertial pos="0 0 0.01891" mass="0.001" diaginertia="1e-08 1e-08 1e-08" />
+                  <joint name="hamstrings_l_semimem_l-P2_x" pos="0 0 0" axis="1 0 0" type="slide" range="-0.00051 0.00729" />
+                  <joint name="hamstrings_l_semimem_l-P2_y" pos="0 0 0" axis="0 1 0" type="slide" range="-0.0117 0.00082" />
+                  <site name="hamstrings_l_semimem_l-P2" pos="0 0 0" quat="1 0 0 0" />
+                </body>
+                <body name="rect_fem_l_rect_fem_l-P3" pos="0.062590000000000007 0.020320000000000001 -0.0014009999999999999" quat="1 0 0 0">
+                  <inertial pos="0 0 -0.001401" mass="0.001" diaginertia="1e-08 1e-08 1e-08" />
+                  <joint name="rect_fem_l_rect_fem_l-P3_x" pos="0 0 0" axis="1 0 0" type="slide" range="-0.04701 0.01071" />
+                  <joint name="rect_fem_l_rect_fem_l-P3_y" pos="0 0 0" axis="0 1 0" type="slide" range="-0.0877 0.00499" />
+                  <site name="rect_fem_l_rect_fem_l-P3" pos="0 0 0" quat="1 0 0 0" />
+                </body>
+                <body name="vasti_l_vas_int_l-P4" pos="0.056469999999999999 0.024760000000000001 0.001799" quat="1 0 0 0">
+                  <inertial pos="0 0 0.001799" mass="0.001" diaginertia="1e-08 1e-08 1e-08" />
+                  <joint name="vasti_l_vas_int_l-P4_x" pos="0 0 0" axis="1 0 0" type="slide" range="-0.048197 0.01197" />
+                  <joint name="vasti_l_vas_int_l-P4_y" pos="0 0 0" axis="0 1 0" type="slide" range="-0.09333 0.00276" />
+                  <site name="vasti_l_vas_int_l-P4" pos="0 0 0" quat="1 0 0 0" />
+                </body>
+              </body>
+              <body name="gastroc_l_med_gas_l-P2" pos="-0.026069999999999999 -0.39889999999999998 0.024979999999999999" quat="1 0 0 0">
+                <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08" />
+                <joint name="gastroc_l_med_gas_l-P2_x" pos="0 0 0" axis="1 0 0" type="slide" range="-0.00393 0.00707" />
+                <joint name="gastroc_l_med_gas_l-P2_y" pos="0 0 0" axis="0 1 0" type="slide" range="-0.0033 0.006" />
+                <joint name="gastroc_l_med_gas_l-P2_z" pos="0 0 0" axis="0 0 1" type="slide" range="-0.00148 0.00082" />
+                <site name="gastroc_l_med_gas_l-P2" pos="0 0 0" quat="1 0 0 0" />
+              </body>
+            </body>
+            <body name="iliopsoas_r_psoas_r-P3" pos="-0.028549999999999999 -0.079329999999999998 0.081320000000000003" quat="1 0 0 0">
+              <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08" />
+              <joint name="iliopsoas_r_psoas_r-P3_x" pos="0 0 0" axis="1 0 0" type="slide" range="-0.00025 0.00475" />
+              <joint name="iliopsoas_r_psoas_r-P3_y" pos="0 0 0" axis="0 1 0" type="slide" range="-0.00117 0.02233" />
+              <joint name="iliopsoas_r_psoas_r-P3_z" pos="0 0 0" axis="0 0 1" type="slide" range="-0.00542 0.00028" />
+              <site name="iliopsoas_r_psoas_r-P3" pos="0 0 0" quat="1 0 0 0" />
+            </body>
+            <body name="iliopsoas_l_psoas_l-P3" pos="-0.028549999999999999 -0.079329999999999998 -0.081320000000000003" quat="1 0 0 0">
+              <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08" />
+              <joint name="iliopsoas_l_psoas_l-P3_x" pos="0 0 0" axis="1 0 0" type="slide" range="-0.00025 0.00475" />
+              <joint name="iliopsoas_l_psoas_l-P3_y" pos="0 0 0" axis="0 1 0" type="slide" range="-0.00117 0.02233" />
+              <joint name="iliopsoas_l_psoas_l-P3_z" pos="0 0 0" axis="0 0 1" type="slide" range="-0.00028 0.00542" />
+              <site name="iliopsoas_l_psoas_l-P3" pos="0 0 0" quat="1 0 0 0" />
+            </body>
+          </body>
+        </body>
+      </frame>
+    </body>
+  </worldbody>
+  <equality>
+    <joint joint1="knee_r_translation1" joint2="knee_angle_r" polycoef="0 -0.006267 0.002807 0.00134 -0.0006776" solimp="0.9999 0.9999" />
+    <joint joint1="knee_r_translation2" joint2="knee_angle_r" polycoef="0 0.003413 -0.005587 0.0006697 0.0005674" solimp="0.9999 0.9999" />
+    <joint joint1="knee_l_translation1" joint2="knee_angle_l" polycoef="0 -0.006267 0.002807 0.00134 -0.0006776" solimp="0.9999 0.9999" />
+    <joint joint1="knee_l_translation2" joint2="knee_angle_l" polycoef="0 0.003413 -0.005587 0.0006697 0.0005674" solimp="0.9999 0.9999" />
+    <joint joint1="hamstrings_r_semimem_r-P2_x" joint2="knee_angle_r" polycoef="0 -0.005119 0.001791 0.001624 0.0002251" solimp="0.9999 0.9999" />
+    <joint joint1="hamstrings_r_semimem_r-P2_y" joint2="knee_angle_r" polycoef="0 0.008217 -0.002875 -0.002607 -0.0003613" solimp="0.9999 0.9999" />
+    <joint joint1="iliopsoas_r_psoas_r-P3_x" joint2="hip_flexion_r" polycoef="0 0.001773 0.001122 -0.0001037 -0.0001111" solimp="0.9999 0.9999" />
+    <joint joint1="iliopsoas_r_psoas_r-P3_y" joint2="hip_flexion_r" polycoef="0 0.008332 0.005272 -0.0004875 -0.0005223" solimp="0.9999 0.9999" />
+    <joint joint1="iliopsoas_r_psoas_r-P3_z" joint2="hip_flexion_r" polycoef="0 -0.002021 -0.001279 0.0001182 0.0001267" solimp="0.9999 0.9999" />
+    <joint joint1="rect_fem_r_rect_fem_r-P3_x" joint2="knee_angle_r" polycoef="0 0.04199 0.01152 -0.007248 -0.004008" solimp="0.9999 0.9999" />
+    <joint joint1="rect_fem_r_rect_fem_r-P3_y" joint2="knee_angle_r" polycoef="0 -0.01159 -0.008624 -0.002308 -0.0002292" solimp="0.9999 0.9999" />
+    <joint joint1="vasti_r_vas_int_r-P4_x" joint2="knee_angle_r" polycoef="0 0.04555 0.01393 -0.007247 -0.004235" solimp="0.9999 0.9999" />
+    <joint joint1="vasti_r_vas_int_r-P4_y" joint2="knee_angle_r" polycoef="0 -0.006322 -0.00661 -0.003684 -0.0008973" solimp="0.9999 0.9999" />
+    <joint joint1="gastroc_r_med_gas_r-P2_x" joint2="knee_angle_r" polycoef="0 0.00676 0.0009439 -0.001031 -6.818e-05" solimp="0.9999 0.9999" />
+    <joint joint1="gastroc_r_med_gas_r-P2_y" joint2="knee_angle_r" polycoef="0 0.005715 0.000798 -0.000872 -5.764e-05" solimp="0.9999 0.9999" />
+    <joint joint1="gastroc_r_med_gas_r-P2_z" joint2="knee_angle_r" polycoef="0 0.001413 0.0001974 -0.0002157 -1.426e-05" solimp="0.9999 0.9999" />
+    <joint joint1="hamstrings_l_semimem_l-P2_x" joint2="knee_angle_l" polycoef="0 -0.005119 0.001791 0.001624 0.0002251" solimp="0.9999 0.9999" />
+    <joint joint1="hamstrings_l_semimem_l-P2_y" joint2="knee_angle_l" polycoef="0 0.008217 -0.002875 -0.002607 -0.0003613" solimp="0.9999 0.9999" />
+    <joint joint1="iliopsoas_l_psoas_l-P3_x" joint2="hip_flexion_l" polycoef="0 0.001773 0.001122 -0.0001037 -0.0001111" solimp="0.9999 0.9999" />
+    <joint joint1="iliopsoas_l_psoas_l-P3_y" joint2="hip_flexion_l" polycoef="0 0.008332 0.005272 -0.0004875 -0.0005223" solimp="0.9999 0.9999" />
+    <joint joint1="iliopsoas_l_psoas_l-P3_z" joint2="hip_flexion_l" polycoef="0 0.002021 0.001279 -0.0001182 -0.0001267" solimp="0.9999 0.9999" />
+    <joint joint1="rect_fem_l_rect_fem_l-P3_x" joint2="knee_angle_l" polycoef="0 0.04199 0.01152 -0.007248 -0.004008" solimp="0.9999 0.9999" />
+    <joint joint1="rect_fem_l_rect_fem_l-P3_y" joint2="knee_angle_l" polycoef="0 -0.01159 -0.008624 -0.002308 -0.0002292" solimp="0.9999 0.9999" />
+    <joint joint1="vasti_l_vas_int_l-P4_x" joint2="knee_angle_l" polycoef="0 0.04555 0.01393 -0.007247 -0.004235" solimp="0.9999 0.9999" />
+    <joint joint1="vasti_l_vas_int_l-P4_y" joint2="knee_angle_l" polycoef="0 -0.006322 -0.00661 -0.003684 -0.0008973" solimp="0.9999 0.9999" />
+    <joint joint1="gastroc_l_med_gas_l-P2_x" joint2="knee_angle_l" polycoef="0 0.00676 0.0009439 -0.001031 -6.818e-05" solimp="0.9999 0.9999" />
+    <joint joint1="gastroc_l_med_gas_l-P2_y" joint2="knee_angle_l" polycoef="0 0.005715 0.000798 -0.000872 -5.764e-05" solimp="0.9999 0.9999" />
+    <joint joint1="gastroc_l_med_gas_l-P2_z" joint2="knee_angle_l" polycoef="0 -0.001413 -0.0001974 0.0002157 1.426e-05" solimp="0.9999 0.9999" />
+  </equality>
+  <tendon>
+    <spatial name="abd_r_tendon">
+      <site site="abd_r_glut_med2_r-P1" />
+      <site site="abd_r_glut_med2_r-P2" />
+    </spatial>
+    <spatial name="add_r_tendon">
+      <site site="add_r_add_mag1_r-P1" />
+      <site site="add_r_add_mag1_r-P2" />
+    </spatial>
+    <spatial name="hamstrings_r_tendon">
+      <site site="hamstrings_r_semimem_r-P1" />
+      <site site="hamstrings_r_semimem_r-P2" />
+      <site site="hamstrings_r_semimem_r-P3" />
+    </spatial>
+    <spatial name="bifemsh_r_tendon">
+      <site site="bifemsh_r_bifemsh_r-P1" />
+      <site site="bifemsh_r_bifemsh_r-P2" />
+      <site site="bifemsh_r_bifemsh_r-P3" />
+    </spatial>
+    <spatial name="glut_max_r_tendon">
+      <site site="glut_max_r_glut_max2_r-P1" />
+      <site site="glut_max_r_glut_max2_r-P2" />
+      <site site="glut_max_r_glut_max2_r-P3" />
+      <site site="glut_max_r_glut_max2_r-P4" />
+    </spatial>
+    <spatial name="iliopsoas_r_tendon">
+      <site site="iliopsoas_r_psoas_r-P1" />
+      <site site="iliopsoas_r_psoas_r-P2" />
+      <site site="iliopsoas_r_psoas_r-P3" />
+      <site site="iliopsoas_r_psoas_r-P4" />
+      <site site="iliopsoas_r_psoas_r-P5" />
+    </spatial>
+    <spatial name="rect_fem_r_tendon">
+      <site site="rect_fem_r_rect_fem_r-P1" />
+      <site site="rect_fem_r_rect_fem_r-P2" />
+      <site site="rect_fem_r_rect_fem_r-P3" />
+    </spatial>
+    <spatial name="vasti_r_tendon">
+      <site site="vasti_r_vas_int_r-P1" />
+      <site site="vasti_r_vas_int_r-P2" />
+      <site site="vasti_r_vas_int_r-P3" />
+      <site site="vasti_r_vas_int_r-P4" />
+    </spatial>
+    <spatial name="gastroc_r_tendon">
+      <site site="gastroc_r_med_gas_r-P1" />
+      <site site="gastroc_r_med_gas_r-P2" />
+      <site site="gastroc_r_med_gas_r-P3" />
+    </spatial>
+    <spatial name="soleus_r_tendon">
+      <site site="soleus_r_soleus_r-P1" />
+      <site site="soleus_r_soleus_r-P2" />
+    </spatial>
+    <spatial name="tib_ant_r_tendon">
+      <site site="tib_ant_r_tib_ant_r-P1" />
+      <site site="tib_ant_r_tib_ant_r-P2" />
+      <site site="tib_ant_r_tib_ant_r-P3" />
+    </spatial>
+    <spatial name="abd_l_tendon">
+      <site site="abd_l_glut_med2_l-P1" />
+      <site site="abd_l_glut_med2_l-P2" />
+    </spatial>
+    <spatial name="add_l_tendon">
+      <site site="add_l_add_mag1_l-P1" />
+      <site site="add_l_add_mag1_l-P2" />
+    </spatial>
+    <spatial name="hamstrings_l_tendon">
+      <site site="hamstrings_l_semimem_l-P1" />
+      <site site="hamstrings_l_semimem_l-P2" />
+      <site site="hamstrings_l_semimem_l-P3" />
+    </spatial>
+    <spatial name="bifemsh_l_tendon">
+      <site site="bifemsh_l_bifemsh_l-P1" />
+      <site site="bifemsh_l_bifemsh_l-P2" />
+      <site site="bifemsh_l_bifemsh_l-P3" />
+    </spatial>
+    <spatial name="glut_max_l_tendon">
+      <site site="glut_max_l_glut_max2_l-P1" />
+      <site site="glut_max_l_glut_max2_l-P2" />
+      <site site="glut_max_l_glut_max2_l-P3" />
+      <site site="glut_max_l_glut_max2_l-P4" />
+    </spatial>
+    <spatial name="iliopsoas_l_tendon">
+      <site site="iliopsoas_l_psoas_l-P1" />
+      <site site="iliopsoas_l_psoas_l-P2" />
+      <site site="iliopsoas_l_psoas_l-P3" />
+      <site site="iliopsoas_l_psoas_l-P4" />
+      <site site="iliopsoas_l_psoas_l-P5" />
+    </spatial>
+    <spatial name="rect_fem_l_tendon">
+      <site site="rect_fem_l_rect_fem_l-P1" />
+      <site site="rect_fem_l_rect_fem_l-P2" />
+      <site site="rect_fem_l_rect_fem_l-P3" />
+    </spatial>
+    <spatial name="vasti_l_tendon">
+      <site site="vasti_l_vas_int_l-P1" />
+      <site site="vasti_l_vas_int_l-P2" />
+      <site site="vasti_l_vas_int_l-P3" />
+      <site site="vasti_l_vas_int_l-P4" />
+    </spatial>
+    <spatial name="gastroc_l_tendon">
+      <site site="gastroc_l_med_gas_l-P1" />
+      <site site="gastroc_l_med_gas_l-P2" />
+      <site site="gastroc_l_med_gas_l-P3" />
+    </spatial>
+    <spatial name="soleus_l_tendon">
+      <site site="soleus_l_soleus_l-P1" />
+      <site site="soleus_l_soleus_l-P2" />
+    </spatial>
+    <spatial name="tib_ant_l_tendon">
+      <site site="tib_ant_l_tib_ant_l-P1" />
+      <site site="tib_ant_l_tib_ant_l-P2" />
+      <site site="tib_ant_l_tib_ant_l-P3" />
+    </spatial>
+    <spatial name="edl_r_tendon" springlength="0.368875">
+      <site site="edl_r-P1" />
+      <site site="edl_r-P2" />
+      <site site="edl_r-P3" />
+      <site site="edl_r-P4" />
+      <site site="edl_r-P5" />
+      <site site="edl_r-P6" />
+    </spatial>
+    <spatial name="fdl_r_tendon" springlength="0.378773">
+      <site site="fdl_r-P1" />
+      <site site="fdl_r-P2" />
+      <site site="fdl_r-P3" />
+      <site site="fdl_r-P4" />
+      <site site="fdl_r-P5" />
+      <site site="fdl_r-P6" />
+      <site site="fdl_r-P7" />
+      <site site="fdl_r-P8" />
+    </spatial>
+    <spatial name="edl_l_tendon" springlength="0.368875">
+      <site site="edl_l-P1" />
+      <site site="edl_l-P2" />
+      <site site="edl_l-P3" />
+      <site site="edl_l-P4" />
+      <site site="edl_l-P5" />
+      <site site="edl_l-P6" />
+    </spatial>
+    <spatial name="fdl_l_tendon" springlength="0.378773">
+      <site site="fdl_l-P1" />
+      <site site="fdl_l-P2" />
+      <site site="fdl_l-P3" />
+      <site site="fdl_l-P4" />
+      <site site="fdl_l-P5" />
+      <site site="fdl_l-P6" />
+      <site site="fdl_l-P7" />
+      <site site="fdl_l-P8" />
+    </spatial>
+  </tendon>
+  <actuator>
+    <general name="abd_r" class="myolegs26_muscle" tendon="abd_r_tendon" lengthrange="0.053712 0.169892" gainprm="0.169813 1.23281 4323.26 1 0 1.8 10 0.672684 1.4" biasprm="0.169813 1.23281 4323.26 1 0 1.8 10 0.672684 1.4" />
+    <general name="add_r" class="myolegs26_muscle" tendon="add_r_tendon" lengthrange="0.0502179 0.203072" gainprm="0.160259 1.33948 3871.82 1 0 1.8 10 1.31477 1.4" biasprm="0.160259 1.33948 3871.82 1 0 1.8 10 1.31477 1.4" />
+    <general name="hamstrings_r" class="myolegs26_muscle" tendon="hamstrings_r_tendon" lengthrange="0.321987 0.509548" gainprm="0.105801 1.56953 3948.49 1 0 1.8 10 1.35553 1.4" biasprm="0.105801 1.56953 3948.49 1 0 1.8 10 1.35553 1.4" />
+    <general name="bifemsh_r" class="myolegs26_muscle" tendon="bifemsh_r_tendon" lengthrange="0.191264 0.249268" gainprm="0.677513 1.24807 509.424 1 0 1.8 10 0.93595 1.4" biasprm="0.677513 1.24807 509.424 1 0 1.8 10 0.93595 1.4" />
+    <general name="edl_r" class="myolegs26_muscle" tendon="edl_r_tendon" lengthrange="0.411859 0.466224" gainprm="0.620259 1.40474 553.241 1 0.319949 3.12081 10 1.35486 1.4" biasprm="0.620259 1.40474 553.241 1 0.319949 3.12081 10 1.35486 1.4" />
+    <general name="fdl_r" class="myolegs26_muscle" tendon="fdl_r_tendon" lengthrange="0.405466 0.433594" gainprm="0.598501 1.22918 332.13 1 0.357129 3.24643 10 1.8954 1.4" biasprm="0.598501 1.22918 332.13 1 0.357129 3.24643 10 1.8954 1.4" />
+    <general name="glutmax_r" class="myolegs26_muscle" tendon="glut_max_r_tendon" lengthrange="0.143998 0.277296" gainprm="0.620098 1.41881 3276.04 1 0 1.8 10 0.78169 1.4" biasprm="0.620098 1.41881 3276.04 1 0 1.8 10 0.78169 1.4" />
+    <general name="iliopsoas_r" class="myolegs26_muscle" tendon="iliopsoas_r_tendon" lengthrange="0.191629 0.297306" gainprm="0.537695 1.29267 2585.58 1 0 1.8 10 0.767706 1.4" biasprm="0.537695 1.29267 2585.58 1 0 1.8 10 0.767706 1.4" />
+    <general name="rectfem_r" class="myolegs26_muscle" tendon="rect_fem_r_tendon" lengthrange="0.32136 0.510234" gainprm="0.112356 1.37774 1800.5 1 0 1.8 10 0.394414 1.4" biasprm="0.112356 1.37774 1800.5 1 0 1.8 10 0.394414 1.4" />
+    <general name="vasti_r" class="myolegs26_muscle" tendon="vasti_r_tendon" lengthrange="0.174556 0.258507" gainprm="0.689617 1.52507 9500.94 1 0 1.8 10 0.440576 1.4" biasprm="0.689617 1.52507 9500.94 1 0 1.8 10 0.440576 1.4" />
+    <general name="gastroc_r" class="myolegs26_muscle" tendon="gastroc_r_tendon" lengthrange="0.362049 0.489534" gainprm="0.111359 1.10082 3820.44 1 0 1.8 10 1.28141 1.4" biasprm="0.111359 1.10082 3820.44 1 0 1.8 10 1.28141 1.4" />
+    <general name="soleus_r" class="myolegs26_muscle" tendon="soleus_r_tendon" lengthrange="0.228134 0.326673" gainprm="0.123627 1.18435 6090 1 0 1.8 10 1.44603 1.4" biasprm="0.123627 1.18435 6090 1 0 1.8 10 1.44603 1.4" />
+    <general name="tibant_r" class="myolegs26_muscle" tendon="tib_ant_r_tendon" lengthrange="0.259564 0.352614" gainprm="0.34957 1.29783 2042.4 1 0 1.8 10 0.972121 1.4" biasprm="0.34957 1.29783 2042.4 1 0 1.8 10 0.972121 1.4" />
+    <general name="abd_l" class="myolegs26_muscle" tendon="abd_l_tendon" lengthrange="0.053712 0.169892" gainprm="0.169813 1.23281 4323.26 1 0 1.8 10 0.672684 1.4" biasprm="0.169813 1.23281 4323.26 1 0 1.8 10 0.672684 1.4" />
+    <general name="add_l" class="myolegs26_muscle" tendon="add_l_tendon" lengthrange="0.0502179 0.203072" gainprm="0.160259 1.33948 3871.82 1 0 1.8 10 1.31477 1.4" biasprm="0.160259 1.33948 3871.82 1 0 1.8 10 1.31477 1.4" />
+    <general name="hamstrings_l" class="myolegs26_muscle" tendon="hamstrings_l_tendon" lengthrange="0.321987 0.509548" gainprm="0.105801 1.56953 3948.49 1 0 1.8 10 1.35553 1.4" biasprm="0.105801 1.56953 3948.49 1 0 1.8 10 1.35553 1.4" />
+    <general name="bifemsh_l" class="myolegs26_muscle" tendon="bifemsh_l_tendon" lengthrange="0.191264 0.249268" gainprm="0.677513 1.24807 509.424 1 0 1.8 10 0.93595 1.4" biasprm="0.677513 1.24807 509.424 1 0 1.8 10 0.93595 1.4" />
+    <general name="edl_l" class="myolegs26_muscle" tendon="edl_l_tendon" lengthrange="0.411859 0.466224" gainprm="0.620259 1.40474 553.241 1 0.319949 3.12081 10 1.35486 1.4" biasprm="0.620259 1.40474 553.241 1 0.319949 3.12081 10 1.35486 1.4" />
+    <general name="fdl_l" class="myolegs26_muscle" tendon="fdl_l_tendon" lengthrange="0.405466 0.433594" gainprm="0.598501 1.22918 332.13 1 0.357129 3.24643 10 1.8954 1.4" biasprm="0.598501 1.22918 332.13 1 0.357129 3.24643 10 1.8954 1.4" />
+    <general name="glutmax_l" class="myolegs26_muscle" tendon="glut_max_l_tendon" lengthrange="0.143998 0.277296" gainprm="0.620098 1.41881 3276.04 1 0 1.8 10 0.78169 1.4" biasprm="0.620098 1.41881 3276.04 1 0 1.8 10 0.78169 1.4" />
+    <general name="iliopsoas_l" class="myolegs26_muscle" tendon="iliopsoas_l_tendon" lengthrange="0.191629 0.297306" gainprm="0.537695 1.29267 2585.58 1 0 1.8 10 0.767706 1.4" biasprm="0.537695 1.29267 2585.58 1 0 1.8 10 0.767706 1.4" />
+    <general name="rectfem_l" class="myolegs26_muscle" tendon="rect_fem_l_tendon" lengthrange="0.32136 0.510234" gainprm="0.112356 1.37774 1800.5 1 0 1.8 10 0.394414 1.4" biasprm="0.112356 1.37774 1800.5 1 0 1.8 10 0.394414 1.4" />
+    <general name="vasti_l" class="myolegs26_muscle" tendon="vasti_l_tendon" lengthrange="0.174556 0.258507" gainprm="0.689617 1.52507 9500.94 1 0 1.8 10 0.440576 1.4" biasprm="0.689617 1.52507 9500.94 1 0 1.8 10 0.440576 1.4" />
+    <general name="gastroc_l" class="myolegs26_muscle" tendon="gastroc_l_tendon" lengthrange="0.362049 0.489534" gainprm="0.111359 1.10082 3820.44 1 0 1.8 10 1.28141 1.4" biasprm="0.111359 1.10082 3820.44 1 0 1.8 10 1.28141 1.4" />
+    <general name="soleus_l" class="myolegs26_muscle" tendon="soleus_l_tendon" lengthrange="0.228134 0.326673" gainprm="0.123627 1.18435 6090 1 0 1.8 10 1.44603 1.4" biasprm="0.123627 1.18435 6090 1 0 1.8 10 1.44603 1.4" />
+    <general name="tibant_l" class="myolegs26_muscle" tendon="tib_ant_l_tendon" lengthrange="0.259564 0.352614" gainprm="0.34957 1.29783 2042.4 1 0 1.8 10 0.972121 1.4" biasprm="0.34957 1.29783 2042.4 1 0 1.8 10 0.972121 1.4" />
+  </actuator>
+  <sensor>
+    <touch site="r_foot_touch" name="r_foot" />
+    <touch site="r_toes_touch" name="r_toes" />
+    <touch site="l_foot_touch" name="l_foot" />
+    <touch site="l_toes_touch" name="l_toes" />
+    <jointlimitfrc joint="knee_angle_r" name="r_knee_sensor" />
+    <jointlimitfrc joint="knee_angle_l" name="l_knee_sensor" />
+    <jointlimitfrc joint="hip_flexion_r" name="r_hip_sensor" />
+    <jointlimitfrc joint="hip_flexion_l" name="l_hip_sensor" />
+    <jointlimitfrc joint="ankle_angle_r" name="r_ankle_sensor" />
+    <jointlimitfrc joint="ankle_angle_l" name="l_ankle_sensor" />
+    <jointlimitfrc joint="mtp_angle_r" name="r_mtp_sensor" />
+    <jointlimitfrc joint="mtp_angle_l" name="l_mtp_sensor" />
+  </sensor>
+  <keyframe>
+    <key name="stand" qpos="0 0 0.91618499979852852 0.70710678118654757 0 0 0.70710678118654757 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" qvel="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" act="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" ctrl="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" />
+  </keyframe>
+</mujoco>

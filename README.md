@@ -1,290 +1,212 @@
 # msk-warp
 
-SHAC (Short Horizon Actor Critic) for musculoskeletal control, powered by MuJoCo Warp for GPU-accelerated differentiable simulation.
+Research code for learning musculoskeletal locomotion policies with simulation gradients.
+PyTorch owns the actor, critic, observations and rewards; a custom MuJoCo Warp backend supplies
+state and control derivatives. SHAC is the current policy-learning implementation, with PPO
+available as a comparison. The target is MyoLeg26; accelerated training on that target is unproven.
 
-This project replaces the dFlex physics backend from [DiffRL](https://github.com/NVlabs/DiffRL) with [MuJoCo Warp](https://github.com/google-deepmind/mujoco_warp), enabling differentiable RL training where gradients backpropagate directly through the physics simulation.
+## Current status (2026-09-13)
 
-## Current Status
+| Environment | What is established |
+| --- | --- |
+| CartPole | Gradient and training regression control; convergence depends on seed/configuration. |
+| Motor hopper | Working SHAC locomotion control, measured across three seeds. |
+| Muscle hopper | Activation gradients are threaded, but reliable forward locomotion has not been demonstrated. Tendon state-gradient defects remain. |
+| Ant | Historical PPO locomotion control; SHAC standing/fine-tuning failures and a free-root contact-gradient defect remain. |
+| MyoLeg26 | Pinned official beta model: `nq=47`, `nv=46`, 26 muscles. Five-seed PPO walking baseline failed its bounded behavior gate. Strict visited-state forward checks block derivative qualification; autodiff training remains guarded. |
 
-Three environments are implemented, progressing from simple validation to musculoskeletal control:
+Trajectory optimization and CPU return-map shooting investigate candidate gaits. They are separate
+from policy learning. Finding an orbit does not establish robust policy control or training speed;
+failing to find one in a bounded search does not establish physical impossibility.
 
-- **CartPole** (2 DOF, no contacts) -- swing-up balance task. Gradient verification passes: AD vs float64 finite differences within 0.02% relative error. ~900 env FPS on RTX 4060 Laptop GPU. Converges reliably in ~160 epochs.
-- **Ant** (15 DOF, contact-rich) -- 4-legged locomotion with ground contact. 37D obs, 8D action (hip+ankle motors), 64 parallel worlds. Full contact dynamics gradients flow via smooth autodiff through the custom MuJoCo Warp build. Currently under active development -- see [Known Issues](#known-issues).
-- **MyoLeg26** (14 DOF, musculoskeletal) -- bilateral human gait with 26 Hill-type muscle actuators, pelvis uses slide+hinge joints, terrain config support. Early development.
+## Backend and setup
 
-## Architecture
+The tested backend is the local PR #1423 stack at `C:/Projects/mujoco_warp_pr1423`, branch
+`mark/pr1423-fixes`, commit `8f5636ce6b8d399c9452c04694eff22237219b8a`, based on PR head `eeac6f2`.
+Its APIs and muscle derivatives are experimental; installing upstream `mujoco-warp` is not an
+equivalent setup. The backend checkout and its local fixes are not vendored in this repository.
 
-### Gradient Bridge
+`pyproject.toml` specifies Python >=3.11, MuJoCo 3.10.0, Warp 1.14.0, the editable backend path,
+and PyTorch's `cu130` index. The working machine uses Python 3.12 and an NVIDIA CUDA GPU.
+Provision the pinned checkout first; on another machine, update the local source path before syncing.
+Run from the repository root in PowerShell:
 
-The core challenge is bridging Warp's tape-based autodiff with PyTorch's autograd. Each simulation step is wrapped in a `torch.autograd.Function` called `WarpSimStep`.
-
-**Forward pass:** Save pre-step state, set ctrl from PyTorch tensor, run `mjw.step()` for N substeps, return (qpos, qvel) as PyTorch tensors.
-
-**Backward pass:** Three modes, selected by env flags:
-
-1. **Tape-all** (default) -- records all substeps under a single `wp.Tape()`, then backpropagates through the full physics pipeline. The custom MuJoCo Warp build provides smooth contact autodifferentiation (differentiable distance/position/frame for supported geometry pairs) and Newton solver implicit differentiation, so gradients flow through contact dynamics. ~2-3x forward cost per substep. Currently broken for multi-substep models due to shared-array gradient accumulation -- see [Known Issues](#known-issues).
-2. **Tape-per-substep** (`tape_per_substep: true`) -- tapes each substep individually and chains gradients via norm-based clipping. Lower peak GPU memory, correct gradients. This is the current default for contact-rich environments.
-3. **FD Jacobian** (`use_fd_jacobian: true`) -- finite-difference dynamics Jacobian + analytical Euler backward + mass-matrix solve. Costs `nq+nv+2` forward calls per substep. Produces 50-100x larger gradient norms than tape mode. Useful for debugging, A/B comparison, or unsupported geometry types (box/mesh).
-
-`WarpSimStep` accepts `(ctrl, qpos_in, qvel_in)` as differentiable inputs and returns gradients for all three. This provides two gradient paths across simulation steps: through the **actor network** (obs -> policy -> ctrl) and through the **physics dynamics** (state -> next state).
-
-### Observation and Reward
-
-Each environment computes observations and rewards as PyTorch operations on the (qpos, qvel) tensors returned by `WarpSimStep`. This keeps them naturally in the autograd graph with no special handling needed. Observation dimensions are environment-specific (e.g., CartPole: 5D, Ant: 37D including height, quaternion, velocities, joint angles, and heading alignment).
-
-The Ant environment supports configurable reward weights (`forward_vel_weight`, `heading_weight`, `up_weight`, `height_weight`) for reward shaping experiments.
-
-### Multi-World Batching
-
-`num_actors` maps directly to `nworld` in MuJoCo Warp. All simulation arrays are shaped `(nworld, ...)` and the entire batch runs on GPU in a single kernel launch.
-
-### BPTT and Gradient Control
-
-SHAC uses 32-step backpropagation through time (BPTT) to compute policy gradients. Several mechanisms control gradient flow:
-
-- **`state_bptt`** (config, default true) -- when false, detaches state tensors each step so only single-step ctrl gradients flow. Required false for cartpole (BPTT causes gradient norms of 1e6+).
-- **`state_grad_clip`** (config, default 0) -- clips gradient norms on qpos/qvel at step boundaries. Unlike `obs_grad_clip`, this clips all BPTT paths including the reward accumulation path.
-- **Substep gradient clipping** (bridge.py) -- norm-based per-environment clipping within the FD backward pass to prevent exponential blowup across substeps while preserving gradient direction.
-
-## Project Structure
-
-```
-msk-warp/
-  msk_warp/
-    bridge.py                   # WarpSimStep gradient bridge (3 backward modes)
-    assets/
-      cartpole.xml              # CartPole MJCF (no contacts)
-      ant.xml                   # Ant MJCF (solver=Newton, jacobian=dense)
-      ant_soft.xml              # Ant with softer contacts (solref=[0.05,1])
-      myoleg/                   # MyoLeg26 model, meshes, terrain configs
-    envs/
-      base_env.py               # MjWarpEnv base class
-      cartpole_swing_up.py      # CartPole swing-up (2 DOF)
-      ant.py                    # Ant locomotion (15 DOF, contacts)
-      myoleg_walk.py            # MyoLeg via myosuite (auto-discovered model)
-      myoleg26_walk.py          # MyoLeg26 bilateral gait (26 muscles, 14 DOF)
-    algorithms/
-      shac.py                   # SHAC training algorithm
-    networks/
-      actor.py                  # Stochastic/Deterministic actor MLPs
-      critic.py                 # Critic MLP
-      model_utils.py            # Network initialization helpers
-    configs/
-      cartpole_shac.yaml        # CartPole training config
-      ant_shac.yaml             # Ant training config (tape-per-substep)
-      ant_shac_fd.yaml          # Ant with FD Jacobian backward
-      ant_shac_nobptt.yaml      # Ant without state BPTT
-      myoleg_shac.yaml          # MyoLeg training config
-      myoleg26_shac.yaml        # MyoLeg26 training config
-      experiments/              # Ablation configs (reward shaping, soft contacts, etc.)
-    utils/
-      torch_utils.py            # Quaternion ops, grad_norm (@torch.jit.script)
-      running_mean_std.py       # Observation normalization
-      dataset.py                # Replay buffer
-      average_meter.py          # Metric tracking
-      time_report.py            # Training timing
-  scripts/
-    train.py                    # Training entry point
-    visualize.py                # Policy visualization in MuJoCo viewer
-    visualize_progression.py    # Training progression grid
-  tests/
-    test_gradient.py            # Gradient verification suite (6 test variants)
-    test_ant_gradient.py        # Ant-specific gradient tests
-    test_grad_chain.py          # Backprop chain validation
+```powershell
+uv sync --extra dev
+.venv/Scripts/python.exe -m pytest tests/unit -q
+.venv/Scripts/python.exe scripts/train.py --cfg configs/cartpole_shac.yaml --logdir logs/cartpole --seed 0
+.venv/Scripts/python.exe scripts/train.py --cfg configs/hopper_motor_shac.yaml --logdir logs/hopper_motor --seed 0
 ```
 
-## Setup
+Configs resolve relative to `msk_warp/` or the current directory. Training also accepts `--device`,
+`--max-epochs` and `--init-policy`. **`--init-policy` is a warm start, not a training resume:** it
+loads saved networks/normalizers and resets optimizers; iteration and training state are not restored.
 
-**Requirements:** Python >= 3.11, CUDA 12+, NVIDIA GPU with compute capability >= SM 7.0 (Volta/RTX 20xx or newer) for contact gradient kernels
+## Gradient contract
 
-```bash
-# Create virtual environment
-py -3.12 -m venv .venv
-source .venv/Scripts/activate   # Windows/Git Bash
-# source .venv/bin/activate     # Linux/Mac
+`WarpSimStep` takes `(ctrl, qpos, qvel, act)` and returns `(qpos, qvel, act)`. Activation must remain
+in the graph across physics substeps and policy steps. Empty activation tensors serve motor models.
+The explicit `backward_mode` setting selects:
 
-# Install PyTorch with CUDA
-pip install torch --index-url https://download.pytorch.org/whl/cu124
+| Mode | Role and limitations |
+| --- | --- |
+| `tape_per_substep` | Chains one taped VJP per physics substep; used by the current CartPole/hopper configs. |
+| `tape` | Tapes all substeps; tested on the pinned stack. Old fork failures do not describe this implementation. |
+| `fd` | Finite-difference diagnostic/control implementation. Selected local checks pass; an existing hopper training comparison failed. It is not a validated training fallback. |
 
-# Install other dependencies
-pip install warp-lang mujoco tensorboardX pyyaml numpy pillow
+All modes have targeted coverage in `tests/gpu/test_bridge_gradients.py`. Known failures are kept
+as explicit expected failures: free-joint contact `qpos` gradients and multi-tendon chain `qpos`
+gradients. A passing local derivative check does not validate every state, horizon or objective.
+The bridge also sanitizes nonfinite gradients and clamps components; diagnostics must detect this.
+Replay currently omits solver `qacc_warmstart`; its numerical impact still needs measurement.
 
-# Install custom mujoco_warp build (branch mark/autodifferentiation3)
-# This is a custom build with smooth contact autodiff, not upstream google-deepmind/mujoco_warp
-pip install -e /path/to/mujoco_warp
+The H16 trajectory-objective audit (ten random parameter sets, ten directions per block) passes
+native forward-output checks on muscle hopper but fails all 80 strict block/term derivative gates.
+A motor seed-0 check passes; a ten-state motor run stops on one forward mismatch before backward.
+These findings justify investigating derivative validity, not claims that muscle gaits cannot exist.
 
-# Install this package
-pip install -e .
+Environment construction checks the backend's model/data gradient contract. Contact experiments
+use Newton with dense Jacobians and supported geometry pairs. Do not bypass those checks to label
+an unsupported model differentiable.
+
+## MyoLeg26 reference and task
+
+The reference is MyoHub's `myolegs26` at
+[`eb327acbae0fad12279495040607f5235d962328`](https://github.com/MyoHub/myo_sim/tree/eb327acbae0fad12279495040607f5235d962328),
+built with its canonical `myo_sim.load_spec` API. Upstream labels this reduced model **beta**;
+the preceding 80-muscle MyoLeg section of its documentation describes a different model.
+The selected model has a passive torso without arms, a quaternion free root, 28 equality constraints
+and total mass 78.090468479 kg. The old asset remains at `assets/myoleg/myoLeg26_BASELINE.xml`.
+Its arms, root coordinates, EDL/FDL gains, offsets and old keyframes are not carried into the new task.
+
+`assets/myoleg26/reference.xml` preserves the official assembly and demo scene.
+`assets/myoleg26/flat_boxes.xml` defines a separate task: 14 massless boxes measured from the
+original collision surfaces, articulated calcaneus/toe bodies, one ground plane and no self-contact.
+Body masses/inertias are unchanged; tests also check joint, tendon and actuator invariants.
+The boxes are a conservative approximation, not validated anatomical contact surfaces.
+The task uses Euler/Newton/dense, 2 ms physics steps and disabled solver warmstart.
+A nominal reset aligns forward with world +X and sets 1 mm foot clearance; it is not an equilibrium.
+
+The `myoleg26-walk-v1` task targets **1.0 m/s without imitation**. Its 145-value observation includes
+world pelvis pose/velocities, joint coordinates/velocities, all 26 muscle activations and previous
+commands. Pure Torch kinematics are checked against native MuJoCo, including root quaternion and
+velocity frame conventions. A signed action maps to excitation `u=(clamp(a,-1,1)+1)/2`;
+passive is `a=-1`, while neutral policy output `a=0` gives 50% excitation.
+Reward integrates forward/lateral velocity tracking, upright/heading factors and a
+`0.01*mean(u**2)` effort penalty over the control period. This is command effort, not metabolic energy.
+Episodes distinguish failures from time limits; policies receive reset observations, and timeouts
+bootstrap from preserved final observations. Old MyoLeg checkpoints and returns require rebaselining.
+
+The default official environment refuses gradient training because the pinned backend's free-root
+and tendon derivatives have unresolved failures. `allow_unvalidated_gradients=True` is a diagnostic
+override, not a training recipe. Primitive contact support alone does not validate those gradients.
+The legacy mesh asset still has its separate MULTICCD/margin import and mesh-derivative blockers.
+
+To reproduce assets from a clean checkout at the exact source pin, use a **new** output directory:
+
+```powershell
+.venv/Scripts/python.exe scripts/build_myoleg26_assets.py --source logs/upstream_myo_sim_20260912 --out logs/myoleg26_rebuild
+.venv/Scripts/python.exe scripts/check_myoleg26_task.py --out logs/myoleg26_task_check.json
 ```
 
-## Usage
+The checked-in manifest records source, builder and asset hashes plus all task overrides.
+The diagnostic compares full native/Warp state at 1/4/16 physics steps and measures passive,
+neutral and random-action first episodes. Ten sampled seeds pass the bounded forward gate;
+this does not establish long-horizon engine equivalence or learned gait.
+`configs/experiments/myoleg26_ppo.yaml` is a forward-policy feasibility baseline.
+`configs/myoleg26_shac.yaml` uses the same task but remains blocked pending derivative validation.
 
-### Train
+Validation includes 297 CPU unit tests and 58 GPU tests (three known backend expected failures).
+Sixteen passive, neutral and random-action episodes per condition all fail before four seconds.
+The PPO update/checkpoint test and a two-epoch run of the configured 64-actor baseline complete;
+neither is evidence of a learned gait or accelerated training.
 
-```bash
-# CartPole (validation, ~160 epochs to converge)
-python scripts/train.py --cfg configs/cartpole_shac.yaml --logdir logs/cartpole
+### Frozen five-seed baseline and derivative gates
 
-# Ant (locomotion, currently requires ~2000+ epochs)
-python scripts/train.py --cfg configs/ant_shac.yaml --logdir logs/ant
+`configs/experiments/myoleg26_baseline_v1.json` freezes the task, source/model hashes,
+backend/packages and five PPO seeds at 1,048,576 training control transitions each.
+All five completed: 5,242,880 training controls / 20,971,520 physics steps, plus
+77,712 evaluation controls / 310,848 physics steps. Inclusive batch wall time was
+3,905.04 s (65.08 min) on the RTX 4060 Laptop; training loops used 3,710.44 s and
+evaluation 168.92 s. Kernel caches were populated; brief CPU review/test activity
+occurred while the GPU was reserved for this batch. This is application wall time.
 
-# Ant with FD Jacobian backward (larger gradients, slower per step)
-python scripts/train.py --cfg configs/ant_shac_fd.yaml --logdir logs/ant_fd
+No scheduled checkpoint met the four-second walking gate; selected-checkpoint
+confirmation had 0/160 survivors across five seeds. Mean episode duration was
+0.708 s and mean forward velocity -0.381 m/s. Selected epochs were 0/0/0/0/96.
+The preregistered ranking ignores subthreshold survival duration when all survival
+fractions are zero; its pre-failure speed error can favor an earlier fall. Preserve
+this result, but address that selection limitation in a separately frozen protocol.
+These results reject this bounded recipe as a successful walking baseline, not
+PPO or the model as unlearnable. They cannot establish time-to-gait acceleration.
 
-# MyoLeg26 (musculoskeletal gait)
-python scripts/train.py --cfg configs/myoleg26_shac.yaml --logdir logs/myoleg26
+The selector captured 50 episode states from all five selected policies:
+27 double-support, 11 left-support and 12 right-support. Forty states therefore
+come from initially random actors. Shared reset/noise IDs create clustered data;
+there are 15 distinct reset IDs in this sample, not 50 IID initializations.
+The local checker compares actions, free-root/internal position tangents,
+velocities and activations against native float64 finite differences, with
+forward, epsilon-window, sanitizer and coverage prerequisites.
+
+In this run 65/100 forward cases exceeded the preregistered derivative-check
+tolerance (20/50 at one control step, 45/50 at four). This tolerance uses
+absolute 1e-4 for joint velocities, stricter than the prior task smoke's 1e-3;
+small constrained-joint velocity differences dominate, not a demonstrated
+catastrophic simulation failure. The population FD/AD stage stopped before
+measurement, and complete-policy qualification remained blocked. A separate
+one-state GPU plumbing check found clipped adjoints; it is not population evidence.
+Three fresh native/direct-Warp/bridge replays of the worst normalized case also
+show the mismatch in direct Warp; the first direct/bridge trajectories are
+bitwise identical. Direct Warp varies across repetitions. The numerical cause
+remains unisolated, so the result cannot be assigned to bridge plumbing alone.
+The previous-action observation also has an unresolved detached path in SHAC.
+Do not promote the beta asset or primitive collision support to validated gradients.
+
+Reproduce the bounded run in a new directory:
+
+```powershell
+.venv/Scripts/python.exe scripts/run_myoleg26_baseline.py --frozen-manifest msk_warp/configs/experiments/myoleg26_baseline_v1.json --outdir logs/myoleg26_baseline_replay
 ```
 
-Optional arguments:
-- `--seed 42` to set random seed
-- `--device cuda:0` to select GPU
+`scripts/select_myoleg26_states.py` verifies the freeze and selected-checkpoint
+provenance before constructing an archive. `scripts/check_myoleg26_derivatives.py`
+consumes it; `scripts/check_myoleg26_policy_gradient.py` fails closed on missing
+local evidence or fewer than 30 distinct reset IDs. A positive policy report
+would qualify sampled parameter directions of the complete stochastic objective,
+not prove its full high-dimensional gradient. `scripts/summarize_myoleg26_baseline.py`
+retains all five seeds and separate costs. Local artifacts are in
+`logs/myoleg26_ppo_baseline_v1*`, `logs/myoleg26_visited_v1*`,
+`logs/myoleg26_derivatives_v1.json` and `logs/myoleg26_policy_gradient_v1.json`.
 
-Monitor training with TensorBoard:
-```bash
-tensorboard --logdir logs/ant/log
+## Verification and diagnostics
+
+```powershell
+.venv/Scripts/python.exe -m pytest tests/unit -q
+.venv/Scripts/python.exe -m pytest tests/gpu -q
+.venv/Scripts/python.exe -m pytest tests/slow --run-slow -q
+.venv/Scripts/python.exe scripts/policy_gradient_cosine.py --cfg configs/hopper_motor_shac.yaml --out logs/policy_gradient.json
+.venv/Scripts/python.exe scripts/check_trajopt_gradients.py --cfg configs/hopper_motor_shac.yaml --scales docs/research/phase4-capability/gait_motor_seed2.json --cycle 16 --samples 10 --directions 10 --auglag --out logs/trajopt_motor_gradient.json
 ```
 
-### Visualize
+GPU tests skip without CUDA; slow tests require `--run-slow` and can take substantial training time.
+The trajectory diagnostic performs no optimization: it checks control/initial-state directional
+derivatives against native float64 MuJoCo, with forward parity, epsilon checks and sanitizer reporting.
+Repeat with `configs/hopper_muscle_shac.yaml` and a separate output file for the muscle comparison.
+Its findings apply to the recorded sampled states. The scales argument above requires a local
+research artifact; a fresh clone does not contain it. The policy cosine script checks a deterministic
+initialized-policy objective, not stochastic gradients throughout training.
 
-```bash
-# Interactive MuJoCo viewer
-python scripts/visualize.py --policy logs/cartpole/best_policy.pt
-
-# Headless with stats only
-python scripts/visualize.py --policy logs/cartpole/best_policy.pt --no-render --episodes 10
-
-# Save rendered frames to disk
-python scripts/visualize.py --policy logs/cartpole/best_policy.pt --save-frames outputs/frames
-```
-
-### Verify Gradients
-
-```bash
-pytest tests/test_gradient.py -v
-```
-
-Runs 6 test variants covering CartPole and Ant: single-step AD vs float64 FD, network-in-loop gradient checks, tape-vs-FD comparison, and tape-per-substep vs tape-all consistency. Tolerance is <10% relative error (relaxed to 50% for contact-rich models).
-
-## Training Configuration
-
-Key hyperparameters (see `msk_warp/configs/` for full YAML files):
-
-**CartPole** (`cartpole_shac.yaml`):
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| num_actors | 64 | Parallel simulation worlds |
-| episode_length | 240 | Steps per episode (4 seconds at 60 Hz) |
-| steps_num | 32 | SHAC horizon (rollout length) |
-| max_epochs | 1000 | Training iterations |
-| actor_learning_rate | 1e-2 | With linear decay |
-| action_strength | 20.0 | Scales tanh output to motor force (N) |
-| substeps | 4 | Physics substeps per environment step |
-
-**Ant** (`ant_shac.yaml`):
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| num_actors | 64 | Parallel simulation worlds |
-| episode_length | 1000 | Steps per episode |
-| steps_num | 32 | SHAC horizon (rollout length) |
-| max_epochs | 2000 | Training iterations |
-| actor_learning_rate | 2e-3 | With linear decay |
-| action_strength | 1.0 | MJCF gear=200 provides final scaling |
-| substeps | 16 | More substeps for contact stability |
-| tape_per_substep | true | Per-substep taping with gradient chaining |
-| state_bptt | true | BPTT through state across steps |
-| state_grad_clip | 5.0 | Norm clip on state gradients at step boundaries |
-
-## How SHAC Works
-
-SHAC is a differentiable RL algorithm that backpropagates through the physics simulation to compute policy gradients directly, rather than using score-function estimators like PPO.
-
-Each training iteration:
-1. Roll out the actor for H=32 steps, accumulating discounted rewards
-2. Bootstrap terminal values with a target critic
-3. Backpropagate `actor_loss` through the reward/obs computation, through the simulation gradient bridge, all the way to the actor network parameters
-4. Update the actor with one Adam step (with gradient clipping)
-5. Train the critic on TD-lambda targets for 16 iterations
-
-The critic is trained separately using standard supervised regression (no simulation gradients needed). A target critic with EMA updates provides stable bootstrap values.
-
-## Known Issues
-
-### Ant training plateau (hard-contact gradient attenuation)
-
-Ant SHAC training plateaus at approximately -1300 episode loss. The ant survives full 1000-step episodes but stands still, collecting only the baseline standing reward without developing forward locomotion. DiffRL's reference implementation trains the same task to 3000-5000 reward within 2000 epochs.
-
-**Root cause:** MuJoCo's Newton constraint solver produces mathematically exact but very small contact gradients. The implicit differentiation backward pass divides gradients by the contact stiffness (compliance matrix), yielding d(reward)/d(ctrl) of roughly 0.004 per environment -- near the float32 noise floor. In contrast, DiffRL's dflex backend uses penalty-based soft contacts (ke=40,000) that amplify gradients by the spring constant, producing per-step gradients 100x larger with well-conditioned Jacobians.
-
-BPTT across 32 steps amplifies gradients ~100,000x (from ~0.001 to ~30-300 actor grad norm), which is enough to update the policy but too noisy through hard-contact dynamics to consistently push toward locomotion.
-
-**Experiments run:**
-
-| Variant | Result |
-|---------|--------|
-| Baseline (tape-per-substep, BPTT) | Slow improvement, -1388 at epoch 125 |
-| state_bptt=false | Actor grads ~0.001, no learning |
-| 5x forward_vel reward weight | Plateaued at -1346 (standing reward unaffected) |
-| Pure velocity reward (other weights=0) | Correct gradient direction, but 3mm/s after 50 epochs |
-| High LR (1e-2, grad_norm=5) | Faster start, earlier plateau at -1200 |
-| FD Jacobian backward | 50-100x larger gradients, slightly better early progress |
-| Softer contacts (solref=[0.05,1]) | Smaller gradients than hard contacts (opposite of dflex) |
-
-**Potential directions:**
-- Curriculum learning: start with short horizon, increase as policy improves
-- Hybrid approach: tape for state BPTT + FD for ctrl gradients within each step
-- Test gradient quality at dynamic states (mid-gait) rather than static standing
-- Damped training schedule (already partially implemented)
-
-### Tape-all mode broken for multi-substep models
-
-When multiple substeps are recorded under a single `wp.Tape()`, all substeps write to the same MuJoCo Warp `d.*` arrays. During `tape.backward()`, adjoint kernels for substep k read `.grad` arrays that contain accumulated contributions from later substeps, causing exponential gradient amplification (250,000x for ant with 16 substeps). The workaround is `tape_per_substep: true`, which tapes each substep individually. Fixing tape-all requires cloning intermediate arrays (qacc, qfrc_smooth, qfrc_actuator, etc.) per substep in the MuJoCo Warp source.
-
-### MyoLeg26 missing Newton solver config
-
-`myoLeg26_BASELINE.xml` currently lacks `solver="Newton" jacobian="dense"` in its `<option>` element. Contact gradients will be zero in tape mode until this is added. The Newton solver with dense Jacobian is required for implicit differentiation through the constraint solver.
-
-### Unsupported contact geometry types
-
-The custom MuJoCo Warp build only supports smooth contact autodifferentiation for a subset of geometry pairs:
-
-| Geometry Pair | Status |
-|---------------|--------|
-| Plane-Sphere, Plane-Capsule | Supported |
-| Sphere-Sphere, Sphere-Capsule | Supported |
-| Capsule-Capsule | Supported |
-| Box, Mesh, Convex, Ellipsoid, SDF | Not supported (zero gradients) |
-
-The ant model uses only supported geometry types. New environments with box or mesh collisions will get zero contact gradients through the tape-mode backward path. The FD Jacobian backward mode can be used as a fallback for these cases.
-
-## Changes from Reference DiffRL
-
-Key modifications from the [original DiffRL implementation](https://github.com/NVlabs/DiffRL) to work with MuJoCo Warp:
-
-**Gradient bridge (`bridge.py`):**
-- The custom MuJoCo Warp build provides full dynamics gradients through smooth contact autodifferentiation and Newton solver implicit differentiation, analogous to what dFlex provided natively in the original DiffRL. Three backward modes are available (tape-all, tape-per-substep, FD Jacobian), selectable via config flags.
-- State tensors (`qpos_in`, `qvel_in`) are now differentiable inputs to `WarpSimStep`, enabling gradient flow through the dynamics path across simulation steps.
-- FD backward uses norm-based gradient clipping (per environment) to preserve gradient direction while bounding magnitude across substeps, replacing the original per-element clamping.
-
-**State gradient threading (`shac.py`, `cartpole_swing_up.py`):**
-- `compute_actor_loss` tracks `qpos`/`qvel` as PyTorch tensors across the rollout, passing them through each `WarpSimStep` call. Resets are handled with gradient-safe masking (multiply by 0 for reset envs, detached reset state added back).
-- `env.step` accepts and returns state tensors. Obs is recomputed from the tracked state in the training loop rather than from Warp arrays, preserving the autograd graph for non-reset environments.
-
-**Hyperparameters (CartPole, `configs/cartpole_shac.yaml`):**
-- `ret_rms: false` (reference: False) -- return normalization causes an amplification feedback loop with SHAC's differentiable rollout
-- `cart_position_penalty: 0.05` (reference: 0.05) -- was 0.5 (10x too high), conflicts with swing-up
-- `cart_action_penalty: 0.0` (reference: 0.0) -- swing-up needs aggressive actions
-- `actor_learning_rate: 1e-2` (reference: 1e-2) -- was 2e-3 (too slow for SHAC with grad_norm=1.0)
-- Network units: `[64, 64]` (reference: [64, 64]) -- was [128, 64], overparameterized for cartpole
+`docs/` is entirely ignored at the owner's request, including the local validity ledger and research
+protocols. `logs/` and generated outputs are also ignored. Code, tests and commit messages provide the
+versioned record; preserve local research artifacts separately. Commit verified units independently.
 
 ## References
 
-- [DiffRL / SHAC paper](https://arxiv.org/abs/2204.07137): Xu et al., "Accelerated Policy Learning with Parallel Differentiable Simulation," ICLR 2022
-- [MuJoCo Warp](https://github.com/google-deepmind/mujoco_warp): GPU-accelerated differentiable MuJoCo via NVIDIA Warp
-- Custom MuJoCo Warp build (branch `mark/autodifferentiation3`): adds smooth contact autodiff, Newton solver implicit differentiation, and differentiable smooth dynamics kernels
-- [MuJoCo](https://mujoco.org/): Multi-Joint dynamics with Contact
+- [SHAC / Xu et al., ICLR 2022](https://arxiv.org/abs/2204.07137) and [DiffRL implementation](https://github.com/NVlabs/DiffRL).
+- [Suh et al., ICML 2022: Do Differentiable Simulators Give Better Policy Gradients?](https://proceedings.mlr.press/v162/suh22b.html)
+- [Adaptive Horizon Actor-Critic / Georgiev et al., 2024](https://arxiv.org/abs/2405.17784)
+- [MuJoCo Warp upstream](https://github.com/google-deepmind/mujoco_warp), [PR #1423](https://github.com/google-deepmind/mujoco_warp/pull/1423), and [differentiability roadmap](https://github.com/google-deepmind/mujoco_warp/issues/500).
 
-## License
-
-Apache 2.0
+Code license: Apache 2.0. Vendored MyoSim model attribution and applicable source notices are
+preserved in `msk_warp/assets/myoleg26/SOURCE_NOTICES.txt` and `LICENSE.upstream`;
+upstream identifies the reduced-leg model lineage as CC-BY 3.0.

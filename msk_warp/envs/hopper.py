@@ -35,11 +35,14 @@ is both part of the observation and the carrier of the whole control gradient.
 import math
 
 import mujoco_warp as mjw
+import numpy as np
 import torch
 import warp as wp
 
+from msk_warp import resolve_model_path
 from msk_warp.bridge import WarpSimStep
 from msk_warp.envs.base_env import MjWarpEnv
+from msk_warp.utils.gait import periodicity_residual
 
 
 class HopperBaseEnv(MjWarpEnv):
@@ -50,6 +53,9 @@ class HopperBaseEnv(MjWarpEnv):
 
     #: Whether the activation state is appended to the observation. Set by subclasses.
     obs_includes_act = False
+
+    #: Extra observation columns a subclass appends after the state (e.g. a gait phase).
+    num_extra_obs = 0
 
     def __init__(
         self,
@@ -75,6 +81,7 @@ class HopperBaseEnv(MjWarpEnv):
         num_obs = (self.num_joint_q - 1) + self.num_joint_qd
         if self.obs_includes_act:
             num_obs += num_act
+        num_obs += self.num_extra_obs
 
         super().__init__(
             num_envs=num_envs,
@@ -184,6 +191,9 @@ class HopperBaseEnv(MjWarpEnv):
         """The action that maps to zero control, i.e. zero torque or zero activation."""
         return torch.zeros(self.num_envs, self.num_actions, device=self.device)
 
+    def _advance_phase(self):
+        """Hook for phase-indexed subclasses; no phase exists in the base environment."""
+
     # ------------------------------------------------------------ stepping
 
     def step(self, actions, qpos_in=None, qvel_in=None, act_in=None):
@@ -196,6 +206,11 @@ class HopperBaseEnv(MjWarpEnv):
         self.actions = actions.detach().clone()
 
         ctrl = self._to_ctrl(actions)
+
+        # The policy has acted on the state at the current phase; everything computed below
+        # describes the state one step later, so the phase advances here, before the observation
+        # and reward are formed. A base env has no phase and this is a no-op.
+        self._advance_phase()
 
         if self.no_grad:
             wp.copy(self.warp_data.ctrl, wp.from_torch(ctrl.detach().contiguous()))
@@ -342,3 +357,138 @@ class HopperMuscleEnv(HopperBaseEnv):
     def passive_action(self):
         """Zero activation sits at the bottom of the action range, not at its centre."""
         return -torch.ones(self.num_envs, self.num_actions, device=self.device)
+
+
+class HopperMuscleTrackEnv(HopperMuscleEnv):
+    """Muscle hopper rewarded for tracking a reference gait cycle, phase by phase.
+
+    Phase 3 failed this model under seven reward, optimiser and actuator settings, and the reason
+    was a reward landscape with two attractors: standing collected 98.7% of the return, and
+    whenever the hopper could move the nearest optimum was a lunge. Phase 4 then found a forward
+    periodic trajectory by trajectory optimisation, which says the landscape rather than the
+    model's capability is what blocked the optimisers.
+
+    A tracking reward removes both attractors at once, because neither standing nor diving
+    resembles the reference. It is the pre-registered response to Phase 4's pass.
+
+    Three choices, each with a reason:
+
+    * **Only the mechanical state is tracked** (``qpos[1:]`` and ``qvel``, the same 11-component
+      ruler Phase 4 scored on). The reference's *activation* does not close over the cycle -- the
+      knee antagonists effectively swap, with per-muscle closing errors up to 0.886 -- so a
+      phase-indexed activation target would demand a jump at the phase wrap that no muscle can
+      follow, at exactly the deactivation limit Phase 3 measured. Activation is left to the policy,
+      which is also what kinematic imitation methods do.
+    * **The phase is in the observation**, as ``(sin, cos)``. Without it the policy would have to
+      infer where in the cycle it is, and Phase 3 noted the observation carries no clock while the
+      plant needs about six steps of anticipation.
+    * **Episodes start on the reference orbit at a random phase.** The rest pose is not on the
+      orbit, so from there a policy must solve a transient before it can track anything. The cost
+      is that the return is no longer comparable with Phase 3's numbers; velocity and fall rate,
+      which are the gate, still are.
+    """
+
+    #: ``(sin, cos)`` of the gait phase.
+    num_extra_obs = 2
+
+    #: Number of leading observation columns forming the mechanical shape vector.
+    shape_dims = 11
+
+    def __init__(
+        self,
+        reference_path='assets/references/hopper_muscle_T16_gait.npz',
+        track_sharpness=2.0,
+        task_weight=0.0,
+        reset_state_noise=0.02,
+        num_envs=64,
+        device='cuda:0',
+        **kwargs,
+    ):
+        reference = np.load(resolve_model_path(reference_path))
+        self.reference_path = reference_path
+        self.cycle = int(reference['cycle'])
+        self.track_sharpness = float(track_sharpness)
+        self.task_weight = float(task_weight)
+        self.reset_state_noise = float(reset_state_noise)
+
+        to_torch = lambda a: torch.tensor(a, dtype=torch.float32, device=device)  # noqa: E731
+        self.ref_qpos = to_torch(reference['qpos'])
+        self.ref_qvel = to_torch(reference['qvel'])
+        self.ref_act = to_torch(reference['act'])
+        # x is excluded because a gait translates; this is the ruler Phase 4's residual used, and
+        # it travels with the asset so the environment does not carry a magic constant.
+        self.ref_shape = torch.cat([self.ref_qpos[:, 1:], self.ref_qvel], dim=-1)
+        self.track_scales = to_torch(reference['shape_scales'])
+        if self.ref_shape.shape[-1] != self.shape_dims or self.track_scales.shape[-1] != self.shape_dims:
+            raise ValueError(
+                f"reference {reference_path} has a {self.ref_shape.shape[-1]}-component shape and "
+                f"{self.track_scales.shape[-1]} scales; this env tracks {self.shape_dims}"
+            )
+
+        self.phase_buf = torch.zeros(num_envs, dtype=torch.long, device=device)
+        angle = 2.0 * math.pi * torch.arange(self.cycle, device=device, dtype=torch.float32) / self.cycle
+        self.phase_features = torch.stack([torch.sin(angle), torch.cos(angle)], dim=-1)
+
+        super().__init__(num_envs=num_envs, device=device, **kwargs)
+
+    # ------------------------------------------------------------ phase and observation
+
+    def _advance_phase(self):
+        self.phase_buf = (self.phase_buf + 1) % self.cycle
+
+    def compute_obs(self, qpos, qvel, act=None):
+        base = self._compute_obs(qpos, qvel, act if self.obs_includes_act else None)
+        return torch.cat([base, self.phase_features[self.phase_buf]], dim=-1)
+
+    # ------------------------------------------------------------ reward
+
+    def tracking_error(self, obs):
+        """Scaled RMS distance from the reference at each world's current phase.
+
+        The mechanical shape vector is the leading ``shape_dims`` observation columns by
+        construction (``qpos[1:]`` then ``qvel``), so this reads straight off the observation and
+        stays differentiable for SHAC.
+        """
+        return periodicity_residual(
+            obs[:, :self.shape_dims], self.ref_shape[self.phase_buf], self.track_scales,
+        )
+
+    def _reward(self, obs, actions, ctrl):
+        reward = torch.exp(-self.track_sharpness * self.tracking_error(obs))
+        if self.task_weight != 0.0:
+            reward = reward + self.task_weight * super()._reward(obs, actions, ctrl)
+        return reward
+
+    # ------------------------------------------------------------ reset
+
+    def _reset_warp_state(self, env_ids):
+        """Reference-state initialisation: begin on the orbit at a random phase."""
+        with torch.no_grad():
+            n = len(env_ids)
+            if self.stochastic_init:
+                phase = torch.randint(self.cycle, (n,), device=self.device)
+            else:
+                phase = torch.zeros(n, dtype=torch.long, device=self.device)
+            self.phase_buf[env_ids] = phase
+
+            qpos_torch = wp.to_torch(self.warp_data.qpos)
+            qvel_torch = wp.to_torch(self.warp_data.qvel)
+            qpos_torch[env_ids, :] = self.ref_qpos[phase]
+            qpos_torch[env_ids, 0] = 0.0  # every world starts at the track origin
+            qvel_torch[env_ids, :] = self.ref_qvel[phase]
+
+            if self.stochastic_init and self.reset_state_noise > 0.0:
+                spread = self.reset_state_noise
+                qpos_torch[env_ids, 1:] += spread * (
+                    torch.rand(n, self.num_joint_q - 1, device=self.device) - 0.5) * 2.0
+                qvel_torch[env_ids, :] += spread * (
+                    torch.rand(n, self.num_joint_qd, device=self.device) - 0.5) * 2.0
+
+            # Reference-state initialisation includes the actuator state; only the tracking
+            # *target* excludes activation.
+            if self.has_act:
+                wp.to_torch(self.warp_data.act)[env_ids, :] = self.ref_act[phase]
+
+            self.actions[env_ids, :] = 0.0
+
+        self.progress_buf[env_ids] = 0

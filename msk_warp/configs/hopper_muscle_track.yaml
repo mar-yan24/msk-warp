@@ -1,0 +1,74 @@
+# Muscle hopper trained to track the Phase 4 reference gait, phase by phase.
+#
+# Phase 3 failed this model under seven reward, optimiser and actuator settings, always landing in
+# standing or diving. Phase 4 then found a forward periodic trajectory at a 16-step cycle by
+# trajectory optimisation, which says the reward landscape rather than the model's capability was
+# the blocker. A tracking reward removes both attractors: measured on the environment itself,
+# following the reference scores 1.000 per step while standing and collapsing both score below 0.2
+# (tests/gpu/test_hopper_track.py).
+#
+# Deviations from hopper_muscle_shac.yaml, all operational rather than scientific:
+#   num_actors 256 rather than 512  -- this machine sits near its commit limit and 512-world runs
+#                                      were killed mid-flight several times.
+#   lr_schedule constant            -- training has to be staged across short processes for the
+#                                      same reason, and a linear schedule would restart each stage.
+#   save_interval 25                -- so an interrupted run loses at most 25 epochs.
+# Everything else matches Phase 3 so the reward is the only scientific change.
+params:
+  general:
+    seed: 0
+    device: cuda:0
+    logdir: logs/phase4/track_seed0
+
+  env:
+    name: HopperMuscleTrack
+    model_path: assets/hopper_muscle.xml
+    reference_path: assets/references/hopper_muscle_T16_gait.npz
+    num_actors: 256
+    episode_length: 1000
+    stochastic_init: true
+    substeps: 4
+    action_strength: 1.0
+    early_termination: true
+    backward_mode: tape_per_substep
+    # exp(-2 * error): 1.000 on the reference, 0.53 at the reference's own closing error of 0.317.
+    track_sharpness: 2.0
+    # Pure tracking first. The task reward is available but off, so this run tests one thing.
+    task_weight: 0.0
+    reset_state_noise: 0.02
+
+  network:
+    actor: ActorStochasticMLP
+    actor_mlp:
+      units: [128, 64, 32]
+      activation: elu
+    critic: CriticMLP
+    critic_mlp:
+      units: [64, 64]
+      activation: elu
+
+  config:
+    name: hopper_muscle_track
+    gamma: 0.99
+    steps_num: 32
+    max_epochs: 500
+    actor_learning_rate: 2e-3
+    critic_learning_rate: 2e-4
+    lr_schedule: constant
+    betas: [0.7, 0.95]
+    target_critic_alpha: 0.2
+    obs_rms: true
+    ret_rms: false
+    critic_iterations: 16
+    critic_method: td-lambda
+    lambda: 0.95
+    num_batch: 4
+    num_actors: 256
+    truncate_grads: true
+    grad_norm: 1.0
+    state_bptt: true
+    state_grad_clip: 0.0
+    state_grad_decay: 0.0
+    save_interval: 25
+    eval_interval: 50
+    eval_episodes: 16
