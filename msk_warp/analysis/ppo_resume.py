@@ -55,6 +55,13 @@ Captured and restored:
   qacc_warmstart, time``, each at **its own backing dtype and shape as read**
   (never through ``obs``/``start_*`` proxies, never hard-coded to 32 or 64 bit),
   re-asserted on restore;
+* the derived solver scratch ``qacc`` and ``act_dot``, held in a **separate**
+  ``derived`` section (``WARP_DERIVED_FIELDS``; a CPU adapter declares its own
+  through ``RESUME_PLAIN_DERIVED_FIELDS``) rather than in ``WARP_STATE_FIELDS``,
+  because the environment never writes them: ``_reset_warp_state``
+  (``myoleg26_walk.py:553-579``) writes only the six inputs above, and the
+  backend owns these two. Preserved at their own backing dtype and shape, and
+  asserted **bitwise** on restore;
 * all four RNG streams. CUDA RNG is read **only** when CUDA is already
   initialised (``torch.cuda.is_initialized()``, the ``isolated_rng`` precedent),
   so a CPU run never initialises a device just to record an unused stream.
@@ -84,23 +91,58 @@ Refused rather than silently approximated (fail closed at capture):
 * an unsupported integrator;
 * nonfinite learned or physical state.
 
-Omitted as derived, with the pinned-backend reason (report §state inventory):
+Previously omitted as derived — that claim is WITHDRAWN (2026-09-15)
+-------------------------------------------------------------------
+An earlier version of this schema omitted ``qacc`` and ``act_dot``. The argument
+was a single static reading of the pinned backend (``solver.py:1568``/``:1570``
+overwrite ``qacc`` at solve init; ``forward.py:1030`` assigns ``act_dot`` for
+every actuator each substep, and for ``DynType.MUSCLE`` it is a pure function of
+``(ctrl, act, dynprm)``, ``:930-933``), and the empirical case rested on a GPU
+test that required two **independent** physics runs to agree bitwise. That test
+**failed** in the full GPU suite on ``7bd388da…`` after passing in isolation,
+and a preregistered 24-trial diagnostic then showed the instrument itself was
+confounded: six *unperturbed* control repeats alone split across two post-step
+``qvel`` values, one entry apart by one float32 ULP.
 
-* ``qacc`` — overwritten unconditionally at solve init
-  (``solver.py:1568``/``:1570``) before any read;
-* ``act_dot`` — assigned for every actuator each substep
-  (``forward.py:1030``); for ``DynType.MUSCLE`` it is a pure function of
-  ``(ctrl, act, dynprm)`` (``:930-933``);
-* ``qacc_warmstart`` is nevertheless **captured and restored**: it is written
-  every step from ``d.qacc`` (``forward.py:386-394``) and read only when
-  warm-start is enabled (``solver.py:4034`` -> ``:1568``), which is asserted off.
+The failed result stands exactly as recorded — it is not relabelled a pass, not
+xfailed, and no tolerance was introduced anywhere. What is withdrawn is the
+*claim* that the omission was qualified. Both fields are therefore captured and
+restored, and the tests assert exact **restore fidelity**, which is a property
+of this helper and does not depend on the simulator reproducing a step. Two more
+small arrays of state and I/O are the cost. This is **not** a causal explanation
+of that failure, and it does **not** make continued trajectories reproducible:
+continued-trajectory equivalence remains **UNVALIDATED**.
 
-Every other derived Data field (kinematics, ``qfrc_*``, ``sensordata``,
-``energy``, contact/``efc``/solver scratch) is omitted **without** a per-field
-source proof. Their irrelevance is an empirical claim enforced by the GPU
-round-trip and derived-field perturbation controls in
-``tests/gpu/test_myoleg26_ppo_resume.py``. Until those run, faithful
-continuation on the real simulator is **unvalidated**.
+``qacc_warmstart`` stays with the env-written inputs: it is written every step
+from ``d.qacc`` (``forward.py:386-394``) and read only when warm-start is
+enabled (``solver.py:4034`` -> ``:1568``), which capture asserts off.
+
+The global claim is withdrawn too
+---------------------------------
+The version at ``7bd388da…`` cited that one perturbation test as the empirical
+enforcement for **every** other omitted derived field. That is withdrawn as
+well: the test only ever perturbed ``qacc`` and ``act_dot``, it never touched
+any other field, and its instrument is now known to be confounded. **No
+untested field inherits validation from it.**
+
+So every other derived Data field — kinematics, ``qfrc_*``, ``sensordata``,
+``energy``, ``qLD``/factorisation caches, contact/``efc``/solver scratch and the
+solver counters — is omitted with **neither a per-field source argument nor any
+empirical control**, and none may be cited as validated. What is retained, with
+its sources, is narrower and different in kind:
+
+* the **static write-before-read reading** above, which covers ``qacc`` and
+  ``act_dot`` only, and is a code-path argument on one reading of one pinned
+  commit — not a measurement, and not a statement about kernel reproducibility;
+* the **model-option assertions** enforced at capture (``_assert_model_contract``
+  and ``_reject_external_inputs``): warm-start disabled, a supported integrator,
+  ``nhistory``/``nplugin``/``nuserdata``/``nmocap`` zero, no ``mjDYN_USER``
+  actuator, zero ``qfrc_applied``/``xfrc_applied``, and the ``eq_active``
+  invariant. These bound **which** dynamic inputs can exist at all; they are
+  refusals, not evidence that an omitted array is irrelevant.
+
+Faithful continuation on the real simulator therefore remains **unvalidated**,
+and continued-trajectory numerical equivalence stays **UNVALIDATED**.
 """
 
 from __future__ import annotations
@@ -122,7 +164,13 @@ import torch
 
 import msk_warp
 
-SCHEMA_VERSION = "myoleg26-ppo-resume-v1"
+# Bumped from ``…-v1`` when ``qacc``/``act_dot`` became **required** captured
+# state. A ``-v1`` payload genuinely lacks required fields, so it is refused
+# outright (``read_segment``/``restore_state`` both compare this string) rather
+# than migrated or completed with defaults. No segment of the previous version
+# exists outside test temporary directories, and no science artifact uses this
+# schema, so there is nothing to migrate and nothing historical is rewritten.
+SCHEMA_VERSION = "myoleg26-ppo-resume-v2"
 
 ROOT = Path(msk_warp.PACKAGE_ROOT).resolve().parent
 
@@ -141,6 +189,15 @@ ENV_LAZY_BUFFERS = ("obs_buf_before_reset",)
 # The persistent integration inputs the env itself writes
 # (``myoleg26_walk.py:553-579``); dtypes are read from the arrays, not assumed.
 WARP_STATE_FIELDS = ("qpos", "qvel", "act", "ctrl", "qacc_warmstart", "time")
+# Derived solver scratch the env never writes (the backend does), preserved in a
+# section of its own so WARP_STATE_FIELDS keeps meaning "env-written inputs".
+# Required, not optional: see the withdrawn-omission note in the module
+# docstring. Dtypes and shapes are read from the backing arrays, never from an
+# ``obs``/``start_*`` proxy and never hard-coded.
+WARP_DERIVED_FIELDS = ("qacc", "act_dot")
+# A CPU adapter declares its own derived section under this attribute, exactly
+# as it declares its integration inputs under RESUME_PLAIN_STATE_FIELDS.
+PLAIN_DERIVED_FIELDS_ATTR = "RESUME_PLAIN_DERIVED_FIELDS"
 # Persistent solver inputs the env never writes: captured and required equal.
 WARP_INVARIANT_FIELDS = ("eq_active",)
 # Dynamic external inputs this schema does not model: required zero.
@@ -537,7 +594,13 @@ def _env_kind(env) -> str:
 
 
 def _assert_model_contract(env) -> dict:
-    """Model-option assertions that make the omitted derived fields defensible."""
+    """Model-option refusals that bound which dynamic inputs can exist.
+
+    These are gates, not evidence: they establish that no external force, plugin,
+    history, mocap, userdata or ``mjDYN_USER`` input is live and that warm-start
+    is off, which is what the schema's *scope* relies on. They do **not**
+    validate any omitted derived array — see the module docstring.
+    """
     import mujoco
 
     mjm = env.mjm
@@ -617,6 +680,39 @@ def _reject_external_inputs(data) -> None:
                 "segment schema does not model")
 
 
+def _derived_names(env, kind) -> tuple:
+    """The declared derived section for this environment protocol."""
+    if kind == "warp":
+        return WARP_DERIVED_FIELDS
+    return tuple(getattr(env, PLAIN_DERIVED_FIELDS_ATTR, ()) or ())
+
+
+def _derived_view(env, kind, name):
+    """A live, aliasing view of one derived field, or ``None`` when absent."""
+    if kind == "warp":
+        return _warp_view(env.warp_data, name)
+    return getattr(env, name, None)
+
+
+def _capture_derived(env, kind) -> dict:
+    """Preserve the derived scratch by value, with its own dtype and shape.
+
+    Refuses rather than publishing a partial section: a declared field that the
+    environment does not expose would otherwise be silently dropped and then
+    silently defaulted on restore.
+    """
+    out = {}
+    for name in _derived_names(env, kind):
+        view = _derived_view(env, kind, name)
+        if view is None:
+            raise ResumeValidationError(
+                f"declared derived field {name!r} is missing on the environment; the "
+                "preserved-scratch section must never be published incomplete")
+        _require_finite(f"derived.{name}", view)
+        out[name] = {"values": _copy_tensor(view), **_describe(view)}
+    return out
+
+
 def _capture_env(env) -> dict:
     kind = _env_kind(env)
     buffers = {}
@@ -652,6 +748,10 @@ def _capture_env(env) -> dict:
             _require_finite(f"env.{name}", tensor)
             plain[name] = _copy_tensor(tensor)
         record["plain"] = plain
+    # Read after the kind-specific capture: ``_capture_warp`` has already called
+    # ``wp.synchronize()`` and nothing has run in between, so this view is
+    # coherent with the six inputs recorded above.
+    record["derived"] = _capture_derived(env, kind)
     return record
 
 
@@ -948,6 +1048,55 @@ def _validate_algo(state, algo, problems) -> None:
            f"{(int(algo.num_envs), int(algo.num_obs))}")
 
 
+def _validate_derived(record: Mapping[str, Any], env, kind, problems) -> None:
+    """Gate the preserved-scratch section before anything is written.
+
+    Fail closed on a missing section, a missing or unexpected field, a payload
+    that is not a tensor, a dtype or shape that disagrees with the target's own
+    backing array (or with the record's own declaration), or a nonfinite stored
+    value. Nothing is ever defaulted or zero-filled: a payload that cannot supply
+    a required field is refused, which is also how a previous-schema segment is
+    handled — by refusal, not migration.
+    """
+    captured = record.get("derived")
+    expected = _derived_names(env, kind)
+    if not isinstance(captured, Mapping):
+        problems.append(
+            f"env.derived: the segment carries no preserved-scratch section, so the "
+            f"required fields {sorted(expected)} would be silently defaulted; a payload "
+            f"older than {SCHEMA_VERSION} is refused, never migrated")
+        return
+    if set(captured) != set(expected):
+        problems.append(
+            f"env.derived: segment records {sorted(captured)} but the target declares "
+            f"{sorted(expected)}")
+    for name in sorted(set(captured) & set(expected)):
+        field = captured[name]
+        values = field.get("values") if isinstance(field, Mapping) else None
+        if not torch.is_tensor(values):
+            problems.append(f"env.derived.{name}: payload carries no tensor")
+            continue
+        view = _derived_view(env, kind, name)
+        if view is None:
+            problems.append(f"env.derived.{name}: missing on target")
+            continue
+        target_shape = tuple(int(dim) for dim in view.shape)
+        _check(problems, field.get("dtype") == str(view.dtype),
+               f"env.derived.{name}: recorded dtype {field.get('dtype')} does not match "
+               f"the target backing array {view.dtype}")
+        _check(problems, str(values.dtype) == field.get("dtype"),
+               f"env.derived.{name}: payload dtype {values.dtype} does not match the "
+               f"recorded dtype {field.get('dtype')}")
+        _check(problems, tuple(field.get("shape", ())) == target_shape,
+               f"env.derived.{name}: recorded shape {tuple(field.get('shape', ()))} does "
+               f"not match the target backing array {target_shape}")
+        _check(problems, tuple(values.shape) == target_shape,
+               f"env.derived.{name}: payload shape {tuple(values.shape)} does not match "
+               f"the target backing array {target_shape}")
+        if values.is_floating_point() and not torch.isfinite(values).all():
+            problems.append(f"env.derived.{name}: nonfinite values in the stored payload")
+
+
 def _validate_env(state, env, problems) -> None:
     record = state.env
     try:
@@ -983,6 +1132,7 @@ def _validate_env(state, env, problems) -> None:
             problems.append(f"env.{name}: missing on target")
     if kind != record["kind"]:
         return
+    _validate_derived(record, env, kind, problems)
     if kind == "plain":
         for name, tensor in record["plain"].items():
             target = getattr(env, name, None)
@@ -1116,10 +1266,12 @@ def _restore_env(record: Mapping[str, Any], env) -> None:
         # buffer in place would silently import foreign state.
         if hasattr(env, name):
             delattr(env, name)
-    if record["kind"] == "plain":
+    kind = record["kind"]
+    if kind == "plain":
         for name, tensor in record["plain"].items():
             target = getattr(env, name)
             target.copy_(tensor.to(device=target.device))
+        _restore_derived(record, env, kind)
         return
     import warp as wp
 
@@ -1129,7 +1281,17 @@ def _restore_env(record: Mapping[str, Any], env) -> None:
         # Validation already proved dtype and shape equality, so this copy
         # never casts the backing array.
         view.copy_(field["values"].to(device=view.device))
+    _restore_derived(record, env, kind)
     wp.synchronize()
+
+
+def _restore_derived(record: Mapping[str, Any], env, kind) -> None:
+    """Write the preserved scratch back in place, byte for byte."""
+    for name, field in record["derived"].items():
+        view = _derived_view(env, kind, name)
+        # Validation already compared dtype and shape against this very view, so
+        # the copy never casts and never rebinds the backing array.
+        view.copy_(field["values"].to(device=view.device))
 
 
 # ----------------------------------------------------------------------

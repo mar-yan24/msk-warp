@@ -9,15 +9,29 @@ a restored segment is the same training state on the pinned Warp backend:
   critic, both optimizers, the normaliser including its count, both meters
   including ``current_size``, every counter, history list and rollout buffer,
   every env torch buffer including the lazily created ``obs_buf_before_reset``,
-  all six integration inputs and the ``eq_active`` invariant — into a target that
-  has only been reset, never stepped (the shape that exposed review defect D1);
+  all six integration inputs, **both preserved derived fields** (``qacc``,
+  ``act_dot``) and the ``eq_active`` invariant — into a target that has only been
+  reset, never stepped (the shape that exposed review defect D1);
 * the RNG streams, including CUDA, are restored, and the **next sampled**
   pre-tanh action is bitwise identical;
 * identity gates (recipe, compiled model, lineage via ``strict_expect``) refuse
   before the target is mutated;
 * the CUDA RNG omission control lives here, not on CPU;
-* the derived Data scratch fields this schema omits are shown not to change the
-  next step — the only empirical enforcement of that omission.
+* the preserved derived scratch is restored **exactly** onto a fresh and onto an
+  already-mutated target.
+
+That last item replaces a withdrawn test. The earlier
+``test_omitted_derived_scratch_fields_do_not_change_the_next_step`` asserted
+that two **independent** physics runs agree bitwise after perturbing ``qacc`` and
+``act_dot``. It failed in the full GPU suite on ``7bd388da…`` (``AssertionError:
+qvel``) after passing in isolation, and the preregistered 24-trial diagnostic
+showed its premise was unsound: six *unperturbed* control repeats alone split
+across two post-step ``qvel`` values, one entry apart by one float32 ULP. That
+failure stands as recorded — not relabelled a pass, not xfailed, no tolerance
+added. Only the *claim* that omitting the two fields was qualified is withdrawn:
+they are now captured and restored, and what is asserted here is exact restore
+fidelity, which does not depend on the simulator reproducing a step.
+**Continued-trajectory numerical equivalence stays UNVALIDATED.**
 
 Nothing here trains: two tiny epochs at ``num_actors=2`` are plumbing, charged
 to test accounting, not to the training or diagnostic budgets.
@@ -73,10 +87,19 @@ def _next_sampled_action(algo):
     return pre_tanh.clone(), mu.clone(), std.clone()
 
 
-def _warp_fields(env):
+def _warp_arrays(env, names):
     wp.synchronize()
-    return {name: wp.to_torch(getattr(env.warp_data, name)).clone()
-            for name in ppo_resume.WARP_STATE_FIELDS}
+    return {name: wp.to_torch(getattr(env.warp_data, name)).clone() for name in names}
+
+
+def _warp_fields(env):
+    """The six env-written integration inputs."""
+    return _warp_arrays(env, ppo_resume.WARP_STATE_FIELDS)
+
+
+def _warp_derived(env):
+    """The preserved derived scratch, read from its own backing arrays."""
+    return _warp_arrays(env, ppo_resume.WARP_DERIVED_FIELDS)
 
 
 def _full_state(algo, env):
@@ -85,8 +108,9 @@ def _full_state(algo, env):
     Actor *and* critic, both optimizers in full, the normaliser including its
     count, both meters including ``current_size``, all counters and history,
     every rollout buffer, every env torch buffer (incl. the lazily created
-    ``obs_buf_before_reset``), all six captured integration inputs, the
-    ``eq_active`` invariant, and both RNG streams.
+    ``obs_buf_before_reset``), all six captured integration inputs, **both
+    preserved derived fields**, the ``eq_active`` invariant, and both RNG
+    streams.
     """
     out = {}
     for label, module in (("actor", algo.actor), ("critic", algo.critic)):
@@ -126,6 +150,8 @@ def _full_state(algo, env):
         value = getattr(env, name, None)
         out[f"env.{name}"] = None if value is None else value.detach().clone()
     for name, tensor in _warp_fields(env).items():
+        out[f"warp.{name}"] = tensor
+    for name, tensor in _warp_derived(env).items():
         out[f"warp.{name}"] = tensor
     for name in ppo_resume.WARP_INVARIANT_FIELDS:
         array = getattr(env.warp_data, name, None)
@@ -171,22 +197,33 @@ def origin(tmp_path):
 def test_captured_dtypes_are_the_actual_backing_array_dtypes(origin):
     """Addendum 1: record what the arrays actually declare; never cast to a claim."""
     state = ppo_resume.capture_state(origin, origin.env, _extra(), epoch=0)
-    fields = state.env["warp"]["fields"]
     observed = {}
-    for name in ppo_resume.WARP_STATE_FIELDS:
-        view = wp.to_torch(getattr(origin.env.warp_data, name))
-        observed[name] = str(view.dtype)
-        assert fields[name]["dtype"] == str(view.dtype)
-        assert tuple(fields[name]["shape"]) == tuple(view.shape)
-        assert fields[name]["values"].dtype == view.dtype
-    # The addendum's declaration is float32 for all six. A different runtime
-    # dtype is a finding to report, not something to cast away.
+    # The derived section is recorded separately from the env-written inputs, and
+    # both are read from their own backing arrays — never through a proxy.
+    for section, names in ((state.env["warp"]["fields"], ppo_resume.WARP_STATE_FIELDS),
+                           (state.env["derived"], ppo_resume.WARP_DERIVED_FIELDS)):
+        assert set(section) == set(names)
+        for name in names:
+            view = wp.to_torch(getattr(origin.env.warp_data, name))
+            observed[name] = str(view.dtype)
+            assert section[name]["dtype"] == str(view.dtype)
+            assert tuple(section[name]["shape"]) == tuple(view.shape)
+            assert section[name]["values"].dtype == view.dtype
+    # The addendum's declaration is float32 for all six inputs; the two derived
+    # arrays are declared the same way (``types.py`` bare ``float``). A different
+    # runtime dtype is a finding to report, not something to cast away.
     assert set(observed.values()) == {"torch.float32"}, observed
     assert state.env["warp"]["model"]["warmstart_disabled"] is True
 
 
 def test_capture_refuses_when_solver_warmstart_is_enabled(origin):
-    """The derived-field omissions rest on this flag, so it is asserted, not assumed."""
+    """``qacc_warmstart`` is a live solver input unless this flag is set.
+
+    A capture gate, not evidence about any omitted field: with warm-start enabled
+    the captured ``qacc_warmstart`` would be read back by the solver
+    (``solver.py:4034`` -> ``:1568``), so capture refuses instead of recording a
+    state whose meaning it cannot bound.
+    """
     mjm = origin.env.mjm
     original = int(mjm.opt.disableflags)
     mjm.opt.disableflags = original & ~int(mujoco.mjtDisableBit.mjDSBL_WARMSTART)
@@ -279,31 +316,58 @@ def test_omitting_cuda_rng_changes_the_next_sampled_action(origin, tmp_path):
         fresh.close()
 
 
-def test_omitted_derived_scratch_fields_do_not_change_the_next_step(origin):
-    """Empirical enforcement of the derived-field omission.
+def test_preserved_derived_scratch_restores_exactly(origin, tmp_path):
+    """Replaces the withdrawn cross-run invariance test (see the module docstring).
 
-    Only safe numeric fields are perturbed — ``qacc`` (overwritten at solve init,
-    ``solver.py:1568``/``:1570``) and ``act_dot`` (assigned per actuator each
-    substep, ``forward.py:1030``). Contact/index counters are never touched:
-    a forged count would index out of bounds on the device.
+    Asserted here: capture -> ``write_segment`` -> ``read_segment`` ->
+    ``restore_state`` reproduces ``qacc`` and ``act_dot`` **bitwise**, at their
+    own backing dtype and shape, on a freshly built target *and* on a target
+    whose live scratch has already been mutated. This is a property of the helper
+    alone; it deliberately makes no claim that two independent physics runs agree,
+    which the 24-trial diagnostic showed does not hold bitwise at this state.
+
+    Only the two safe numeric fields are ever written. No contact, index or count
+    buffer is touched: a forged count would index out of bounds on the device.
     """
     _train(origin, 1)
+    captured = _warp_derived(origin.env)
+    for name, tensor in captured.items():
+        assert float(tensor.abs().sum().item()) > 0.0, f"{name} is trivial here"
     state = ppo_resume.capture_state(origin, origin.env, _extra(), epoch=1)
-    action = torch.full((origin.num_envs, origin.num_actions), 0.25, device=origin.device)
+    path = tmp_path / "derived_scratch.ptc"
+    ppo_resume.write_segment(state, path)
+    loaded = ppo_resume.read_segment(path)
+    for name, tensor in captured.items():
+        assert torch.equal(loaded.env["derived"][name]["values"].cpu(), tensor.cpu()), name
 
-    origin.env.step(action)
-    reference = _warp_fields(origin.env)
+    # 1. A freshly built target that has only been reset, never stepped.
+    fresh = _algo(tmp_path / "derived_fresh", seed=31)
+    try:
+        before = _warp_derived(fresh.env)
+        assert any(not torch.equal(before[name], captured[name]) for name in captured), (
+            "the fresh target already matches; the assertion would be vacuous")
+        ppo_resume.restore_state(loaded, fresh, fresh.env)
+        for name, tensor in _warp_derived(fresh.env).items():
+            assert tensor.dtype == captured[name].dtype, name
+            assert tuple(tensor.shape) == tuple(captured[name].shape), name
+            assert torch.equal(tensor, captured[name]), name
+    finally:
+        fresh.close()
 
-    ppo_resume.restore_state(state, origin, origin.env)
+    # 2. A target whose derived scratch is already live and different. Restoring
+    #    onto it must overwrite both fields completely, not merge them.
     with torch.no_grad():
         wp.to_torch(origin.env.warp_data.qacc).add_(1234.5)
-        if origin.env.warp_data.act.size > 0:
-            wp.to_torch(origin.env.warp_data.act_dot).add_(7.5)
+        wp.to_torch(origin.env.warp_data.act_dot).add_(7.5)
     wp.synchronize()
+    for name, tensor in _warp_derived(origin.env).items():
+        assert not torch.equal(tensor, captured[name]), name
 
-    origin.env.step(action)
-    for name, tensor in _warp_fields(origin.env).items():
-        assert torch.equal(tensor, reference[name]), name
+    ppo_resume.restore_state(ppo_resume.read_segment(path), origin, origin.env)
+    for name, tensor in _warp_derived(origin.env).items():
+        assert tensor.dtype == captured[name].dtype, name
+        assert tuple(tensor.shape) == tuple(captured[name].shape), name
+        assert torch.equal(tensor, captured[name]), name
 
 
 def test_continued_rollout_deviation_is_reported_not_tolerated(origin, tmp_path, capsys):

@@ -59,9 +59,18 @@ class _AnalyticEnv:
     ``sim_act`` (the integration inputs), the previous-action history, and the
     episode progress counter. Reset noise is drawn from the torch CPU generator
     so an unrestored RNG stream is observable.
+
+    ``qacc``/``act_dot`` are declared in a **separate** section
+    (``RESUME_PLAIN_DERIVED_FIELDS``) because they are not env-written inputs:
+    the real environment's ``_reset_warp_state`` (``myoleg26_walk.py:553-579``)
+    writes only the six integration inputs, and the backend writes these two.
+    Like the real fields they are recomputed by every ``step()`` and never read
+    back as an input here, so this section binds **restore fidelity** and
+    deliberately carries no continued-trajectory claim.
     """
 
     RESUME_PLAIN_STATE_FIELDS = ("sim_qpos", "sim_qvel", "sim_act")
+    RESUME_PLAIN_DERIVED_FIELDS = ("qacc", "act_dot")
 
     def __init__(self, num_envs=4, num_act=3, episode_length=3, device="cpu"):
         self.device = device
@@ -78,6 +87,10 @@ class _AnalyticEnv:
         self.termination_buf = torch.zeros(num_envs, dtype=torch.long)
         self.obs_buf = torch.zeros((num_envs, self.num_obs), dtype=torch.float32)
         self.rew_buf = torch.zeros(num_envs, dtype=torch.float32)
+        # Derived scratch, written only by ``step()`` — never by ``_reset`` and
+        # never read back, mirroring the real backend's ownership of these two.
+        self.qacc = torch.zeros((num_envs, 2), dtype=torch.float32)
+        self.act_dot = torch.zeros((num_envs, num_act), dtype=torch.float32)
         self.extras = {}
         # NOTE: obs_buf_before_reset is deliberately NOT created here. The real
         # env creates it only in step() (myoleg26_walk.py:474); base_env.py:80-86
@@ -112,11 +125,16 @@ class _AnalyticEnv:
     def step(self, action):
         action = action.view(self.num_envs, self.num_actions).clamp(-1.0, 1.0)
         previous = self.actions
+        previous_act, previous_qvel = self.sim_act, self.sim_qvel
         self.sim_act = 0.8 * self.sim_act + 0.2 * (action + 0.5 * previous)
         drive = torch.stack([self.sim_act.sum(dim=-1), self.sim_act.mean(dim=-1)], dim=-1)
         self.sim_qvel = 0.95 * self.sim_qvel + 0.1 * drive
         self.sim_qpos = self.sim_qpos + 0.05 * self.sim_qvel
         self.actions = action.clone()
+        # Rewritten every step from the inputs above, exactly like the fields
+        # they stand in for; nothing downstream reads them.
+        self.qacc = (self.sim_qvel - previous_qvel) / 0.05
+        self.act_dot = (self.sim_act - previous_act) / 0.05
 
         self.obs_buf = self._observe()
         self.rew_buf = self.sim_qvel[:, 0] - 0.01 * (action ** 2).sum(dim=-1)
@@ -137,6 +155,10 @@ class _AnalyticEnv:
             self.obs_buf = torch.where(self.reset_buf[:, None].bool(), self._observe(), self.obs_buf)
         return self.obs_buf, self.rew_buf, self.reset_buf, self.extras
 
+
+# The adapter's declared derived section, held as a literal so the negative
+# controls can narrow the class attribute without moving the assertions with it.
+_DERIVED_FIELDS = ("qacc", "act_dot")
 
 _NETWORK_CFG = {
     "actor_mlp": {"units": [8, 8], "activation": "elu"},
@@ -257,10 +279,21 @@ def _fingerprint(algo, env):
     out["_current_obs"] = None if current is None else current.detach().clone()
     for name in _AnalyticEnv.RESUME_PLAIN_STATE_FIELDS:
         out[f"env.{name}"] = getattr(env, name).detach().clone()
+    # Both derived fields are part of the complete state comparison. After
+    # continued training they are recomputed by ``step()``, so their agreement
+    # *here* is not evidence about restore fidelity — the dedicated tests in
+    # section 2d bind that.
+    for name in _DERIVED_FIELDS:
+        out[f"env.{name}"] = getattr(env, name).detach().clone()
     for name in ("actions", "progress_buf", "reset_buf", "termination_buf", "obs_buf", "rew_buf"):
         out[f"env.{name}"] = getattr(env, name).detach().clone()
     out["rng.torch_cpu"] = torch.get_rng_state().clone()
     return out
+
+
+def _derived_values(env):
+    """The adapter's live derived scratch, cloned out of the way of a restore."""
+    return {name: getattr(env, name).detach().clone() for name in _DERIVED_FIELDS}
 
 
 def _differences(left, right):
@@ -373,8 +406,13 @@ def test_capture_is_immutable_under_origin_mutation(tmp_path):
         env.sim_qpos.add_(1.0)
         env.actions.add_(1.0)
         env.progress_buf.add_(1)
+        # The derived section must be deep-copied too, in place and by rebinding.
+        env.qacc.add_(1234.5)
+        env.act_dot = env.act_dot + 7.5
     algo.episode_loss_his.append(-999.0)
     algo.iter_count += 50
+    derived_before_mutation = {name: field["values"].clone()
+                               for name, field in before.env["derived"].items()}
 
     assert _differences(_flatten(before), _flatten(state)) == []
 
@@ -386,6 +424,9 @@ def test_capture_is_immutable_under_origin_mutation(tmp_path):
     assert target_algo.iter_count == 2
     assert target_algo.episode_loss_meter.current_size != 42
     assert not torch.equal(target_env.sim_qpos, env.sim_qpos)
+    for name, tensor in derived_before_mutation.items():
+        assert torch.equal(getattr(target_env, name), tensor), name
+        assert not torch.equal(getattr(target_env, name), getattr(env, name)), name
 
 
 def _flatten(state):
@@ -585,6 +626,210 @@ def test_omitting_meter_current_size_breaks_meter_state(tmp_path):
     fresh_algo.episode_loss_meter.update(values)
     algo.episode_loss_meter.update(values)
     assert not torch.equal(fresh_algo.episode_loss_meter.mean, algo.episode_loss_meter.mean)
+
+
+# ----------------------------------------------------------------------
+# 2d. Preserved derived solver scratch — restore fidelity (2026-09-15 ruling)
+# ----------------------------------------------------------------------
+#
+# History, stated exactly. The first schema OMITTED ``qacc`` and ``act_dot`` and
+# justified that omission with a GPU test which required two INDEPENDENT physics
+# runs to agree bitwise. That test **failed** in the full GPU suite on
+# ``7bd388da…`` (``AssertionError: qvel``) after passing in isolation, and the
+# preregistered 24-trial diagnostic then showed its premise was unsound: six
+# UNPERTURBED control repeats alone split across two post-step ``qvel`` values,
+# one entry apart by one float32 ULP. The failing result and both receipts stand
+# as historical evidence and are **not** relabelled a pass, not xfailed and not
+# given a tolerance. What is withdrawn is the *claim* that omitting these two
+# fields is qualified.
+#
+# So the fields are now captured and restored, and the regression below asserts
+# exact **restore fidelity** — a property of this helper alone, independent of
+# whether the simulator reproduces a step. It is NOT evidence about continued
+# trajectories, which stay UNVALIDATED.
+#
+# The withdrawn test was also cited as the empirical enforcement for EVERY other
+# omitted derived field; that global claim is withdrawn as well. It only ever
+# perturbed those two fields, so no untested contact, solver, cache or counter
+# array inherits validation from it. Those remain omitted with neither a
+# per-field argument nor any empirical control.
+
+
+def _prepare_fresh(algo, env):
+    """A target that has only been reset, never stepped."""
+    _start(algo, env)
+
+
+def _prepare_mutated(algo, env):
+    """A target whose derived scratch is already live, and different."""
+    _start(algo, env)
+    _train(algo, 1)
+    with torch.no_grad():
+        env.qacc.add_(1234.5)
+        env.act_dot.add_(7.5)
+
+
+def test_derived_scratch_is_captured_at_its_own_dtype_and_shape():
+    algo, env = _build()
+    _start(algo, env)
+    _train(algo, 2)
+    live = _derived_values(env)
+    for name, tensor in live.items():
+        assert float(tensor.abs().sum()) > 0.0, f"{name} is trivial; the test would not bind"
+
+    state = _capture(algo, env, epoch=2)
+    derived = state.env["derived"]
+    assert set(derived) == set(_DERIVED_FIELDS)
+    for name, tensor in live.items():
+        assert derived[name]["dtype"] == str(tensor.dtype)
+        assert tuple(derived[name]["shape"]) == tuple(tensor.shape)
+        assert derived[name]["values"].dtype == tensor.dtype
+        assert torch.equal(derived[name]["values"], tensor), name
+    # Recorded in its own section, never folded into the env-written inputs.
+    assert set(state.env["plain"]) == set(_AnalyticEnv.RESUME_PLAIN_STATE_FIELDS)
+    assert not set(state.env["plain"]) & set(_DERIVED_FIELDS)
+
+
+@pytest.mark.parametrize("prepare", [_prepare_fresh, _prepare_mutated],
+                         ids=["fresh_target", "already_mutated_target"])
+def test_restore_reproduces_derived_scratch_bytes_exactly(tmp_path, prepare):
+    """The replacement regression: exact capture -> write -> read -> restore."""
+    origin_algo, origin_env = _build()
+    _start(origin_algo, origin_env)
+    _train(origin_algo, 2)
+    captured = _derived_values(origin_env)
+    state = _capture(origin_algo, origin_env, epoch=2)
+    path = tmp_path / f"derived_{prepare.__name__}.ptc"
+    ppo_resume.write_segment(state, path)
+
+    target_algo, target_env = _build(seed=997)
+    prepare(target_algo, target_env)
+    for name, tensor in captured.items():
+        assert not torch.equal(getattr(target_env, name), tensor), (
+            f"{name} already matches before the restore; the test would be vacuous")
+
+    ppo_resume.restore_state(ppo_resume.read_segment(path), target_algo, target_env)
+    for name, tensor in captured.items():
+        restored = getattr(target_env, name)
+        assert restored.dtype == tensor.dtype, name
+        assert tuple(restored.shape) == tuple(tensor.shape), name
+        assert torch.equal(restored, tensor), name
+    # The source is untouched by the restore of a copy taken from it.
+    assert _differences({f"src.{k}": v for k, v in captured.items()},
+                        {f"src.{k}": v for k, v in _derived_values(origin_env).items()}) == []
+
+
+@pytest.mark.parametrize("dropped", _DERIVED_FIELDS)
+def test_dropping_one_derived_field_from_the_schema_loses_it(dropped, monkeypatch):
+    """Negative control, per field: without restoration the value is demonstrably lost.
+
+    The sibling field is restored in the same call, so this separates "the field
+    needs restoring" from "the machinery does not work at all".
+    """
+    kept = tuple(name for name in _DERIVED_FIELDS if name != dropped)
+    monkeypatch.setattr(_AnalyticEnv, "RESUME_PLAIN_DERIVED_FIELDS", kept)
+
+    origin_algo, origin_env = _build()
+    _start(origin_algo, origin_env)
+    _train(origin_algo, 2)
+    captured = _derived_values(origin_env)
+    state = _capture(origin_algo, origin_env, epoch=2)
+    assert set(state.env["derived"]) == set(kept)
+
+    target_algo, target_env = _build(seed=995)
+    _start(target_algo, target_env)
+    ppo_resume.restore_state(state, target_algo, target_env)
+    assert not torch.equal(getattr(target_env, dropped), captured[dropped]), (
+        f"{dropped} survived without being restored; the control does not bind")
+    for name in kept:
+        assert torch.equal(getattr(target_env, name), captured[name]), name
+
+
+@pytest.mark.parametrize("break_it,pattern", [
+    ("missing_section", "derived"),
+    ("missing_field", "qacc"),
+    ("extra_field", "qfrc_bias"),
+    ("record_dtype", "dtype"),
+    ("payload_dtype", "dtype"),
+    ("wrong_shape", "shape"),
+    ("nonfinite", "nonfinite"),
+])
+def test_bad_derived_payload_is_refused_before_the_target_is_mutated(break_it, pattern):
+    """No zero-fill, no default, no partial write: refuse, leaving the target intact."""
+    origin_algo, origin_env = _build()
+    _start(origin_algo, origin_env)
+    _train(origin_algo, 2)
+    state = _capture(origin_algo, origin_env, epoch=2)
+    derived = state.env["derived"]
+    if break_it == "missing_section":
+        del state.env["derived"]
+    elif break_it == "missing_field":
+        del derived["qacc"]
+    elif break_it == "extra_field":
+        derived["qfrc_bias"] = {key: value for key, value in derived["qacc"].items()}
+    elif break_it == "record_dtype":
+        derived["qacc"] = dict(derived["qacc"], dtype="torch.float64")
+    elif break_it == "payload_dtype":
+        derived["qacc"] = dict(derived["qacc"],
+                               values=derived["qacc"]["values"].to(torch.float64))
+    elif break_it == "wrong_shape":
+        derived["qacc"] = dict(derived["qacc"],
+                               values=torch.zeros((1, 1), dtype=torch.float32),
+                               shape=(1, 1))
+    else:
+        broken = derived["qacc"]["values"].clone()
+        broken[0, 0] = float("nan")
+        derived["qacc"] = dict(derived["qacc"], values=broken)
+
+    target_algo, target_env = _build(seed=993)
+    _start(target_algo, target_env)
+    _train(target_algo, 1)
+    before = _fingerprint(target_algo, target_env)
+    with pytest.raises(ppo_resume.ResumeValidationError, match=pattern):
+        ppo_resume.restore_state(state, target_algo, target_env)
+    assert _differences(before, _fingerprint(target_algo, target_env)) == []
+
+
+def test_nonfinite_derived_scratch_is_refused_at_capture():
+    algo, env = _build()
+    _start(algo, env)
+    _train(algo, 1)
+    with torch.no_grad():
+        env.act_dot[0, 0] = float("inf")
+    with pytest.raises(ppo_resume.ResumeValidationError, match="nonfinite"):
+        _capture(algo, env, epoch=1)
+
+
+def test_schema_version_is_bumped_for_the_newly_required_derived_state():
+    """The required state set grew, so the version moves; nothing is migrated.
+
+    No segment of the previous version exists outside these tests' temporary
+    directories, and no science artifact uses this schema, so a bump plus an
+    outright refusal is the honest encoding: an older payload genuinely lacks
+    required state and must never be completed with defaults.
+    """
+    assert ppo_resume.SCHEMA_VERSION == "myoleg26-ppo-resume-v2"
+
+
+def test_a_previous_schema_segment_file_is_refused_rather_than_migrated(tmp_path, monkeypatch):
+    algo, env = _build()
+    _start(algo, env)
+    _train(algo, 1)
+    monkeypatch.setattr(ppo_resume, "SCHEMA_VERSION", "myoleg26-ppo-resume-v1")
+    stale = _capture(algo, env, epoch=1)
+    path = tmp_path / "stale_v1.ptc"
+    ppo_resume.write_segment(stale, path)
+    monkeypatch.undo()
+
+    with pytest.raises(ppo_resume.ResumeValidationError, match="myoleg26-ppo-resume-v1"):
+        ppo_resume.read_segment(path)
+
+    target_algo, target_env = _build(seed=991)
+    _start(target_algo, target_env)
+    before = _fingerprint(target_algo, target_env)
+    with pytest.raises(ppo_resume.ResumeValidationError, match="myoleg26-ppo-resume-v1"):
+        ppo_resume.restore_state(stale, target_algo, target_env)
+    assert _differences(before, _fingerprint(target_algo, target_env)) == []
 
 
 # ----------------------------------------------------------------------
