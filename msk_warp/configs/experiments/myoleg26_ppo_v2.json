@@ -68,7 +68,7 @@
     }
   },
   "config_path": "msk_warp/configs/experiments/myoleg26_ppo_v2.yaml",
-  "eol_note": "Freeze hashes are WORKING-TREE bytes, because those are the bytes that execute. With core.autocrlf=true and the repository's '* text=auto' attribute rule, a file not pinned 'text eol=lf' is materialised with CRLF on checkout, so its raw sha256 legitimately differs from its git blob content hash. Raw bytes, the filtered working-tree blob id and the committed HEAD blob id are three distinct identities; they are recorded separately, compared separately, and a mismatch in one is never excused by agreement in another. Nothing is normalised, and no git attribute rule is added, removed or changed by this freeze.",
+  "eol_note": "Freeze hashes are WORKING-TREE bytes, because those are the bytes that execute. With core.autocrlf=true and the repository's '* text=auto' attribute rule, a file not pinned 'text eol=lf' is materialised with CRLF on checkout, so its raw sha256 legitimately differs from its git blob content hash. Raw bytes, the filtered working-tree blob id and the committed HEAD blob id are three distinct identities; they are recorded separately, compared separately, and a mismatch in one is never excused by agreement in another. Nothing is normalised, and no git attribute rule is added, removed or changed by this freeze. CONSEQUENCE, so that a future operator is not misled: because this freeze pins the bytes that execute, validating it on a checkout whose core.autocrlf setting differs from the one recorded here will make the raw hashes of every text file whose line endings were materialised differently refuse, reported as \"Frozen experiment mismatch: ['files']\". That is a HOST DIFFERENCE, not source drift, and the refusal is correct behaviour rather than a defect. Diagnose it by comparing files_git first: the filtered working-tree blob id and the committed HEAD blob id are host-independent, so if those agree and only the raw hashes differ, the content is identical and only the checkout's line-ending form has changed. This is strictly stronger than the v1 freeze, which records a files map alone with no git identity classes and no EOL census, and therefore cannot tell a reader whether a refusal is drift or a checkout artifact.",
   "excluded_paths": {
     "docs/research/2026-09-14-myoleg-session/orchestration/byte_exact_runner.py": "A transcript wrapper, not a training input: it neither imports nor modifies the target command. It lives under ignored docs/, so it is untracked and could never satisfy this freeze's ls-files requirement; its sha256 is recorded in the smoke record instead, where it belongs as evidence plumbing rather than as an experiment input.",
     "msk_warp/configs/experiments/myoleg26_baseline_v1.json": "The v1 manifest. It is never regenerated, re-hashed or overwritten by the v2 freeze: its post-Task-2 refusal is a documented boundary, and v1 must be reproduced only at its own original source commits.",
@@ -162,7 +162,7 @@
     "msk_warp/utils/running_mean_std.py": "f953560dc8226fbe39285c8bc45d3bbce8a897e5cc33fdf852abd06c2296f22b",
     "msk_warp/utils/time_report.py": "c972b3f14aca0b7c070e335dbdcadec06485749722d143a03213c2b0a8d0b756",
     "msk_warp/utils/torch_utils.py": "f030d39c00f0ae3cc282617c05de794fac915996de6d1de742ad76f3abf1ef93",
-    "scripts/run_myoleg26_ppo_v2.py": "6423b97a306f40ddadd5f9b2b3d462e58ceadb41e2fc095f8fe8ed2f1fd785c6",
+    "scripts/run_myoleg26_ppo_v2.py": "f092b82c2e85423c7f8ae20797a6fc4dfc80e29881ef31dce17b271e4e7d7fe7",
     "scripts/summarize_myoleg26_ppo_v2.py": "252e854b4d11e0b3071a433050d208f06bf73c58a067dd86dce915c4f4e418cd"
   },
   "files_eol": {
@@ -343,7 +343,7 @@
       "msk_warp/utils/running_mean_std.py": "b964c7039f28c514cab35204f147c2962b6f4fdf",
       "msk_warp/utils/time_report.py": "876fd5690f63d5276b1b2a4cda220e5f53b1b649",
       "msk_warp/utils/torch_utils.py": "9a0cdcec2ec12996a14d8555516df91001d48e79",
-      "scripts/run_myoleg26_ppo_v2.py": "c8ae1c44c1fb22f6ab8564a7d1f7ff7f157190f4",
+      "scripts/run_myoleg26_ppo_v2.py": "ec2d45b7ebd4972eb3fcb7417a9cfca2b6249bf6",
       "scripts/summarize_myoleg26_ppo_v2.py": "77a2b3090c074d5eb65b7392509847a5b07c8249"
     },
     "head_status": {
@@ -523,7 +523,7 @@
       "msk_warp/utils/running_mean_std.py": "b964c7039f28c514cab35204f147c2962b6f4fdf",
       "msk_warp/utils/time_report.py": "876fd5690f63d5276b1b2a4cda220e5f53b1b649",
       "msk_warp/utils/torch_utils.py": "9a0cdcec2ec12996a14d8555516df91001d48e79",
-      "scripts/run_myoleg26_ppo_v2.py": "c8ae1c44c1fb22f6ab8564a7d1f7ff7f157190f4",
+      "scripts/run_myoleg26_ppo_v2.py": "ec2d45b7ebd4972eb3fcb7417a9cfca2b6249bf6",
       "scripts/summarize_myoleg26_ppo_v2.py": "77a2b3090c074d5eb65b7392509847a5b07c8249"
     }
   },
