@@ -168,6 +168,28 @@ def test_raw_bytes_filtered_blob_and_head_blob_are_three_distinct_fields(tmp_pat
     assert "autocrlf" in identity["note"]
 
 
+def test_the_eol_note_states_the_host_refusal_consequence_not_only_the_mechanism():
+    """Binding (M2). The manifest is the artifact a future operator reads first,
+    so it must say what they will actually hit: on a host whose core.autocrlf
+    differs, raw hashes refuse, and that refusal is correct behaviour rather than
+    source drift."""
+    note = R.FREEZE_EOL_NOTE
+    assert "HOST DIFFERENCE, not source drift" in note
+    assert "correct behaviour" in note
+    assert "core.autocrlf setting differs" in note
+    assert "Frozen experiment mismatch: ['files']" in note
+    # How to tell the two apart, named explicitly.
+    assert "comparing files_git first" in note
+    assert "host-independent" in note
+    # And that this is strictly stronger than v1's files-only manifest.
+    assert "stronger than the v1 freeze" in note
+    assert "no git identity classes and no EOL census" in note
+    # The note travels with the manifest, not only with the source.
+    frozen = json.loads((R.ROOT / V1_MANIFEST).parent.joinpath(
+        "myoleg26_ppo_v2.json").read_text(encoding="utf-8"))
+    assert frozen["eol_note"] == note
+
+
 def test_an_uncommitted_pinned_input_is_recorded_as_not_in_head(tmp_path):
     root = _repo(tmp_path)
     (root / "fresh.py").write_bytes(b"x = 1\n")
@@ -371,13 +393,51 @@ def test_the_freeze_cli_writes_then_validates_and_refuses_an_overwrite(tmp_path,
 
     assert R.main(["freeze", "--write-freeze", str(out)]) == R.EXIT_OK
     assert json.loads(out.read_text(encoding="utf-8")) == record
-    with pytest.raises(FileExistsError):
-        R.main(["freeze", "--write-freeze", str(out)])
     assert R.main(["freeze", "--validate-freeze", str(out), "--smoke"]) == R.EXIT_OK
 
     monkeypatch.setattr(R, "freeze_record_v2",
                         lambda **kwargs: _record(files={"pinned.py": "0" * 64}))
     assert R.main(["freeze", "--validate-freeze", str(out), "--smoke"]) == R.EXIT_REFUSED
+
+
+def test_a_generation_time_freeze_failure_is_a_refusal_not_a_traceback(tmp_path, monkeypatch,
+                                                                      capsys):
+    """Binding (M1). An operator setting up the campaign is exactly the person most
+    likely to mistype a path or to have an input out of place, so both failure
+    classes on the generation branch must arrive as a named refusal on stderr and
+    a non-zero exit, not as an unhandled traceback.
+
+    The library functions still raise: only the CLI boundary converts.
+    """
+    out = tmp_path / "v2.json"
+    monkeypatch.setattr(R, "freeze_record_v2", lambda **kwargs: _record())
+    monkeypatch.setattr(R, "_git", _clean_git)
+    assert R.main(["freeze", "--write-freeze", str(out)]) == R.EXIT_OK
+    capsys.readouterr()
+
+    # (a) the output path already exists: the manifest is never overwritten.
+    assert R.main(["freeze", "--write-freeze", str(out)]) == R.EXIT_REFUSED
+    message = capsys.readouterr().err
+    assert "REFUSED" in message and str(out) in message
+
+    # (b) the record itself cannot be built -- a missing pinned input, an asset
+    # mismatch, changed model dimensions, a dirty backend, a non-disjoint block.
+    fresh = tmp_path / "fresh.json"
+
+    def refusing(**kwargs):
+        raise R.FreezeError("pinned input is missing: scripts/absent.py")
+
+    monkeypatch.setattr(R, "freeze_record_v2", refusing)
+    assert R.main(["freeze", "--write-freeze", str(fresh)]) == R.EXIT_REFUSED
+    message = capsys.readouterr().err
+    assert "FREEZE INVALID" in message and "scripts/absent.py" in message
+    assert not fresh.exists()
+
+    # The library contract is unchanged: it raises, and only main() converts.
+    with pytest.raises(R.FreezeError):
+        R.freeze_record_v2()
+    with pytest.raises(FileExistsError):
+        R.write_json_exclusive(out, {"a": 1})
 
 
 @pytest.mark.parametrize("mode", ["launch", "worker", "select", "freeze"])

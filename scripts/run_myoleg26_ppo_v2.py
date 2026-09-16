@@ -104,7 +104,20 @@ FREEZE_EOL_NOTE = (
     "committed HEAD blob id are three distinct identities; they are recorded "
     "separately, compared separately, and a mismatch in one is never excused by "
     "agreement in another. Nothing is normalised, and no git attribute rule is "
-    "added, removed or changed by this freeze."
+    "added, removed or changed by this freeze. "
+    "CONSEQUENCE, so that a future operator is not misled: because this freeze "
+    "pins the bytes that execute, validating it on a checkout whose "
+    "core.autocrlf setting differs from the one recorded here will make the raw "
+    "hashes of every text file whose line endings were materialised differently "
+    "refuse, reported as \"Frozen experiment mismatch: ['files']\". That is a "
+    "HOST DIFFERENCE, not source drift, and the refusal is correct behaviour "
+    "rather than a defect. Diagnose it by comparing files_git first: the "
+    "filtered working-tree blob id and the committed HEAD blob id are "
+    "host-independent, so if those agree and only the raw hashes differ, the "
+    "content is identical and only the checkout's line-ending form has changed. "
+    "This is strictly stronger than the v1 freeze, which records a files map "
+    "alone with no git identity classes and no EOL census, and therefore cannot "
+    "tell a reader whether a refusal is drift or a checkout artifact."
 )
 
 #: Host-side timing phases. ``train_segment`` measures the first four and the
@@ -647,6 +660,13 @@ def validate_freeze_v2(path, *, smoke=False, root=None, run=subprocess.run) -> d
     # Later standalone modules may legitimately be added. Every existing pin
     # stays pinned, in each identity class separately, and changing an import in
     # an existing module still changes its hash.
+    #
+    # Stated plainly, so the freeze is not over-read: this filter means a newly
+    # *added* file is not reported as drift. Validation proves that the pinned
+    # set is unchanged and complete -- changed and removed pins are both caught,
+    # in every identity class -- but NOT that nothing was added to the tree. v1
+    # has the same shape, so this is consistent with the existing freeze
+    # contract rather than a weakening of it.
     current["files"] = {name: current["files"].get(name) for name in frozen["files"]}
     current["files_git"] = {
         key: {name: (current["files_git"].get(key) or {}).get(name) for name in names}
@@ -2003,6 +2023,12 @@ def run_freeze(args) -> int:
     A separate subcommand rather than a top-level flag: the three existing modes
     are reviewed and merged, and making the mode optional would change their
     parse semantics for a spelling.
+
+    This function **raises**; :func:`main` is the single place that converts a
+    freeze failure into a refusal message and an exit code. Both branches can
+    fail -- generation as readily as validation, and an operator setting up the
+    campaign is exactly the person likeliest to mistype an output path -- so the
+    conversion belongs at the one boundary rather than on one branch.
     """
     if args.write_freeze:
         path = Path(args.write_freeze)
@@ -2012,11 +2038,7 @@ def run_freeze(args) -> int:
               "committed bytes, never by its own hash")
         return EXIT_OK
     path = Path(args.validate_freeze)
-    try:
-        frozen = validate_freeze_v2(path, smoke=bool(args.smoke))
-    except (FreezeError, P.ProtocolError) as error:
-        print(f"FREEZE INVALID: {error}", file=sys.stderr)
-        return EXIT_REFUSED
+    frozen = validate_freeze_v2(path, smoke=bool(args.smoke))
     print(f"freeze valid: {path} ({len(frozen['files'])} pinned inputs, protocol "
           f"{(frozen.get('protocol') or {}).get('digest')})")
     # Surfaced rather than assumed: the manifest container's own line-ending form
@@ -2101,6 +2123,15 @@ def main(argv=None) -> int:
     except CensorRun as error:
         print(f"CENSORED: {error}", file=sys.stderr)
         return EXIT_CENSORED
+    # Both freeze failure classes, named specifically. The catch stays narrow on
+    # purpose: anything else still fails loudly with its traceback.
+    except (FreezeError, P.ProtocolError) as error:
+        print(f"FREEZE INVALID: {error}", file=sys.stderr)
+        return EXIT_REFUSED
+    except FileExistsError as error:
+        print(f"REFUSED: this path already exists and is never overwritten: "
+              f"{error.filename or error}", file=sys.stderr)
+        return EXIT_REFUSED
 
 
 if __name__ == "__main__":
