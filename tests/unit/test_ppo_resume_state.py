@@ -1388,11 +1388,18 @@ def test_segment_file_loads_with_weights_only(tmp_path):
     assert set(inner) == {"metadata", "algo", "env", "extra", "metadata_sha256"}
 
 
-def test_analysis_package_does_not_import_ppo_resume():
-    """``msk_warp.analysis`` must stay torch/warp-free (``test_orbit.py:304``)."""
+def test_analysis_package_does_not_import_ppo_resume(monkeypatch):
+    """``msk_warp.analysis`` must stay torch/warp-free (``test_orbit.py:304``).
+
+    The purge is undone on teardown via ``monkeypatch.delitem``. An unrestored
+    purge leaked into every later test in the process: a test that lazily imports
+    an ``msk_warp.analysis`` module and patches it would then patch a **stale**
+    object that the code under test never touches, and pass while asserting
+    nothing. The assertion below is unchanged; only the cleanup was added.
+    """
     for name in list(sys.modules):
         if name.startswith("msk_warp.analysis"):
-            del sys.modules[name]
+            monkeypatch.delitem(sys.modules, name)
     import msk_warp.analysis  # noqa: F401
 
     assert "msk_warp.analysis.ppo_resume" not in sys.modules
