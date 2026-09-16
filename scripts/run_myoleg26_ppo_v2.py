@@ -1075,8 +1075,53 @@ def _censor_nonfinite_parameters(algo) -> None:
                     "rather than retried")
 
 
+def segment_evaluation_epochs(evaluation_epochs, *, start_epoch, end_epoch,
+                              resumed) -> frozenset:
+    """The epochs THIS segment may evaluate: the scheduled epochs it completes.
+
+    One epoch, one evaluation (VALIDITY IN-28). The segment that **completes** an
+    epoch evaluates it, exactly once; a resumed segment evaluates nothing at the
+    boundary it resumed from, because the previous segment already completed that
+    epoch and already evaluated it. Evaluation belongs to the epoch, not to the
+    process, which is what makes epoch -> evaluation a *function* -- the property
+    :func:`msk_warp.analysis.myoleg26_selection_v2.select_best_checkpoint`
+    requires, and whose violation aborted every multi-segment run of the accounted
+    smoke launch with ``duplicate candidate 'epoch' 64``. It also stops the
+    campaign paying twice for one measurement.
+
+    The permitted set is **derived** from the round rather than filtered at the
+    call site: a segment completes epochs ``start_epoch + 1 .. end_epoch``, so no
+    epoch outside that range can appear here at all, and ``start_epoch`` itself is
+    included only when this segment is not resuming somebody else's boundary --
+    i.e. for epoch 0, the initial policy, which no segment completes and which
+    therefore belongs to the segment that starts the run.
+
+    Idempotent: re-deriving over an already-derived set returns the same set, so
+    the scheduling and the file-writing enforcement points cannot disagree.
+
+    **What this does NOT fix (VALIDITY IN-29).** The smoke measured the two
+    epoch-64 evaluations of one checkpoint -- identical bytes, identical reset
+    seeds, the same deterministic policy -- differing by about 1e-3 relative (one
+    control step in one episode), with no cause established and the evaluation
+    environment's prior use in that process named as a confound. Removing the
+    duplicate stops that divergence being *visible*; it does not resolve it, and
+    IN-29 stays open. The consequence for this selection protocol therefore
+    stands: two checkpoints within about 1e-3 of each other on the ranking key
+    are not separable reproducibly, so a selection between them is **not
+    reproducible to better than about 1e-3 relative**, and the documented exact
+    four-component tie -> smaller-epoch tie-break will essentially never trigger.
+    """
+    start, end = int(start_epoch), int(end_epoch)
+    scheduled = {int(value) for value in evaluation_epochs}
+    own = {epoch for epoch in scheduled if start < epoch <= end}
+    if not resumed and start in scheduled:
+        own.add(start)
+    return frozenset(own)
+
+
 def train_segment(algo, env, *, start_epoch, end_epoch, max_epochs_total, clock,
-                  work_deadline, recorder, capture_reserve_s=DEFAULT_CAPTURE_RESERVE_S,
+                  work_deadline, recorder, resumed_from_boundary,
+                  capture_reserve_s=DEFAULT_CAPTURE_RESERVE_S,
                   evaluate=None, evaluation_epochs=(), diagnostics=None,
                   timing_clock=None) -> SegmentOutcome:
     """Train one bounded segment, stopping only at completed epoch boundaries.
@@ -1092,6 +1137,13 @@ def train_segment(algo, env, *, start_epoch, end_epoch, max_epochs_total, clock,
     caller must then publish nothing and fall back to the parent segment: a
     partially updated epoch is never published or labelled as a boundary.
 
+    ``resumed_from_boundary`` has **no default**, so every caller must state
+    whether this segment resumed a boundary another segment completed: that is
+    exactly what decides whether ``start_epoch`` is this segment's own epoch to
+    evaluate, and a forgotten keyword would silently reinstate the IN-28 duplicate
+    rather than fail. The permitted set is derived by
+    :func:`segment_evaluation_epochs`, never assembled here.
+
     ``timing_clock`` is a **separate, observation-only** clock. Every deadline
     comparison and both stop-policy maxima read ``clock`` exactly as before, and
     no timer value ever enters a comparison, so the instrumentation cannot become
@@ -1099,7 +1151,9 @@ def train_segment(algo, env, *, start_epoch, end_epoch, max_epochs_total, clock,
     with ``timing_clock=None`` this function adds no read to ``clock`` at all,
     which the tests assert by comparing read counts.
     """
-    wanted_evaluations = {int(value) for value in evaluation_epochs}
+    wanted_evaluations = segment_evaluation_epochs(
+        evaluation_epochs, start_epoch=start_epoch, end_epoch=end_epoch,
+        resumed=resumed_from_boundary)
     outcome = SegmentOutcome(completed_epoch=int(start_epoch), boundary_is_live=True,
                              stop_reason="epoch_budget")
     counters = outcome.counters
@@ -1788,6 +1842,49 @@ def run_worker(args, *, build=None, clock=time.perf_counter, timing_clock=None) 
         raise
 
 
+def _evaluation_writer(evaluate, out_dir, *, own_epochs, deadline, totals, paths):
+    """The single writer of ``selection_*.json``, fenced by ``own_epochs``.
+
+    The fence is the structural half of the IN-28 fix. The derived set from
+    :func:`segment_evaluation_epochs` is what a correct segment asks for; this is
+    what makes a wrong ask *impossible* rather than merely absent. A resumed
+    segment cannot write an evaluation for the boundary epoch it resumed from,
+    however it is called, because that epoch is not in its own set -- and the
+    fault is raised **before** ``evaluate`` runs, so a non-owned epoch is not
+    measured either. There is deliberately no second write site.
+
+    **Requirement 5 caveat, recorded and deliberately NOT changed.** ``deadline``
+    is the segment's *work* deadline -- the same clock the epoch pre-check reads --
+    so a genuine evaluation ``wall_cap`` truncation implies the work deadline has
+    already been reached, after which the pre-check can never admit another epoch.
+    A ``wall_cap`` truncation therefore always ends that segment. That is accepted
+    behaviour, not a fault: a truncation-terminated segment must not be read later
+    as a runner failure, and the truncated checkpoint is excluded and recorded,
+    never censored and never scored zero.
+    """
+    own_epochs = frozenset(int(value) for value in own_epochs)
+    out_dir = Path(out_dir)
+
+    def run_evaluation(epoch):
+        epoch = int(epoch)
+        if epoch not in own_epochs:
+            raise RunnerFault(
+                f"an evaluation was scheduled for epoch {epoch}, which this segment did "
+                f"not complete (it owns {sorted(own_epochs)}): evaluation belongs to the "
+                "epoch, not to the process, and evaluating an epoch another segment "
+                "completed would make epoch -> evaluation not a function")
+        record, counter = evaluate(epoch, deadline=deadline)
+        worlds = int(counter.get("worlds", 0))
+        totals["attempted"] += int(counter.get("attempted_calls", 0)) * worlds
+        totals["completed"] += int(counter.get("completed_calls", 0)) * worlds
+        path = out_dir / f"selection_{epoch:04d}.json"
+        write_json_exclusive(path, record)
+        paths.append(str(path))
+        return record
+
+    return run_evaluation
+
+
 def _worker_segment(args, *, build, clock, started, wrote, timing_clock=None) -> int:
     plan = resolve_plan(args)
     out_dir = plan.out_dir
@@ -1818,8 +1915,12 @@ def _worker_segment(args, *, build, clock, started, wrote, timing_clock=None) ->
                 "physics_steps": int(getattr(args, "replayed_physics_steps", 0))}
     parent_sha256 = None
     resume_report = None
+    # One fact, read once: ``resolve_plan`` refuses a parent for segment 0 and
+    # requires one for every later segment, so "has a parent segment" *is*
+    # "another segment completed my start epoch".
+    resumed = plan.parent_segment is not None
 
-    if plan.parent_segment is not None:
+    if resumed:
         parent_result = read_json(plan.parent_result)
         lineage = parent_result.get("lineage") or {}
         if not lineage.get("segment_sha256"):
@@ -1849,16 +1950,13 @@ def _worker_segment(args, *, build, clock, started, wrote, timing_clock=None) ->
 
     evaluation_paths = []
     evaluation_totals = {"attempted": 0, "completed": 0}
-
-    def run_evaluation(epoch):
-        record, counter = context.evaluate(int(epoch), deadline=work_deadline)
-        worlds = int(counter.get("worlds", 0))
-        evaluation_totals["attempted"] += int(counter.get("attempted_calls", 0)) * worlds
-        evaluation_totals["completed"] += int(counter.get("completed_calls", 0)) * worlds
-        path = out_dir / f"selection_{int(epoch):04d}.json"
-        write_json_exclusive(path, record)
-        evaluation_paths.append(str(path))
-        return record
+    # The epochs this segment may evaluate, derived from its own sealed round.
+    own_evaluation_epochs = segment_evaluation_epochs(
+        P.evaluation_epochs(spec.epoch_cap_per_seed),
+        start_epoch=plan.start_epoch, end_epoch=plan.end_epoch, resumed=resumed)
+    run_evaluation = None if context.evaluate is None else _evaluation_writer(
+        context.evaluate, out_dir, own_epochs=own_evaluation_epochs,
+        deadline=work_deadline, totals=evaluation_totals, paths=evaluation_paths)
 
     published = None
     unexpected = None
@@ -1870,8 +1968,9 @@ def _worker_segment(args, *, build, clock, started, wrote, timing_clock=None) ->
             end_epoch=plan.end_epoch, max_epochs_total=context.max_epochs_total,
             clock=clock, work_deadline=work_deadline, recorder=recorder,
             capture_reserve_s=capture_reserve_s,
-            evaluate=run_evaluation if context.evaluate is not None else None,
+            evaluate=run_evaluation,
             evaluation_epochs=P.evaluation_epochs(spec.epoch_cap_per_seed),
+            resumed_from_boundary=resumed,
             diagnostics=True, timing_clock=timing)
         # The single capture site, reached only at a live completed boundary.
         if outcome.boundary_is_live and outcome.completed_epochs > 0:
