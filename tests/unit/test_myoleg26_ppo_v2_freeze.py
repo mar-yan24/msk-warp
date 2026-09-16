@@ -434,8 +434,18 @@ def test_a_generation_time_freeze_failure_is_a_refusal_not_a_traceback(tmp_path,
     assert not fresh.exists()
 
     # The library contract is unchanged: it raises, and only main() converts.
-    with pytest.raises(R.FreezeError):
-        R.freeze_record_v2()
+    #
+    # ``undo()`` first, deliberately: asserting this while ``freeze_record_v2``
+    # is still bound to the stub above would only re-assert the stub, and would
+    # keep passing even if the real function were changed to print and return.
+    # The genuine function is then called with a root that holds none of the
+    # pinned inputs, which is a real refusal on a real code path.
+    monkeypatch.undo()
+    assert R.freeze_record_v2 is not refusing
+    empty = tmp_path / "empty_root"
+    empty.mkdir()
+    with pytest.raises(R.FreezeError, match="pinned input is missing"):
+        R.freeze_record_v2(root=empty)
     with pytest.raises(FileExistsError):
         R.write_json_exclusive(out, {"a": 1})
 
