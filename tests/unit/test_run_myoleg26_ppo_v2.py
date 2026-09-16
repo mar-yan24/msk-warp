@@ -732,12 +732,13 @@ def _recorder(env):
 
 
 def _run(algo, env, *, epochs=2, start_epoch=0, clock=None, deadline=1e9,
-         capture_reserve_s=0.0, **kwargs):
+         capture_reserve_s=0.0, resumed_from_boundary=False, **kwargs):
     clock = clock or TickingClock(tick=0.0)
     return R.train_segment(
         algo, env, start_epoch=start_epoch, end_epoch=start_epoch + epochs,
         max_epochs_total=128, clock=clock, work_deadline=deadline,
-        recorder=_recorder(env), capture_reserve_s=capture_reserve_s, **kwargs)
+        recorder=_recorder(env), resumed_from_boundary=resumed_from_boundary,
+        capture_reserve_s=capture_reserve_s, **kwargs)
 
 
 def _cuda_state():
@@ -1037,7 +1038,8 @@ def test_the_event_list_resets_each_epoch_but_the_accumulators_do_not():
     recorder = R.EpisodeEventRecorder(env.num_envs, CONTROL_DT, device="cpu")
     outcome = R.train_segment(algo, env, start_epoch=0, end_epoch=3, max_epochs_total=128,
                               clock=TickingClock(tick=0.0), work_deadline=1e9,
-                              recorder=recorder, capture_reserve_s=0.0)
+                              recorder=recorder, resumed_from_boundary=False,
+                              capture_reserve_s=0.0)
 
     assert len(outcome.epoch_events) == 3
     for epoch in outcome.epoch_events:
@@ -1053,7 +1055,7 @@ def test_the_recorder_state_round_trips_through_the_resume_extra():
     recorder = R.EpisodeEventRecorder(env.num_envs, CONTROL_DT, device="cpu")
     R.train_segment(algo, env, start_epoch=0, end_epoch=1, max_epochs_total=128,
                     clock=TickingClock(tick=0.0), work_deadline=1e9, recorder=recorder,
-                    capture_reserve_s=0.0)
+                    resumed_from_boundary=False, capture_reserve_s=0.0)
     state = recorder.state()
     assert set(state) == {"returns", "lengths"}
     assert all(isinstance(value, float) for value in state["returns"])
@@ -1566,7 +1568,7 @@ def test_the_recorder_accumulators_survive_a_segment_boundary(tmp_path):
     recorder = R.EpisodeEventRecorder(env.num_envs, CONTROL_DT, device="cpu")
     R.train_segment(algo, env, start_epoch=0, end_epoch=1, max_epochs_total=128,
                     clock=TickingClock(tick=0.0), work_deadline=1e9, recorder=recorder,
-                    capture_reserve_s=0.0)
+                    resumed_from_boundary=False, capture_reserve_s=0.0)
     saved = recorder.state()
     extra = _extra(tmp_path, recorder_state=saved)
     result = R.publish_boundary(algo, env, tmp_path / "with_accumulators.ptc",
@@ -2842,3 +2844,438 @@ def test_a_refusal_with_a_missing_out_dir_attribute_writes_nothing(tmp_path, mon
                             clock=lambda: 1.0, started=0.0,
                             wrote={"training_began": False})
     assert list(tmp_path.iterdir()) == []
+
+
+# ==========================================================================
+# Unit 7 -- one epoch, one evaluation (the IN-28 boundary-epoch defect)
+# ==========================================================================
+#
+# The accounted smoke launch found that every multi-segment run evaluated its
+# boundary epoch TWICE: segment N evaluated epoch 64 as the epoch it completed,
+# and segment N+1 evaluated that same epoch 64 again as its start epoch.
+# ``select`` then aborted with child rc 4 and ``duplicate candidate 'epoch' 64``,
+# so all nine scheduled runs would have produced no selection and no promotion
+# after the whole 28,800 s budget was spent.
+#
+# The ruling: **the segment that COMPLETES an epoch evaluates it, exactly once.**
+# A resuming segment must not re-evaluate the boundary it resumed from, because
+# the previous segment already completed and evaluated it. Evaluation belongs to
+# the epoch, not to the process, which is what makes epoch-to-evaluation a
+# function -- precisely the property ``select_best_checkpoint`` requires. The
+# duplicate-epoch refusal itself is correct and is NOT weakened here; what is
+# fixed is the runner producing two evaluations for one epoch.
+
+def _two_segment_run(tmp_path, *, first_epochs=64, second_epochs=2):
+    """A real two-segment run: publish a boundary, then really resume from it.
+
+    ``screen`` evaluates at epochs 0, 64 and 128 and its first sealed round is
+    0..64, so 64 is the only boundary this can reach without inventing a
+    protocol. Both segments go through ``run_worker``, so the publish, the
+    lineage binding, the five-key ``strict_expect``, both provenance comparison
+    classes and ``restore_state`` are all real; only the runtime is the Task 3
+    analytic CPU adapter.
+    """
+    run = tmp_path / "run"
+    first = run / "segment_0000"
+    assert _run_worker(tmp_path, first, **{"--epochs": first_epochs}) == R.EXIT_OK
+    parent = R.read_json(first / "result.json")
+    assert parent["published"] is True
+    assert parent["lineage"]["valid_boundary_epoch"] == first_epochs
+    second = run / "segment_0001"
+    code = _run_worker(tmp_path, second, **{
+        "--segment-index": 1, "--epochs": second_epochs,
+        "--parent-segment": first / "segment.ptc",
+        "--parent-result": first / "result.json"})
+    return run, first, second, code
+
+
+def _written_epochs(segment):
+    return sorted(int(path.name[len("selection_"):-len(".json")])
+                  for path in Path(segment).glob("selection_*.json"))
+
+
+def test_select_over_a_real_two_segment_run_reaches_a_selection(tmp_path):
+    """RED reproduction of the smoke's exact failure. Pre-fix this returned
+    ``EXIT_RUNNER_FAULT`` (child rc 4) with ``duplicate candidate 'epoch' 64``
+    and wrote a ``runner_fault`` record carrying two epoch-64 statuses."""
+    run, first, second, code = _two_segment_run(tmp_path)
+    assert code == R.EXIT_OK
+
+    rc = R.main(["select", "--run-dir", str(run)])
+    record = R.read_json(run / "selection.json")
+    assert rc == R.EXIT_OK, f"select faulted on a two-segment run: {record.get('fault')}"
+    assert record["status"] == "selected"
+    assert "fault" not in record
+    assert record["selected"]["epoch"] in (0, 64)
+
+
+def test_a_resumed_segment_schedules_no_evaluation_for_its_resume_boundary(tmp_path):
+    """The ruling, directly. Epoch 64 was completed by segment 0, so segment 0
+    evaluates it; segment 1 resumed from it and completed no scheduled epoch of
+    its own, so it writes no evaluation at all."""
+    run, first, second, code = _two_segment_run(tmp_path)
+    assert code == R.EXIT_OK
+    assert _written_epochs(first) == [0, 64]
+    assert _written_epochs(second) == []
+    assert R.read_json(second / "result.json")["evaluations"] == []
+
+
+def test_each_epoch_is_evaluated_at_most_once_across_a_multi_segment_run(tmp_path):
+    """Behavioural, and the property selection actually needs: across the whole
+    run directory, epoch -> evaluation is a function."""
+    run, first, second, code = _two_segment_run(tmp_path)
+    assert code == R.EXIT_OK
+    epochs = [candidate["epoch"] for candidate in R.collect_candidates(run)]
+    assert epochs == sorted(set(epochs)), f"an epoch was evaluated twice: {epochs}"
+    assert epochs == [0, 64]
+
+
+def test_the_surviving_boundary_evaluation_is_the_completing_segments_own(tmp_path):
+    """Binding. The one epoch-64 evaluation is the one written by the segment
+    that completed epoch 64 -- not a copy relabelled after the fact, and not the
+    resumed segment's second measurement of somebody else's epoch."""
+    run, first, second, code = _two_segment_run(tmp_path)
+    assert code == R.EXIT_OK
+    candidates = {candidate["epoch"]: candidate for candidate in R.collect_candidates(run)}
+    assert Path(candidates[64]["evaluation_path"]).parent == first
+    assert R.read_json(first / "result.json")["evaluations"] == [
+        str(first / "selection_0000.json"), str(first / "selection_0064.json")]
+
+
+def test_a_first_segment_still_evaluates_its_own_start_epoch(tmp_path):
+    """Binding, the other half of the ruling. Epoch 0 is the initial policy: no
+    segment completes it, so the segment that starts the run owns it. Dropping
+    it would lose the initial-actor checkpoint v1's selection turned on."""
+    out = tmp_path / "run" / "segment_0000"
+    assert _run_worker(tmp_path, out, **{"--epochs": 3}) == R.EXIT_OK
+    assert _written_epochs(out) == [0]
+
+
+# -- the derived schedule: structural, not a conditional at the call site ---
+
+def test_the_permitted_evaluation_set_is_derived_from_the_round():
+    """Structural. The set a segment may evaluate is a function of its own round,
+    so a resumed segment's schedule cannot contain its start epoch however the
+    global schedule is spelled."""
+    schedule = P.evaluation_epochs(128)
+    assert 64 in schedule and 0 in schedule
+
+    resumed = R.segment_evaluation_epochs(schedule, start_epoch=64, end_epoch=128,
+                                          resumed=True)
+    assert resumed == frozenset({128})
+    first = R.segment_evaluation_epochs(schedule, start_epoch=0, end_epoch=64,
+                                        resumed=False)
+    assert first == frozenset({0, 64})
+    # Nothing beyond this segment's own end is ever schedulable here.
+    assert R.segment_evaluation_epochs(schedule, start_epoch=0, end_epoch=3,
+                                       resumed=False) == frozenset({0})
+    # Idempotent: re-deriving over an already-derived set changes nothing, so the
+    # two enforcement points cannot disagree.
+    assert R.segment_evaluation_epochs(resumed, start_epoch=64, end_epoch=128,
+                                       resumed=True) == resumed
+    # Union over the sealed rounds is exactly the sealed schedule, once each.
+    rounds = P.segment_rounds(384)
+    covered = []
+    for round_ in rounds:
+        covered += sorted(R.segment_evaluation_epochs(
+            P.evaluation_epochs(384), start_epoch=round_.start_epoch,
+            end_epoch=round_.end_epoch, resumed=round_.index > 0))
+    assert covered == list(P.evaluation_epochs(384))
+
+
+def test_a_non_boolean_resumed_flag_is_refused_rather_than_guessed():
+    """Binding. Identity, not truthiness: a falsy non-bool would read as "not
+    resumed" and reinstate the IN-28 duplicate, and a truthy non-bool would
+    silently drop epoch 0's own evaluation. Both are refused instead."""
+    schedule = P.evaluation_epochs(128)
+    for value in (0, 1, "", "yes", None, [], [1], 0.0, 1.0):
+        with pytest.raises(R.RunnerFault, match="must be a bool"):
+            R.segment_evaluation_epochs(schedule, start_epoch=0, end_epoch=64,
+                                        resumed=value)
+    # The refusal reaches a caller before any training, through train_segment too.
+    algo, env = _build(steps_num=2, num_envs=4)
+    _start(algo, env)
+    with pytest.raises(R.RunnerFault, match="must be a bool"):
+        _run(algo, env, epochs=1, evaluation_epochs=schedule,
+             resumed_from_boundary=None)
+    # Real bools still work, in both directions.
+    assert R.segment_evaluation_epochs(schedule, start_epoch=0, end_epoch=64,
+                                       resumed=False) == frozenset({0, 64})
+    assert R.segment_evaluation_epochs(schedule, start_epoch=64, end_epoch=128,
+                                       resumed=True) == frozenset({128})
+
+
+def test_train_segment_makes_every_caller_declare_whether_it_resumed():
+    """Structural. There is no default, so the defect cannot come back by a
+    caller forgetting one keyword: omitting it is a TypeError, not a silent
+    second evaluation of an epoch this segment did not complete."""
+    import inspect
+
+    parameter = inspect.signature(R.train_segment).parameters["resumed_from_boundary"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty
+
+
+def test_train_segment_schedules_no_start_epoch_evaluation_when_it_resumed():
+    """Behavioural at the training seam, with no filesystem in the way."""
+    algo, env = _build(steps_num=2, num_envs=4)
+    _start(algo, env)
+    seen = []
+    outcome = _run(algo, env, epochs=2, start_epoch=64,
+                   evaluate=lambda epoch: seen.append(int(epoch)) or {"epoch": epoch},
+                   evaluation_epochs=(0, 64, 128), resumed_from_boundary=True)
+    assert seen == []
+    assert outcome.evaluations == []
+    assert outcome.completed_epoch == 66
+
+
+def test_train_segment_evaluates_a_start_epoch_no_other_segment_completed():
+    """The contrast. Same schedule, same start epoch, not resumed -> evaluated
+    exactly once, and the evaluation is recorded."""
+    algo, env = _build(steps_num=2, num_envs=4)
+    _start(algo, env)
+    seen = []
+    outcome = _run(algo, env, epochs=2, start_epoch=64,
+                   evaluate=lambda epoch: seen.append(int(epoch)) or {"epoch": epoch},
+                   evaluation_epochs=(0, 64, 128), resumed_from_boundary=False)
+    assert seen == [64]
+    assert outcome.evaluations == [{"epoch": 64}]
+
+
+def test_train_segment_still_evaluates_every_completed_scheduled_epoch():
+    """Anti-vacuity. The fix must not silence the completed-epoch evaluations
+    that are the campaign's whole point."""
+    algo, env = _build(steps_num=2, num_envs=4)
+    _start(algo, env)
+    seen = []
+    _run(algo, env, epochs=4, start_epoch=0,
+         evaluate=lambda epoch: seen.append(int(epoch)) or {"epoch": epoch},
+         evaluation_epochs=(0, 1, 3, 64), resumed_from_boundary=False)
+    assert seen == [0, 1, 3]
+
+
+# -- the writer fence: no file can be written for a non-owned epoch ---------
+
+def test_the_evaluation_writer_refuses_an_epoch_this_segment_did_not_complete(tmp_path):
+    """Structural backstop. Even if a future edit re-introduced a call for a
+    non-owned epoch, no ``selection_*.json`` could be written for it: the fault
+    is raised instead, and the evaluation is never even run."""
+    calls = []
+
+    def evaluate(epoch, deadline=None):
+        calls.append(int(epoch))
+        return ({"epoch": int(epoch), "kind": "selection", "evaluation": _evaluation(),
+                 "checkpoint": f"epoch_{epoch:04d}.pt"},
+                {"attempted_calls": 1, "completed_calls": 1, "worlds": 16})
+
+    totals = {"attempted": 0, "completed": 0}
+    paths = []
+    writer = R._evaluation_writer(evaluate, tmp_path, own_epochs=frozenset({0}),
+                                  deadline=1e9, totals=totals, paths=paths)
+    writer(0)
+    with pytest.raises(R.RunnerFault, match="did not complete"):
+        writer(64)
+
+    assert calls == [0], "the refused epoch must not be evaluated at all"
+    assert _written_epochs(tmp_path) == [0]
+    assert paths == [str(tmp_path / "selection_0000.json")]
+    assert totals == {"attempted": 16, "completed": 16}
+
+
+def _selection_filename_builders(source):
+    """``{function name: [template, ...]}`` for every site that builds a
+    ``selection_NNNN.json`` **filename**, found structurally over the AST.
+
+    Quoting-independent and formatting-independent by construction: an f-string
+    (either quote style), a ``%`` template, a ``str.format`` template and a plain
+    literal all reduce to the same shape here, so the invariant cannot be evaded
+    by respelling it. Read-side spellings are excluded by shape rather than by
+    name -- a glob contains ``*`` and the bare prefix does not end in ``.json`` --
+    so this binds **writers** only, and docstrings that quote ``selection_*.json``
+    are excluded for the same reason.
+    """
+    tree = ast.parse(source)
+    parent = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
+
+    def owner(node):
+        """The TOP-LEVEL function a node belongs to.
+
+        The write site is a closure inside ``_evaluation_writer``, so the nearest
+        enclosing ``FunctionDef`` is the inner ``run_evaluation``. The invariant is
+        about which module-level function *owns* the site, so the outermost one is
+        what this returns.
+        """
+        name = "<module>"
+        while node in parent:
+            node = parent[node]
+            if isinstance(node, ast.FunctionDef):
+                name = node.name
+        return name
+
+    def template(node):
+        if isinstance(node, ast.JoinedStr):
+            return "".join(part.value if isinstance(part, ast.Constant) else "{}"
+                           for part in node.values)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        return None
+
+    builders = {}
+    for node in ast.walk(tree):
+        text = template(node)
+        if (text is not None and text.startswith("selection_")
+                and text.endswith(".json") and "*" not in text):
+            builders.setdefault(owner(node), []).append(text)
+    return builders
+
+
+def test_the_writer_is_the_only_place_a_selection_record_is_written():
+    """Binding, and non-vacuous. One fenced writer, so the fence cannot be
+    bypassed by a second write site -- and the check is proven to FAIL when that
+    property is actually broken, in each spelling the old substring count missed."""
+    source = Path(R.__file__).read_text(encoding="utf-8")
+    builders = _selection_filename_builders(source)
+    assert list(builders) == ["_evaluation_writer"], builders
+    assert len(builders["_evaluation_writer"]) == 1
+
+    # Anti-vacuity. Each mutant adds a genuine second writer, spelled the way the
+    # superseded `source.count('f"selection_{')` assertion could not see.
+    marker = "        path = out_dir / f\"selection_{epoch:04d}.json\"\n"
+    assert source.count(marker) == 1
+    smuggled = {
+        "single_quoted_fstring": "        other = out_dir / f'selection_{epoch:04d}.json'\n",
+        "percent_format": '        other = out_dir / ("selection_%04d.json" % epoch)\n',
+        "str_format": '        other = out_dir / "selection_{:04d}.json".format(epoch)\n',
+        "plain_literal": '        other = out_dir / "selection_0064.json"\n',
+    }
+    for label, line in smuggled.items():
+        mutant = source.replace(marker, marker + line, 1)
+        assert mutant != source, label
+        # The superseded assertion still passes on the mutant -- which is exactly why
+        # it was too weak -- while this one catches it.
+        assert mutant.count('f"selection_{') == 1, label
+        mutated = _selection_filename_builders(mutant)
+        assert len(mutated["_evaluation_writer"]) == 2, (label, mutated)
+
+    # And a second writer in another function is attributed to that function.
+    elsewhere = source.replace(
+        "def _worker_segment(args, *, build, clock, started, wrote, timing_clock=None) -> int:\n",
+        "def _sneaky_writer(out_dir, epoch):\n"
+        '    return out_dir / "selection_{:04d}.json".format(epoch)\n\n\n'
+        "def _worker_segment(args, *, build, clock, started, wrote, timing_clock=None) -> int:\n",
+        1)
+    assert elsewhere != source
+    assert sorted(_selection_filename_builders(elsewhere)) == [
+        "_evaluation_writer", "_sneaky_writer"]
+
+
+# -- the duplicate guard itself is untouched --------------------------------
+
+def test_a_genuine_duplicate_epoch_still_aborts_selection(tmp_path):
+    """Binding. The duplicate-epoch refusal is NOT weakened by this fix: real
+    cross-run contamination -- two evaluations of one epoch inside one run
+    directory, which is what a copied-in or re-run segment produces -- still
+    aborts with a set-level fault, and the record still names both."""
+    run = tmp_path / "run"
+    _trained_segment(run, 0, 64)
+    _trained_segment(run, 1, 64)
+
+    rc = R.main(["select", "--run-dir", str(run)])
+    assert rc == R.EXIT_RUNNER_FAULT
+    record = R.read_json(run / "selection.json")
+    assert record["status"] == "runner_fault"
+    assert record["fault"]["kind"] == "InvalidCandidateSetError"
+    assert "duplicate candidate 'epoch' 64" in record["fault"]["reason"]
+    assert record["selected"] is None
+    assert [entry["epoch"] for entry in record["checkpoint_status"]] == [64, 64]
+
+
+def test_the_duplicate_guard_is_not_routed_around_in_the_selection_layer():
+    """Binding, read off the source. The fix is upstream, in scheduling; the
+    selection layer gained no de-duplication, no preference rule and no
+    tolerance for two candidates sharing an epoch."""
+    tree = ast.parse(Path(R.__file__).read_text(encoding="utf-8"))
+    for name in ("collect_run_records", "select_run", "_delegate_set_fault",
+                 "_selection_record"):
+        node = next(item for item in ast.walk(tree)
+                    if isinstance(item, ast.FunctionDef) and item.name == name)
+        text = ast.unparse(node)
+        for forbidden in ("dedup", "seen_epoch", "unique", "prefer", "discard",
+                          "sorted(candidates", "candidates[-1]"):
+            assert forbidden not in text, f"{name} gained {forbidden!r}"
+
+
+# -- what this fix hides rather than fixes, and the truncation caveat -------
+
+#: What the IN-29 record must actually SAY, not merely mention. Each entry is the
+#: claim and the lowercase phrase that carries it; a bare mention satisfies none
+#: but the first.
+IN29_CLAIMS = (
+    ("names the issue", "in-29"),
+    ("the fix does not resolve it", "does not resolve"),
+    ("it stays open", "stays open"),
+    ("no cause is claimed", "no cause established"),
+    ("the magnitude", "1e-3"),
+    ("the reproducibility consequence", "not reproducible to better than"),
+    ("the tie-break consequence", "tie-break"),
+    ("the confound is named", "confound"),
+)
+
+
+def _flat(text):
+    """Whitespace-normalised prose: a docstring wraps its lines, so a phrase test
+    on the raw text would pass or fail on where the line happens to break."""
+    return " ".join((text or "").split()).lower()
+
+
+def _missing_in29_claims(docstring):
+    text = _flat(docstring)
+    return [claim for claim, phrase in IN29_CLAIMS if phrase not in text]
+
+
+def test_the_in29_cross_process_divergence_is_recorded_not_papered_over():
+    """Binding, and non-vacuous. Removing the duplicate stops the ~1e-3
+    cross-process evaluation divergence being VISIBLE; it does not resolve it.
+
+    The record must therefore *state* that, in the pinned source a campaign
+    operator reads -- not merely contain the characters ``IN-29``. Scoped to the
+    docstring of the function that implements the fix, and proven to fail on a
+    gutted paragraph."""
+    tree = ast.parse(Path(R.__file__).read_text(encoding="utf-8"))
+    node = next(item for item in ast.walk(tree)
+                if isinstance(item, ast.FunctionDef)
+                and item.name == "segment_evaluation_epochs")
+    docstring = ast.get_docstring(node)
+    assert _missing_in29_claims(docstring) == []
+    flat = _flat(docstring)
+
+    # Anti-vacuity: every way of hollowing the paragraph out is caught, including
+    # the bare mention the superseded substring assertion would have accepted.
+    for gutted in (
+            "See VALIDITY IN-29.",
+            "IN-29: the two evaluations differed. Cause unknown.",
+            "IN-29 stays open with no cause established; the fix hides it.",
+            "The divergence is about 1e-3 relative and IN-29 stays open.",
+            flat.replace("not reproducible to better than", "resolved"),
+            flat.replace("no cause established", "caused by the warp forward"),
+            flat.replace("tie-break", "ordering"),
+    ):
+        assert _missing_in29_claims(gutted), gutted[:60]
+        # ... and each gutted variant still satisfies the superseded assertion.
+    assert all("IN-29" in text or "1e-3" in text
+               for text in ("See VALIDITY IN-29.", "about 1e-3 relative"))
+
+
+def test_the_shared_deadline_truncation_consequence_is_recorded():
+    """Binding, requirement 5's caveat. The work deadline and the evaluation
+    deadline are one clock, so a genuine ``wall_cap`` truncation always ends that
+    segment. Acceptable, but it must not be mistaken later for a fault."""
+    source = Path(R.__file__).read_text(encoding="utf-8")
+    assert "wall_cap" in source
+    tree = ast.parse(source)
+    writer = next(node for node in ast.walk(tree)
+                  if isinstance(node, ast.FunctionDef) and node.name == "_evaluation_writer")
+    assert "wall_cap" in (ast.get_docstring(writer) or "")
