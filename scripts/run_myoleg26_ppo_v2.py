@@ -50,6 +50,96 @@ RESULT_SCHEMA = "myoleg26-ppo-v2-segment-result-v1"
 SELECTION_SCHEMA = "myoleg26-ppo-v2-run-selection-v1"
 LAUNCH_SCHEMA = "myoleg26-ppo-v2-launch-v1"
 CHILD_SCHEMA = "myoleg26-ppo-v2-child-v1"
+FREEZE_SCHEMA = "myoleg26-ppo-v2-freeze-v1"
+
+#: Paths pinned **by name**, because the ``msk_warp/**/*.py`` rglob that collects
+#: the package sources covers no top-level script and no config file. v1's
+#: auto-set has exactly this hole: it pinned its runner and missed its
+#: summarizer. Every driver the campaign actually executes is therefore named
+#: here, or it is not pinned at all -- and an unpinned driver that really runs is
+#: the provenance hole this freeze exists to close.
+PINNED_PATHS = (
+    # The campaign driver itself: launch, worker, select and freeze.
+    "scripts/run_myoleg26_ppo_v2.py",
+    # The reporting driver. It is executed against the campaign's artifacts, so
+    # a change to how results are aggregated is a change to the experiment.
+    "scripts/summarize_myoleg26_ppo_v2.py",
+    # The v2 arm configuration. The rglob does not collect it, and the worker
+    # loads it on every segment through ``P.V2_CONFIG``.
+    "msk_warp/configs/experiments/myoleg26_ppo_v2.yaml",
+)
+
+#: Deliberate exclusions, each on **stated grounds**, so that none of them can be
+#: mistaken for an oversight by a later reader.
+EXCLUDED_PATHS = {
+    "scripts/diag_myoleg26_forward_data_mode.py": (
+        "Unit 1's bounded forward diagnostic, not a training input: the campaign "
+        "never imports or executes it, and ruling R05 adjudicated it out of the "
+        "pin set. Pinning it would let an unrelated diagnostic edit invalidate a "
+        "running campaign freeze."),
+    "docs/research/2026-09-14-myoleg-session/orchestration/byte_exact_runner.py": (
+        "A transcript wrapper, not a training input: it neither imports nor "
+        "modifies the target command. It lives under ignored docs/, so it is "
+        "untracked and could never satisfy this freeze's ls-files requirement; "
+        "its sha256 is recorded in the smoke record instead, where it belongs as "
+        "evidence plumbing rather than as an experiment input."),
+    "msk_warp/configs/experiments/myoleg26_baseline_v1.json": (
+        "The v1 manifest. It is never regenerated, re-hashed or overwritten by "
+        "the v2 freeze: its post-Task-2 refusal is a documented boundary, and v1 "
+        "must be reproduced only at its own original source commits."),
+    "tests/": (
+        "No tests/ entry is pinned, following the v1 convention. The tests verify "
+        "the drivers but are not inputs the campaign executes, and a test edit "
+        "must not invalidate a campaign that is already running."),
+}
+
+#: Why the recorded hashes are raw working-tree bytes, and why that is not the
+#: same number as a git blob id (VALIDITY IN-25).
+FREEZE_EOL_NOTE = (
+    "Freeze hashes are WORKING-TREE bytes, because those are the bytes that "
+    "execute. With core.autocrlf=true and the repository's '* text=auto' "
+    "attribute rule, a file not pinned 'text eol=lf' is materialised with CRLF "
+    "on checkout, so its raw sha256 legitimately differs from its git blob "
+    "content hash. Raw bytes, the filtered working-tree blob id and the "
+    "committed HEAD blob id are three distinct identities; they are recorded "
+    "separately, compared separately, and a mismatch in one is never excused by "
+    "agreement in another. Nothing is normalised, and no git attribute rule is "
+    "added, removed or changed by this freeze."
+)
+
+#: Host-side timing phases. ``train_segment`` measures the first four and the
+#: worker adds the last two. See :data:`TIMING_ATTRIBUTION_NOTE`.
+TIMING_SEGMENT_PHASES = ("rollout_s", "update_s", "evaluation_s", "diagnostics_s")
+TIMING_WORKER_PHASES = ("build_s", "capture_publish_s")
+TIMING_PHASES = TIMING_SEGMENT_PHASES + TIMING_WORKER_PHASES
+
+TIMING_ATTRIBUTION = "unsynchronized_host_side"
+
+TIMING_ATTRIBUTION_NOTE = (
+    "Host-side wall between phase boundaries, read from an unsynchronized clock. "
+    "CUDA work is asynchronous, so GPU time may be attributed across phase "
+    "boundaries, and a cheap-looking phase may reflect attribution rather than "
+    "cost. The split is a diagnostic for where the time roughly went; the "
+    "headline number stays the parent's whole-process wall, which is "
+    "sync-agnostic. No synchronize call was added, because that would alter the "
+    "measured behaviour of the stream being measured."
+)
+
+TIMING_RESIDUAL_NOTE = (
+    "The parts are not forced to sum: the unattributed residual is reported so a "
+    "reader can see what is unaccounted instead of assuming the split is "
+    "exhaustive. It is a computed subtraction, never clamped and never assumed "
+    "zero, and it is meaningful only when both clocks are the real perf_counter "
+    "-- under an injected fake control clock total_wall_seconds is arbitrary and "
+    "the subtraction is not a measurement."
+)
+
+TIMING_V1_COMPARABILITY = (
+    "NOT comparable to the v1 synchronized breakdown: v1's timers wrapped every "
+    "phase in torch.cuda.synchronize, and these do not. Do not place the two "
+    "side by side, and note that v1's wall times were themselves declared not to "
+    "be a benchmark baseline."
+)
 
 #: Process exit codes. The launcher inspects the **child's** code, never a
 #: wrapper's.
@@ -103,6 +193,17 @@ class RunnerFault(Exception):
 
 class CensorRun(Exception):
     """A numerical/structural failure that censors the run for diagnosis. Exit 3."""
+
+
+class FreezeError(ValueError):
+    """The freeze does not match the working tree, or cannot be built.
+
+    A class of its own, deliberately: the module must never contain an
+    ``except ValueError`` handler, because the two upstream selection refusal
+    classes are both ``ValueError`` subclasses and catching their base would
+    merge them. Still a ``ValueError`` subclass, so existing broad handling and
+    the v1 freeze's contract are preserved.
+    """
 
 
 class WorkDeadlineExceeded(Exception):
@@ -338,6 +439,212 @@ def resume_boundary(path, algo, env, *, epoch, seed, segment_index,
 def _diff_names(recorded, current) -> str:
     names = sorted(set(recorded) | set(current))
     return ", ".join(name for name in names if recorded.get(name) != current.get(name))
+
+
+# ---------------------------------------------------------------------------
+# The v2 experiment freeze
+# ---------------------------------------------------------------------------
+
+def _git_output(root, *args, run=subprocess.run) -> str:
+    result = _git(root, *args, run=run)
+    if result.returncode != 0:
+        raise FreezeError(f"git {' '.join(str(item) for item in args)} failed in {root}: "
+                         f"{(result.stderr or '').strip()}")
+    return (result.stdout or "").strip()
+
+
+def _eol(raw) -> str:
+    """The line-ending form of these exact bytes, or ``binary``.
+
+    A NUL byte means binary, which is git's own text/binary heuristic. Without
+    that test a mesh or texture would be labelled ``mixed`` merely because its
+    payload happens to contain CR LF bytes, which would be a meaningless claim
+    about a file that has no line endings at all.
+    """
+    if b"\0" in raw:
+        return "binary"
+    crlf = raw.count(b"\r\n")
+    bare = raw.count(b"\n") - crlf
+    if crlf and bare:
+        return "mixed"
+    if crlf:
+        return "crlf"
+    return "lf" if bare else "none"
+
+
+def freeze_identity(files, *, root=None, run=subprocess.run) -> dict:
+    """The two git identities and the EOL form of every pinned path (IN-25).
+
+    Reuses the runner's own :func:`source_identity`, so the three identity forms
+    are collected by one implementation rather than two. The raw map is **not**
+    returned: it is the freeze's ``files`` map, and this function refuses if the
+    two disagree, so the manifest cannot carry a raw hash that no longer matches
+    the bytes on disk.
+    """
+    root = Path(root or ROOT)
+    names = tuple(sorted(files))
+    identity = source_identity(root=root, files=names, run=run)
+    disagreeing = [name for name in names
+                   if identity["raw_sha256"].get(name) != files[name]]
+    if disagreeing:
+        raise FreezeError(
+            "raw working-tree bytes disagree with the supplied hashes (or the file is "
+            f"missing): {disagreeing}")
+    return {"working_tree_blob_sha1": identity["working_tree_blob_sha1"],
+            "head_blob_sha1": identity["head_blob_sha1"],
+            "head_status": identity["head_status"],
+            "eol": {name: _eol((root / name).read_bytes()) for name in names},
+            "note": FREEZE_EOL_NOTE}
+
+
+def freeze_record_v2(*, root=None, run=subprocess.run) -> dict:
+    """CPU-only provenance snapshot for the v2 campaign.
+
+    Mirrors ``run_myoleg26_baseline.freeze_record`` without changing it, and adds
+    what v1 lacks: every driver pinned by name (:data:`PINNED_PATHS`), the sealed
+    protocol snapshot and digest, and the three separate identity forms.
+
+    There is deliberately **no** ``smoke`` narrowing of the protocol. The sealed
+    snapshot *is* the preregistration; a narrowed copy of it would be a different
+    experiment wearing the same name. A test binds a temp manifest instead, and
+    :func:`validate_freeze_v2` takes ``smoke=True`` to skip only the
+    committed-bytes comparison.
+
+    A native evaluator added later carries its own separately hashed evaluation
+    provenance; this manifest is never retroactively rewritten to absorb it.
+    """
+    import importlib.metadata
+    import platform
+
+    import mujoco
+    import mujoco_warp
+    import numpy as np
+    import yaml
+
+    from msk_warp import resolve_model_path
+    from msk_warp.envs.myoleg26_task import MyoLegTaskContract
+
+    root = Path(root or ROOT)
+    config_path = Path(P.V2_CONFIG)
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    model_path = Path(resolve_model_path(cfg["params"]["env"]["model_path"])).resolve()
+    manifest_path = model_path.parent / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    files = {path.relative_to(root).as_posix(): sha256_file(path)
+             for path in (root / "msk_warp").rglob("*.py")}
+    for relative in PINNED_PATHS:
+        path = root / relative
+        if not path.is_file():
+            raise FreezeError(f"pinned input is missing: {relative}")
+        files[relative] = sha256_file(path)
+    files[manifest_path.relative_to(root).as_posix()] = sha256_file(manifest_path)
+    for relative, expected in manifest["files"].items():
+        path = (model_path.parent / relative).resolve()
+        if not path.is_relative_to(model_path.parent) or sha256_file(path) != expected:
+            raise FreezeError(f"Asset hash/path mismatch: {relative}")
+        files[path.relative_to(root).as_posix()] = expected
+
+    model = mujoco.MjModel.from_xml_path(str(model_path))
+    if (model.nq, model.nv, model.na, model.nu) != (47, 46, 26, 26):
+        raise FreezeError("Frozen official model dimensions changed")
+    if (model.opt.timestep != .002
+            or not model.opt.disableflags & int(mujoco.mjtDisableBit.mjDSBL_WARMSTART)):
+        raise FreezeError("Expected dt=.002 and warmstart disabled")
+    buffer = np.empty(mujoco.mj_sizeModel(model), dtype=np.uint8)
+    mujoco.mj_saveModel(model, buffer=buffer)
+
+    backend_path = Path(mujoco_warp.__file__).resolve().parent
+    backend_root = Path(_git_output(backend_path, "rev-parse", "--show-toplevel", run=run))
+    if _git_output(backend_root, "status", "--porcelain", "--untracked-files=no", run=run):
+        raise FreezeError("Backend has tracked modifications")
+
+    # A preregistration invariant, re-verified at freeze time rather than trusted:
+    # the five v2 reset blocks stay mutually disjoint and disjoint from v1's.
+    P.assert_reset_blocks_disjoint()
+
+    identity = freeze_identity(files, root=root, run=run)
+    return {
+        "schema_version": FREEZE_SCHEMA,
+        "protocol": {**P.protocol_snapshot(), "digest": P.protocol_digest()},
+        "config": cfg,
+        "config_path": config_path.relative_to(root).as_posix(),
+        "task_contract": MyoLegTaskContract().as_dict(),
+        "files": files,
+        "files_git": {key: identity[key] for key in
+                      ("working_tree_blob_sha1", "head_blob_sha1", "head_status")},
+        "files_eol": identity["eol"],
+        "eol_note": FREEZE_EOL_NOTE,
+        "pinned_paths": list(PINNED_PATHS),
+        "excluded_paths": dict(EXCLUDED_PATHS),
+        "model_path": model_path.relative_to(root).as_posix(),
+        "model_sha256": sha256_file(model_path),
+        "compiled_model_sha256": hashlib.sha256(buffer.tobytes()).hexdigest(),
+        "backend": {"head": _git_output(backend_root, "rev-parse", "HEAD", run=run)},
+        "packages": {name: importlib.metadata.version(name) for name in
+                     ("mujoco", "mujoco-warp", "warp-lang", "torch", "numpy", "PyYAML")},
+        "python": platform.python_version(),
+    }
+
+
+def validate_freeze_v2(path, *, smoke=False, root=None, run=subprocess.run) -> dict:
+    """Refuse unless the manifest and every declared input are what they claim.
+
+    The manifest cannot contain its own hash, so it is **not** self-referential:
+    it is bound by (a) its committed bytes equalling its working-tree bytes,
+    (b) every declared source's on-disk bytes matching its recorded hash, and
+    (c) every declared source being committed and clean. A manifest that pinned
+    itself is refused outright, because its own commit would create the very
+    identity it claims to verify.
+
+    ``smoke=True`` skips **only** (a), so a temp manifest can be validated.
+    """
+    root = Path(root or ROOT)
+    path = Path(path).resolve()
+    # Asked as a predicate rather than caught as a ValueError: this module must
+    # contain no ``except ValueError`` handler at all, or it would be able to
+    # merge the two upstream selection refusal classes.
+    relative = path.relative_to(root).as_posix() if path.is_relative_to(root) else None
+
+    if not smoke:
+        if relative is None:
+            raise FreezeError(
+                f"the freeze manifest must live inside {root} to be bound to its "
+                f"committed bytes, but it is at {path}")
+        committed = subprocess.run(["git", "-C", str(root), "show", f"HEAD:{relative}"],
+                                   check=True, capture_output=True).stdout
+        if committed != path.read_bytes():
+            raise FreezeError("Freeze manifest must exactly match its committed bytes")
+
+    frozen = json.loads(path.read_text(encoding="utf-8"))
+    if relative is not None and relative in (frozen.get("files") or {}):
+        raise FreezeError(
+            "the freeze manifest must not pin itself: a file cannot contain its own "
+            "hash, and a HEAD identity created by the manifest's own commit could "
+            "never be verified against anything")
+
+    current = freeze_record_v2(root=root, run=run)
+    # Later standalone modules may legitimately be added. Every existing pin
+    # stays pinned, in each identity class separately, and changing an import in
+    # an existing module still changes its hash.
+    current["files"] = {name: current["files"].get(name) for name in frozen["files"]}
+    current["files_git"] = {
+        key: {name: (current["files_git"].get(key) or {}).get(name) for name in names}
+        for key, names in (frozen.get("files_git") or {}).items()}
+    current["files_eol"] = {name: current["files_eol"].get(name)
+                            for name in (frozen.get("files_eol") or {})}
+    if current != frozen:
+        changed = [key for key in sorted(set(current) | set(frozen))
+                   if current.get(key) != frozen.get(key)]
+        raise FreezeError(f"Frozen experiment mismatch: {changed}")
+
+    for declared in frozen["files"]:
+        # Content equality alone is insufficient: every input must be committed.
+        if _git_output(root, "status", "--porcelain", "--", declared, run=run):
+            raise FreezeError(f"Frozen input has uncommitted changes: {declared}")
+        if _git(root, "ls-files", "--error-unmatch", "--", declared, run=run).returncode:
+            raise FreezeError(f"Frozen input is not committed: {declared}")
+    return frozen
 
 
 # ---------------------------------------------------------------------------
@@ -647,6 +954,10 @@ class SegmentOutcome:
     epoch_events: list = field(default_factory=list)
     evaluations: list = field(default_factory=list)
     counters: SegmentCounters = field(default_factory=SegmentCounters)
+    #: Host-side phase attribution, observation only. Zero when no timing clock
+    #: was supplied, which happens only on an explicit in-process call.
+    timers: dict = field(
+        default_factory=lambda: {phase: 0.0 for phase in TIMING_SEGMENT_PHASES})
 
 
 def _install_counted_step(env, recorder, counters, *, clock, work_deadline):
@@ -726,7 +1037,8 @@ def _censor_nonfinite_parameters(algo) -> None:
 
 def train_segment(algo, env, *, start_epoch, end_epoch, max_epochs_total, clock,
                   work_deadline, recorder, capture_reserve_s=DEFAULT_CAPTURE_RESERVE_S,
-                  evaluate=None, evaluation_epochs=(), diagnostics=None) -> SegmentOutcome:
+                  evaluate=None, evaluation_epochs=(), diagnostics=None,
+                  timing_clock=None) -> SegmentOutcome:
     """Train one bounded segment, stopping only at completed epoch boundaries.
 
     The deadline is tested in three places, because any one of them alone leaves
@@ -739,11 +1051,26 @@ def train_segment(algo, env, *, start_epoch, end_epoch, max_epochs_total, clock,
     moment an epoch is entered and not completed it becomes ``False``, and the
     caller must then publish nothing and fall back to the parent segment: a
     partially updated epoch is never published or labelled as a boundary.
+
+    ``timing_clock`` is a **separate, observation-only** clock. Every deadline
+    comparison and both stop-policy maxima read ``clock`` exactly as before, and
+    no timer value ever enters a comparison, so the instrumentation cannot become
+    a deadline input. Keeping the two clocks apart is what makes that provable:
+    with ``timing_clock=None`` this function adds no read to ``clock`` at all,
+    which the tests assert by comparing read counts.
     """
     wanted_evaluations = {int(value) for value in evaluation_epochs}
     outcome = SegmentOutcome(completed_epoch=int(start_epoch), boundary_is_live=True,
                              stop_reason="epoch_budget")
     counters = outcome.counters
+    timers = outcome.timers
+
+    def _mark():
+        return timing_clock() if timing_clock is not None else 0.0
+
+    def _charge(phase, since):
+        if timing_clock is not None:
+            timers[phase] += float(timing_clock() - since)
     restore = _install_counted_step(env, recorder, counters, clock=clock,
                                     work_deadline=work_deadline)
     begin_epoch = getattr(env, "begin_epoch", None)
@@ -757,26 +1084,36 @@ def train_segment(algo, env, *, start_epoch, end_epoch, max_epochs_total, clock,
         # nonfinite location. Catching it here names the real cause.
         _censor_nonfinite_parameters(algo)
         if evaluate is not None and int(start_epoch) in wanted_evaluations:
+            mark = _mark()
             outcome.evaluations.append(evaluate(int(start_epoch)))
+            _charge("evaluation_s", mark)
         for epoch in range(int(start_epoch), int(end_epoch)):
             if clock() + EPOCH_SAFETY_FACTOR * epoch_cost + capture_reserve_s > work_deadline:
                 outcome.stop_reason = "work_deadline_epoch_boundary"
                 break
             recorder.reset_epoch()
             epoch_started = clock()
+            mark = _mark()
             if callable(begin_epoch):
                 begin_epoch(epoch=epoch, max_epochs=max_epochs_total)
             algo.collect_rollout()
+            _charge("rollout_s", mark)
             if clock() + EPOCH_SAFETY_FACTOR * update_cost + capture_reserve_s > work_deadline:
                 raise WorkDeadlineExceeded(
                     "the remaining budget cannot fund another update plus the checkpoint, so "
                     "the update was never started and this epoch is censored")
             update_started = clock()
+            mark = _mark()
             try:
                 losses = algo.update()
             except WorkDeadlineExceeded:
                 counters.partial_update_cost_s += float(clock() - update_started)
+                # A partial update's wall is attributed to the update phase, and is
+                # *also* reported on its own as accounting.partial_update_cost_s.
+                # The two are never added together anywhere.
+                _charge("update_s", mark)
                 raise
+            _charge("update_s", mark)
             update_cost = max(update_cost, float(clock() - update_started))
             _censor_nonfinite_losses(losses)
             _censor_nonfinite_parameters(algo)
@@ -788,14 +1125,18 @@ def train_segment(algo, env, *, start_epoch, end_epoch, max_epochs_total, clock,
             counters.boundary_control_calls = counters.returned_control_calls
             outcome.losses.append(
                 {"epoch": completed, **{key: float(value) for key, value in losses.items()}})
+            mark = _mark()
             record = {"epoch": completed, "events": list(recorder.events),
                       "summary": _episode_event_summary(recorder.events)}
             if diagnostics:
                 record["diagnostics"] = epoch_diagnostics(algo)
             outcome.epoch_events.append(record)
+            _charge("diagnostics_s", mark)
             epoch_cost = max(epoch_cost, float(clock() - epoch_started))
             if evaluate is not None and completed in wanted_evaluations:
+                mark = _mark()
                 outcome.evaluations.append(evaluate(completed))
+                _charge("evaluation_s", mark)
     except WorkDeadlineExceeded as error:
         outcome.boundary_is_live = False
         outcome.stop_reason = "work_deadline_partial_epoch"
@@ -1386,23 +1727,28 @@ def _write_refusal_result(args, error, *, clock, started, wrote) -> None:
         return          # an unwritable record is simply absent; the bound applies
 
 
-def run_worker(args, *, build=None, clock=time.perf_counter) -> int:
+def run_worker(args, *, build=None, clock=time.perf_counter, timing_clock=None) -> int:
     """Train one bounded segment in the foreground. Never opens the ledger.
 
     A refusal that provably precedes training leaves an explicit zero-counter
     record so the parent can charge what it measured; once training has begun the
     real record is written instead, and the cheap path is unreachable.
+
+    ``timing_clock`` is resolved to the real ``perf_counter`` downstream, so the
+    phase split is **on by default**: a campaign launcher that never mentions it
+    still records one. There is no CLI flag that turns it off.
     """
     started = clock()
     wrote = {"training_began": False}
     try:
-        return _worker_segment(args, build=build, clock=clock, started=started, wrote=wrote)
+        return _worker_segment(args, build=build, clock=clock, started=started,
+                               wrote=wrote, timing_clock=timing_clock)
     except RunnerRefusal as error:
         _write_refusal_result(args, error, clock=clock, started=started, wrote=wrote)
         raise
 
 
-def _worker_segment(args, *, build, clock, started, wrote) -> int:
+def _worker_segment(args, *, build, clock, started, wrote, timing_clock=None) -> int:
     plan = resolve_plan(args)
     out_dir = plan.out_dir
     if not out_dir.is_dir():
@@ -1417,7 +1763,14 @@ def _worker_segment(args, *, build, clock, started, wrote) -> int:
     work_deadline = started + plan.work_deadline_s
     capture_reserve_s = float(getattr(args, "capture_reserve_s", DEFAULT_CAPTURE_RESERVE_S))
     spec = P.stage(plan.stage)
+    # The production default is ON, resolved here rather than by the caller, so a
+    # driver that never mentions timing still records the split. The only OFF path
+    # is an explicit in-process ``train_segment(timing_clock=None)`` call.
+    timing = timing_clock or time.perf_counter
+    build_started = timing()
     context = (build or _build_runtime)(args, plan)
+    build_s = float(timing() - build_started)
+    capture_publish_s = 0.0
 
     recorder = EpisodeEventRecorder(context.env.num_envs, context.control_dt,
                                     device=getattr(context.env, "device", "cpu"))
@@ -1479,9 +1832,10 @@ def _worker_segment(args, *, build, clock, started, wrote) -> int:
             capture_reserve_s=capture_reserve_s,
             evaluate=run_evaluation if context.evaluate is not None else None,
             evaluation_epochs=P.evaluation_epochs(spec.epoch_cap_per_seed),
-            diagnostics=True)
+            diagnostics=True, timing_clock=timing)
         # The single capture site, reached only at a live completed boundary.
         if outcome.boundary_is_live and outcome.completed_epochs > 0:
+            capture_started = timing()
             extra = segment_extra(
                 stage=plan.stage, recipe=plan.recipe, seed=plan.seed,
                 segment_index=plan.segment_index, parent_segment_sha256=parent_sha256,
@@ -1491,6 +1845,7 @@ def _worker_segment(args, *, build, clock, started, wrote) -> int:
                 context.algo, context.env, out_dir / "segment.ptc",
                 epoch=outcome.completed_epoch, extra=extra,
                 label=f"{plan.stage}-{plan.recipe}-s{plan.seed}-g{plan.segment_index}")
+            capture_publish_s += float(timing() - capture_started)
     except Exception as error:      # recorded for diagnosis, never retried
         unexpected = f"{type(error).__name__}: {error}"
         outcome = locals().get("outcome") or SegmentOutcome(
@@ -1534,6 +1889,24 @@ def _worker_segment(args, *, build, clock, started, wrote) -> int:
 
     valid_boundary = (published["path"] if published is not None
                       else (str(plan.parent_segment) if plan.parent_segment else None))
+    # One read of the control clock, exactly as before; hoisted only so that the
+    # timing record and the result report the same number.
+    wall_seconds = float(clock() - started)
+    timers = dict(outcome.timers)
+    timers["build_s"] = build_s
+    timers["capture_publish_s"] = capture_publish_s
+    attributed = sum(timers[phase] for phase in TIMING_PHASES)
+    timing_record = {
+        "attribution": TIMING_ATTRIBUTION,
+        "available": True,
+        **{phase: timers[phase] for phase in TIMING_PHASES},
+        "attributed_sum_s": attributed,
+        "total_wall_seconds": wall_seconds,
+        "unattributed_residual_s": wall_seconds - attributed,
+        "attribution_note": TIMING_ATTRIBUTION_NOTE,
+        "residual_note": TIMING_RESIDUAL_NOTE,
+        "v1_comparability": TIMING_V1_COMPARABILITY,
+    }
     result = {
         "schema_version": RESULT_SCHEMA, "runner_schema": SCHEMA_VERSION,
         "stage": plan.stage, "recipe": plan.recipe, "seed": plan.seed,
@@ -1565,7 +1938,8 @@ def _worker_segment(args, *, build, clock, started, wrote) -> int:
         "evaluations": evaluation_paths,
         "work_deadline_s": plan.work_deadline_s,
         "capture_reserve_s": capture_reserve_s,
-        "wall_seconds": float(clock() - started),
+        "timing_seconds": timing_record,
+        "wall_seconds": wall_seconds,
     }
     write_json_exclusive(result_path, result)
 
@@ -1602,6 +1976,31 @@ def run_select(args) -> int:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+def run_freeze(args) -> int:
+    """Write or validate the v2 experiment freeze.
+
+    A separate subcommand rather than a top-level flag: the three existing modes
+    are reviewed and merged, and making the mode optional would change their
+    parse semantics for a spelling.
+    """
+    if args.write_freeze:
+        path = Path(args.write_freeze)
+        sha256 = write_json_exclusive(path, freeze_record_v2())
+        print(f"freeze written: {path} sha256={sha256}")
+        print("commit these bytes, then validate: the manifest is bound by its "
+              "committed bytes, never by its own hash")
+        return EXIT_OK
+    path = Path(args.validate_freeze)
+    try:
+        frozen = validate_freeze_v2(path, smoke=bool(args.smoke))
+    except (FreezeError, P.ProtocolError) as error:
+        print(f"FREEZE INVALID: {error}", file=sys.stderr)
+        return EXIT_REFUSED
+    print(f"freeze valid: {path} ({len(frozen['files'])} pinned inputs, protocol "
+          f"{(frozen.get('protocol') or {}).get('digest')})")
+    return EXIT_OK
+
 
 def _add_identity_arguments(parser) -> None:
     parser.add_argument("--stage", required=True, choices=list(P.STAGE_ORDER))
@@ -1646,6 +2045,15 @@ def build_parser() -> argparse.ArgumentParser:
     select = modes.add_parser("select", help="select the best checkpoint of ONE run/arm")
     select.add_argument("--run-dir", required=True)
     select.add_argument("--out", default=None)
+
+    freeze = modes.add_parser("freeze", help="write or validate the v2 experiment freeze")
+    action = freeze.add_mutually_exclusive_group(required=True)
+    action.add_argument("--write-freeze", metavar="PATH", default=None,
+                        help="write a new manifest to PATH, which must not exist")
+    action.add_argument("--validate-freeze", metavar="PATH", default=None,
+                        help="validate the manifest at PATH against the working tree")
+    freeze.add_argument("--smoke", action="store_true",
+                        help="skip ONLY the committed-bytes comparison, for a temp manifest")
     return parser
 
 
@@ -1656,6 +2064,8 @@ def main(argv=None) -> int:
             return run_launch(args)
         if args.mode == "worker":
             return run_worker(args)
+        if args.mode == "freeze":
+            return run_freeze(args)
         return run_select(args)
     except RunnerRefusal as error:
         print(f"REFUSED: {error}", file=sys.stderr)
