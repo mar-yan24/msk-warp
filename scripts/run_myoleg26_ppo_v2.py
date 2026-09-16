@@ -1099,6 +1099,13 @@ def segment_evaluation_epochs(evaluation_epochs, *, start_epoch, end_epoch,
     Idempotent: re-deriving over an already-derived set returns the same set, so
     the scheduling and the file-writing enforcement points cannot disagree.
 
+    ``resumed`` is checked by **identity, not truthiness**, the way an evaluation's
+    ``complete`` flag is: a falsy non-bool such as ``0``, ``""`` or ``None`` would
+    otherwise read as "not resumed" and reinstate the IN-28 duplicate, and a truthy
+    non-bool would silently drop epoch 0's own evaluation. Whether another segment
+    completed this segment's start epoch is a fact of the launch identity, so a
+    non-bool is a runner bug and is refused rather than guessed.
+
     **What this does NOT fix (VALIDITY IN-29).** The smoke measured the two
     epoch-64 evaluations of one checkpoint -- identical bytes, identical reset
     seeds, the same deterministic policy -- differing by about 1e-3 relative (one
@@ -1111,10 +1118,15 @@ def segment_evaluation_epochs(evaluation_epochs, *, start_epoch, end_epoch,
     reproducible to better than about 1e-3 relative**, and the documented exact
     four-component tie -> smaller-epoch tie-break will essentially never trigger.
     """
+    if not isinstance(resumed, bool):
+        raise RunnerFault(
+            f"'resumed' must be a bool, not {type(resumed).__name__}: {resumed!r}; "
+            "whether another segment completed this segment's start epoch is a fact of "
+            "the launch identity and is never read as a truthy value")
     start, end = int(start_epoch), int(end_epoch)
     scheduled = {int(value) for value in evaluation_epochs}
     own = {epoch for epoch in scheduled if start < epoch <= end}
-    if not resumed and start in scheduled:
+    if resumed is False and start in scheduled:
         own.add(start)
     return frozenset(own)
 

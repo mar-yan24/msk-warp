@@ -2983,6 +2983,28 @@ def test_the_permitted_evaluation_set_is_derived_from_the_round():
     assert covered == list(P.evaluation_epochs(384))
 
 
+def test_a_non_boolean_resumed_flag_is_refused_rather_than_guessed():
+    """Binding. Identity, not truthiness: a falsy non-bool would read as "not
+    resumed" and reinstate the IN-28 duplicate, and a truthy non-bool would
+    silently drop epoch 0's own evaluation. Both are refused instead."""
+    schedule = P.evaluation_epochs(128)
+    for value in (0, 1, "", "yes", None, [], [1], 0.0, 1.0):
+        with pytest.raises(R.RunnerFault, match="must be a bool"):
+            R.segment_evaluation_epochs(schedule, start_epoch=0, end_epoch=64,
+                                        resumed=value)
+    # The refusal reaches a caller before any training, through train_segment too.
+    algo, env = _build(steps_num=2, num_envs=4)
+    _start(algo, env)
+    with pytest.raises(R.RunnerFault, match="must be a bool"):
+        _run(algo, env, epochs=1, evaluation_epochs=schedule,
+             resumed_from_boundary=None)
+    # Real bools still work, in both directions.
+    assert R.segment_evaluation_epochs(schedule, start_epoch=0, end_epoch=64,
+                                       resumed=False) == frozenset({0, 64})
+    assert R.segment_evaluation_epochs(schedule, start_epoch=64, end_epoch=128,
+                                       resumed=True) == frozenset({128})
+
+
 def test_train_segment_makes_every_caller_declare_whether_it_resumed():
     """Structural. There is no default, so the defect cannot come back by a
     caller forgetting one keyword: omitting it is a TypeError, not a silent
@@ -3060,15 +3082,94 @@ def test_the_evaluation_writer_refuses_an_epoch_this_segment_did_not_complete(tm
     assert totals == {"attempted": 16, "completed": 16}
 
 
-def test_the_writer_is_the_only_place_a_selection_record_is_written():
-    """Binding, read off the source. One fenced writer, so the fence cannot be
-    bypassed by a second write site."""
-    source = Path(R.__file__).read_text(encoding="utf-8")
-    assert source.count('f"selection_{') == 1
+def _selection_filename_builders(source):
+    """``{function name: [template, ...]}`` for every site that builds a
+    ``selection_NNNN.json`` **filename**, found structurally over the AST.
+
+    Quoting-independent and formatting-independent by construction: an f-string
+    (either quote style), a ``%`` template, a ``str.format`` template and a plain
+    literal all reduce to the same shape here, so the invariant cannot be evaded
+    by respelling it. Read-side spellings are excluded by shape rather than by
+    name -- a glob contains ``*`` and the bare prefix does not end in ``.json`` --
+    so this binds **writers** only, and docstrings that quote ``selection_*.json``
+    are excluded for the same reason.
+    """
     tree = ast.parse(source)
-    writer = next(node for node in ast.walk(tree)
-                  if isinstance(node, ast.FunctionDef) and node.name == "_evaluation_writer")
-    assert 'selection_{' in ast.unparse(writer)
+    parent = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
+
+    def owner(node):
+        """The TOP-LEVEL function a node belongs to.
+
+        The write site is a closure inside ``_evaluation_writer``, so the nearest
+        enclosing ``FunctionDef`` is the inner ``run_evaluation``. The invariant is
+        about which module-level function *owns* the site, so the outermost one is
+        what this returns.
+        """
+        name = "<module>"
+        while node in parent:
+            node = parent[node]
+            if isinstance(node, ast.FunctionDef):
+                name = node.name
+        return name
+
+    def template(node):
+        if isinstance(node, ast.JoinedStr):
+            return "".join(part.value if isinstance(part, ast.Constant) else "{}"
+                           for part in node.values)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        return None
+
+    builders = {}
+    for node in ast.walk(tree):
+        text = template(node)
+        if (text is not None and text.startswith("selection_")
+                and text.endswith(".json") and "*" not in text):
+            builders.setdefault(owner(node), []).append(text)
+    return builders
+
+
+def test_the_writer_is_the_only_place_a_selection_record_is_written():
+    """Binding, and non-vacuous. One fenced writer, so the fence cannot be
+    bypassed by a second write site -- and the check is proven to FAIL when that
+    property is actually broken, in each spelling the old substring count missed."""
+    source = Path(R.__file__).read_text(encoding="utf-8")
+    builders = _selection_filename_builders(source)
+    assert list(builders) == ["_evaluation_writer"], builders
+    assert len(builders["_evaluation_writer"]) == 1
+
+    # Anti-vacuity. Each mutant adds a genuine second writer, spelled the way the
+    # superseded `source.count('f"selection_{')` assertion could not see.
+    marker = "        path = out_dir / f\"selection_{epoch:04d}.json\"\n"
+    assert source.count(marker) == 1
+    smuggled = {
+        "single_quoted_fstring": "        other = out_dir / f'selection_{epoch:04d}.json'\n",
+        "percent_format": '        other = out_dir / ("selection_%04d.json" % epoch)\n',
+        "str_format": '        other = out_dir / "selection_{:04d}.json".format(epoch)\n',
+        "plain_literal": '        other = out_dir / "selection_0064.json"\n',
+    }
+    for label, line in smuggled.items():
+        mutant = source.replace(marker, marker + line, 1)
+        assert mutant != source, label
+        # The superseded assertion still passes on the mutant -- which is exactly why
+        # it was too weak -- while this one catches it.
+        assert mutant.count('f"selection_{') == 1, label
+        mutated = _selection_filename_builders(mutant)
+        assert len(mutated["_evaluation_writer"]) == 2, (label, mutated)
+
+    # And a second writer in another function is attributed to that function.
+    elsewhere = source.replace(
+        "def _worker_segment(args, *, build, clock, started, wrote, timing_clock=None) -> int:\n",
+        "def _sneaky_writer(out_dir, epoch):\n"
+        '    return out_dir / "selection_{:04d}.json".format(epoch)\n\n\n'
+        "def _worker_segment(args, *, build, clock, started, wrote, timing_clock=None) -> int:\n",
+        1)
+    assert elsewhere != source
+    assert sorted(_selection_filename_builders(elsewhere)) == [
+        "_evaluation_writer", "_sneaky_writer"]
 
 
 # -- the duplicate guard itself is untouched --------------------------------
@@ -3109,13 +3210,63 @@ def test_the_duplicate_guard_is_not_routed_around_in_the_selection_layer():
 
 # -- what this fix hides rather than fixes, and the truncation caveat -------
 
+#: What the IN-29 record must actually SAY, not merely mention. Each entry is the
+#: claim and the lowercase phrase that carries it; a bare mention satisfies none
+#: but the first.
+IN29_CLAIMS = (
+    ("names the issue", "in-29"),
+    ("the fix does not resolve it", "does not resolve"),
+    ("it stays open", "stays open"),
+    ("no cause is claimed", "no cause established"),
+    ("the magnitude", "1e-3"),
+    ("the reproducibility consequence", "not reproducible to better than"),
+    ("the tie-break consequence", "tie-break"),
+    ("the confound is named", "confound"),
+)
+
+
+def _flat(text):
+    """Whitespace-normalised prose: a docstring wraps its lines, so a phrase test
+    on the raw text would pass or fail on where the line happens to break."""
+    return " ".join((text or "").split()).lower()
+
+
+def _missing_in29_claims(docstring):
+    text = _flat(docstring)
+    return [claim for claim, phrase in IN29_CLAIMS if phrase not in text]
+
+
 def test_the_in29_cross_process_divergence_is_recorded_not_papered_over():
-    """Binding. Removing the duplicate stops the ~1e-3 cross-process evaluation
-    divergence being VISIBLE; it does not resolve it. The consequence for the
-    ranking key must stay written down in the source a campaign operator reads."""
-    source = Path(R.__file__).read_text(encoding="utf-8")
-    assert "IN-29" in source
-    assert "1e-3" in source
+    """Binding, and non-vacuous. Removing the duplicate stops the ~1e-3
+    cross-process evaluation divergence being VISIBLE; it does not resolve it.
+
+    The record must therefore *state* that, in the pinned source a campaign
+    operator reads -- not merely contain the characters ``IN-29``. Scoped to the
+    docstring of the function that implements the fix, and proven to fail on a
+    gutted paragraph."""
+    tree = ast.parse(Path(R.__file__).read_text(encoding="utf-8"))
+    node = next(item for item in ast.walk(tree)
+                if isinstance(item, ast.FunctionDef)
+                and item.name == "segment_evaluation_epochs")
+    docstring = ast.get_docstring(node)
+    assert _missing_in29_claims(docstring) == []
+    flat = _flat(docstring)
+
+    # Anti-vacuity: every way of hollowing the paragraph out is caught, including
+    # the bare mention the superseded substring assertion would have accepted.
+    for gutted in (
+            "See VALIDITY IN-29.",
+            "IN-29: the two evaluations differed. Cause unknown.",
+            "IN-29 stays open with no cause established; the fix hides it.",
+            "The divergence is about 1e-3 relative and IN-29 stays open.",
+            flat.replace("not reproducible to better than", "resolved"),
+            flat.replace("no cause established", "caused by the warp forward"),
+            flat.replace("tie-break", "ordering"),
+    ):
+        assert _missing_in29_claims(gutted), gutted[:60]
+        # ... and each gutted variant still satisfies the superseded assertion.
+    assert all("IN-29" in text or "1e-3" in text
+               for text in ("See VALIDITY IN-29.", "about 1e-3 relative"))
 
 
 def test_the_shared_deadline_truncation_consequence_is_recorded():
