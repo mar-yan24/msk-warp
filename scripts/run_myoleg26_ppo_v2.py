@@ -597,6 +597,19 @@ def validate_freeze_v2(path, *, smoke=False, root=None, run=subprocess.run) -> d
     itself is refused outright, because its own commit would create the very
     identity it claims to verify.
 
+    Check (a) compares **git blob identities** -- the committed HEAD blob against
+    the filtered working-tree blob -- not raw bytes. That is a like-for-like
+    comparison and the only correct one here: this manifest is not pinned
+    ``text eol=lf``, and pinning it would mean changing the repository's git
+    attribute rules, which this unit must not do. A checkout therefore
+    materialises it with CRLF while its committed blob holds LF, so a raw-byte
+    comparison would refuse a manifest that is in fact exactly its committed
+    content. Any real content edit still changes the filtered blob id, so
+    nothing is relaxed: only the checkout filter's own line-ending
+    transformation is tolerated, and only for the manifest container. The
+    hashes the manifest *declares* are compared against raw on-disk bytes, and
+    those are never filtered or normalised.
+
     ``smoke=True`` skips **only** (a), so a temp manifest can be validated.
     """
     root = Path(root or ROOT)
@@ -611,10 +624,17 @@ def validate_freeze_v2(path, *, smoke=False, root=None, run=subprocess.run) -> d
             raise FreezeError(
                 f"the freeze manifest must live inside {root} to be bound to its "
                 f"committed bytes, but it is at {path}")
-        committed = subprocess.run(["git", "-C", str(root), "show", f"HEAD:{relative}"],
-                                   check=True, capture_output=True).stdout
-        if committed != path.read_bytes():
-            raise FreezeError("Freeze manifest must exactly match its committed bytes")
+        head = _git(root, "rev-parse", "--verify", "--quiet", f"HEAD:{relative}", run=run)
+        committed = (head.stdout or "").strip()
+        if head.returncode != 0 or not committed:
+            raise FreezeError(
+                f"the freeze manifest is not committed, so there are no committed bytes "
+                f"to bind it to: {relative}")
+        working = _git_output(root, "hash-object", "--", relative, run=run)
+        if committed != working:
+            raise FreezeError(
+                "Freeze manifest must exactly match its committed bytes: HEAD blob "
+                f"{committed} versus working-tree blob {working}")
 
     frozen = json.loads(path.read_text(encoding="utf-8"))
     if relative is not None and relative in (frozen.get("files") or {}):
@@ -1999,6 +2019,11 @@ def run_freeze(args) -> int:
         return EXIT_REFUSED
     print(f"freeze valid: {path} ({len(frozen['files'])} pinned inputs, protocol "
           f"{(frozen.get('protocol') or {}).get('digest')})")
+    # Surfaced rather than assumed: the manifest container's own line-ending form
+    # is a checkout artifact, and the blob-identity comparison above is what
+    # binds it. Its raw sha256 is reported so a reader can see which form is on
+    # disk right now.
+    print(f"manifest on disk: eol={_eol(path.read_bytes())} raw_sha256={sha256_file(path)}")
     return EXIT_OK
 
 

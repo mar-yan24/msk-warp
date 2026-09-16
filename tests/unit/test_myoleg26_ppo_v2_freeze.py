@@ -88,6 +88,16 @@ def _manifest(tmp_path, record, *, name="myoleg26_ppo_v2.json") -> Path:
     return path
 
 
+def _repo_with_pinned(tmp_path) -> Path:
+    """A repository whose one declared input really is committed and clean, so
+    the porcelain and ls-files checks run for real instead of against a fake."""
+    root = _repo(tmp_path)
+    (root / "pinned.py").write_bytes(b"x = 1\n")
+    _git(root, "add", "pinned.py")
+    _git(root, "commit", "--quiet", "-m", "pinned")
+    return root
+
+
 # ==========================================================================
 # Unit 1 -- the pin set: what the campaign executes
 # ==========================================================================
@@ -275,21 +285,48 @@ def test_an_untracked_pinned_input_fails_the_ls_files_check(tmp_path, monkeypatc
 
 
 def test_a_manifest_whose_committed_bytes_differ_from_disk_fails(tmp_path, monkeypatch):
-    """Binding. This is the self-reference-free binding: the manifest cannot
-    contain its own hash, so it is bound by a committed-bytes comparison."""
+    """Binding, on a real repository. This is the self-reference-free binding:
+    the manifest cannot contain its own hash, so it is bound by comparing its
+    committed blob identity against its filtered working-tree blob identity."""
+    root = _repo_with_pinned(tmp_path)
     record = _record()
-    path = _manifest(tmp_path, record)
-    committed = path.read_bytes()
-    monkeypatch.setattr(R, "ROOT", tmp_path)
-    monkeypatch.setattr(R, "_git", _clean_git)
+    path = _manifest(root, record)
+    _git(root, "add", path.name)
+    _git(root, "commit", "--quiet", "-m", "freeze")
+    monkeypatch.setattr(R, "ROOT", root)
     monkeypatch.setattr(R, "freeze_record_v2", lambda **kwargs: _record())
-    monkeypatch.setattr(R.subprocess, "run",
-                        lambda *a, **k: SimpleNamespace(returncode=0, stdout=committed))
     assert R.validate_freeze_v2(path) == record
 
     path.write_text(json.dumps(dict(record, extra=True)), encoding="utf-8")
     with pytest.raises(ValueError, match="committed bytes"):
         R.validate_freeze_v2(path)
+
+
+def test_a_checkout_materialised_crlf_manifest_still_validates(tmp_path, monkeypatch):
+    """Binding, and the reason the comparison is blob-to-blob. This manifest is
+    not pinned 'text eol=lf' -- pinning it would mean changing the repository's
+    git attribute rules, which this unit must not do -- so a checkout gives it
+    CRLF while its committed blob holds LF. Its content is unchanged, and a raw
+    byte comparison would refuse it for a line ending."""
+    root = _repo_with_pinned(tmp_path)
+    record = _record()
+    path = _manifest(root, record)
+    _git(root, "add", path.name)
+    _git(root, "commit", "--quiet", "-m", "freeze")
+    monkeypatch.setattr(R, "ROOT", root)
+    monkeypatch.setattr(R, "freeze_record_v2", lambda **kwargs: _record())
+    lf_bytes = path.read_bytes()
+
+    path.unlink()
+    _git(root, "checkout", "--", path.name)
+    crlf_bytes = path.read_bytes()
+
+    assert R._eol(crlf_bytes) == "crlf" and R._eol(lf_bytes) == "lf"
+    assert R.sha256_file(path) != __import__("hashlib").sha256(lf_bytes).hexdigest()
+    # Scoped to the manifest: git reports no change to it at all, even though
+    # its bytes on disk are now different.
+    assert not _git(root, "status", "--porcelain", "--", path.name).strip()
+    assert R.validate_freeze_v2(path) == record
 
 
 def test_the_manifest_never_pins_itself(tmp_path, monkeypatch):
