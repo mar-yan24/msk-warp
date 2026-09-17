@@ -51,7 +51,20 @@ from msk_warp.analysis import myoleg26_selection_v2 as S
 from msk_warp.analysis import ppo_v2_protocol as P
 from scripts import run_myoleg26_ppo_v2 as R
 
-SCHEMA_VERSION = "myoleg26-ppo-v2-summary-v1"
+#: Bumped to v2 when the report gained ``foreign_cost_totals``,
+#: ``review_stop_reasons`` and the ``foreign_recipe_runs`` campaign category.
+SCHEMA_VERSION = "myoleg26-ppo-v2-summary-v2"
+
+FOREIGN_RECIPE_NOTE = (
+    "A run whose recipe is not one of the sealed protocol's arms is FOREIGN to "
+    "this summary. It is named rather than dropped, its cost is totalled "
+    "separately rather than added to the campaign's, it never enters a recipe "
+    "table or a promotion decision, and its presence forces a review stop. A "
+    "protocol amendment's run -- probe E, for instance -- is such a run: it has "
+    "its own protocol digest and its own ledger, and a stage summary is not "
+    "where it may be read. Nothing here is hidden: both cost accounts are "
+    "reported side by side."
+)
 
 #: The five disjoint per-run statuses.
 STATUS_SELECTED = "selected"
@@ -433,6 +446,17 @@ def summarize_run(run_dir, *, freeze_sha256=None) -> dict:
     return record
 
 
+def _is_foreign(run) -> bool:
+    """Is this run's arm outside the sealed protocol's recipe set?
+
+    A refusal-only run carries no arm at all (attribution is deliberately absent
+    from a pre-training refusal record), so it is never foreign: there is nothing
+    to be foreign about. See :data:`FOREIGN_RECIPE_NOTE`.
+    """
+    recipe = run.get("recipe")
+    return recipe is not None and recipe not in P.RECIPES
+
+
 def _seed_outcome(run) -> P.SeedOutcome:
     behaviour = run["behaviour"]
     return P.SeedOutcome(seed=int(run["seed"]), complete=True,
@@ -524,15 +548,24 @@ def summarize(run_root, frozen_manifest, *, ledger=None) -> dict:
                                           "matches_supplied_manifest") is False],
         "segments_without_timing": sum((run.get("timing_seconds") or {}).get(
             "segments_without_timing", 0) for run in runs),
+        "foreign_recipe_runs": [
+            {"run_dir": run["run_dir"], "stage": run["stage"],
+             "recipe": run["recipe"], "seed": run["seed"]}
+            for run in runs if _is_foreign(run)],
     }
 
+    # Cost is split, not hidden: a foreign run's counters are reported on their
+    # own account so they can never be read as this campaign's spend.
     totals = {key: 0 for key in COST_KEYS}
+    foreign_totals = {key: 0 for key in COST_KEYS}
     for run in runs:
+        target = foreign_totals if _is_foreign(run) else totals
         for key in COST_KEYS:
-            totals[key] += int((run.get("accounting") or {}).get(key, 0) or 0)
+            target[key] += int((run.get("accounting") or {}).get(key, 0) or 0)
     totals["note"] = ("Cost totals only. Behaviour is never pooled across seeds or "
                       "policies, and an excluded, censored or incomplete run "
                       "contributes no behaviour number anywhere in this report.")
+    foreign_totals["note"] = FOREIGN_RECIPE_NOTE
 
     recipes, promotion, outcomes = {}, {}, {}
     for stage_key in P.STAGE_ORDER:
@@ -566,6 +599,9 @@ def summarize(run_root, frozen_manifest, *, ledger=None) -> dict:
 
     review = [stage_key for stage_key, decision in promotion.items()
               if decision.get("stop_for_review")]
+    review_reasons = [f"promotion:{stage_key}" for stage_key in sorted(review)]
+    if campaign["foreign_recipe_runs"]:
+        review_reasons.append("foreign_recipe_runs")
 
     confirmations = []
     for run_dir in run_dirs:
@@ -586,10 +622,13 @@ def summarize(run_root, frozen_manifest, *, ledger=None) -> dict:
         "runs": runs,
         "recipes": recipes,
         "promotion": promotion,
-        "review_stop": bool(review),
+        "review_stop": bool(review_reasons),
         "review_stop_stages": review,
+        "review_stop_reasons": review_reasons,
         "campaign": campaign,
         "campaign_cost_totals": totals,
+        "foreign_cost_totals": foreign_totals,
+        "foreign_recipe_note": FOREIGN_RECIPE_NOTE,
         "confirmation": confirmations or None,
         "walking_gate": dict(P.WALKING_GATE),
         "gate_note": GATE_NOTE,
@@ -612,7 +651,9 @@ def _ledger_summary(path, hashes) -> dict:
 
     path = Path(path)
     hashes[str(path.resolve())] = digest(path)
-    ledger = B.BudgetLedger.open(path)
+    # Read-only across protocols on purpose: this summarizer may be pointed at a
+    # ledger of a protocol it knows nothing about, and inspection grants nothing.
+    ledger = B.BudgetLedger.open(path, inspect=True)
     charged = ledger.charged()
     return {"path": str(path.resolve()), "protocol_digest": ledger.protocol_digest,
             "charged_s": charged["global_s"], "stage_s": charged["stage_s"],

@@ -31,6 +31,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from types import MappingProxyType
 
 _HERE = Path(__file__).resolve()
 ROOT = _HERE.parents[1]
@@ -44,13 +45,34 @@ if str(ROOT) not in sys.path:
 from msk_warp.analysis import myoleg26_selection_v2 as S
 from msk_warp.analysis import ppo_v2_budget as B
 from msk_warp.analysis import ppo_v2_protocol as P
+from msk_warp.analysis import ppo_v2_protocol_e as E
 
 SCHEMA_VERSION = "myoleg26-ppo-v2-runner-v1"
+
+#: The protocol versions this runner can execute, by CLI name.
+#:
+#: ``sealed`` is the sealed v2 campaign protocol -- the default, and what stage 1
+#: ran. ``probe-e`` is the authorised trust-region amendment, a DESCENDANT of the
+#: sealed protocol with its own digest and its own carried-forward ledger. The
+#: two are never interchangeable: each ledger asserts its own protocol digest on
+#: every launch, and the two recipe name sets are disjoint, so no run is ambiguous
+#: about which protocol and which ledger it belongs to. Selecting a protocol here
+#: does not authorise a launch; it only names which protocol a launch is under.
+PROTOCOLS = MappingProxyType({"sealed": P, "probe-e": E})
+
+#: Omitting ``--protocol`` means the sealed protocol, and a sealed launch's worker
+#: argv is left byte-identical to what stage 1 executed.
+DEFAULT_PROTOCOL = "sealed"
+
 RESULT_SCHEMA = "myoleg26-ppo-v2-segment-result-v1"
 SELECTION_SCHEMA = "myoleg26-ppo-v2-run-selection-v1"
 LAUNCH_SCHEMA = "myoleg26-ppo-v2-launch-v1"
 CHILD_SCHEMA = "myoleg26-ppo-v2-child-v1"
-FREEZE_SCHEMA = "myoleg26-ppo-v2-freeze-v1"
+#: Bumped to v2 when the manifest gained its ``amendments`` block: the sealed
+#: ``protocol`` block is unchanged and still carries digest 4c01fdc9...2169, and
+#: every authorised protocol amendment is recorded beside it with its own digest
+#: and its parent's, so a reader of the manifest alone can tell the two apart.
+FREEZE_SCHEMA = "myoleg26-ppo-v2-freeze-v2"
 
 #: Paths pinned **by name**, because the ``msk_warp/**/*.py`` rglob that collects
 #: the package sources covers no top-level script and no config file. v1's
@@ -226,6 +248,25 @@ class WorkDeadlineExceeded(Exception):
 # ---------------------------------------------------------------------------
 # Small shared helpers
 # ---------------------------------------------------------------------------
+
+def resolve_protocol(name):
+    """The protocol module named ``name``, or a refusal. See :data:`PROTOCOLS`."""
+    try:
+        return PROTOCOLS[name]
+    except (KeyError, TypeError):
+        raise RunnerRefusal(
+            f"unknown protocol {name!r}; this runner executes "
+            f"{tuple(PROTOCOLS)}") from None
+
+
+def launch_protocol(args):
+    """The protocol for this invocation. The sealed one unless asked otherwise."""
+    return resolve_protocol(getattr(args, "protocol", DEFAULT_PROTOCOL))
+
+
+def protocol_name(args) -> str:
+    return str(getattr(args, "protocol", DEFAULT_PROTOCOL))
+
 
 def sha256_file(path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -580,6 +621,11 @@ def freeze_record_v2(*, root=None, run=subprocess.run) -> dict:
     return {
         "schema_version": FREEZE_SCHEMA,
         "protocol": {**P.protocol_snapshot(), "digest": P.protocol_digest()},
+        # Authorised descendants of the sealed protocol, each with its own digest
+        # and the parent digest it descends from. The sealed block above is NOT
+        # modified by an amendment, so stage 1's ledger keeps validating.
+        "amendments": {E.AMENDMENT_ID: {**E.amendment_snapshot(),
+                                        "digest": E.protocol_digest()}},
         "config": cfg,
         "config_path": config_path.relative_to(root).as_posix(),
         "task_contract": MyoLegTaskContract().as_dict(),
@@ -761,7 +807,7 @@ class LaunchPlan:
         return self.end_epoch - self.start_epoch
 
 
-def resolve_plan(args, remaining=None) -> LaunchPlan:
+def resolve_plan(args, remaining=None, protocol=None) -> LaunchPlan:
     """Validate the whole launch identity before anything durable happens.
 
     Every refusal here precedes the reservation, so it leaves **no** ledger row
@@ -773,9 +819,10 @@ def resolve_plan(args, remaining=None) -> LaunchPlan:
     if not freeze.is_file():
         raise RunnerRefusal(f"freeze manifest is missing or is not a regular file: {freeze}")
 
+    protocol = P if protocol is None else protocol
     try:
-        spec = P.stage(args.stage)
-        P.recipe(args.recipe)
+        spec = protocol.stage(args.stage)
+        protocol.recipe(args.recipe)
     except P.ProtocolError as error:
         raise RunnerRefusal(str(error)) from error
     if args.seed not in spec.seeds:
@@ -798,6 +845,17 @@ def resolve_plan(args, remaining=None) -> LaunchPlan:
             f"above the sealed {P.SEGMENT_MAX_EPOCHS}-epoch segment ceiling")
     start_epoch = round_.start_epoch
     end_epoch = start_epoch + epochs
+
+    # A protocol amendment may authorise fewer cells than the stage it charges.
+    # The hook lives in the protocol module, so the sealed path gains no new
+    # constraint at all: the sealed protocol declares no such hook.
+    launchable = getattr(protocol, "assert_launchable", None)
+    if launchable is not None:
+        try:
+            launchable(stage=args.stage, recipe=args.recipe, seed=int(args.seed),
+                       segment_index=int(args.segment_index), epochs=epochs)
+        except P.ProtocolError as error:
+            raise RunnerRefusal(str(error)) from error
 
     parent_segment = args.parent_segment
     parent_result = args.parent_result
@@ -1455,6 +1513,10 @@ def _worker_argv(args, plan) -> list:
     if plan.parent_segment is not None:
         argv += ["--parent-segment", str(plan.parent_segment),
                  "--parent-result", str(plan.parent_result)]
+    # Appended ONLY when the protocol is not the sealed default, so a sealed
+    # launch executes the same argv stage 1 executed.
+    if protocol_name(args) != DEFAULT_PROTOCOL:
+        argv += ["--protocol", protocol_name(args)]
     return argv
 
 
@@ -1560,29 +1622,44 @@ def run_launch(args, *, ledger=None, spawn=subprocess.Popen, clock=time.perf_cou
     happens in the child, after the wall time for it has been claimed.
     """
     ledger_path = Path(args.ledger)
+    protocol = launch_protocol(args)
     if ledger is None:
         if probe is None and not getattr(args, "no_contention_probe", False):
             probe = gpu_contention_probe
         try:
             if getattr(args, "create_ledger", False) and not ledger_path.exists():
-                ledger = B.BudgetLedger.create(ledger_path, protocol_digest=P.protocol_digest(),
-                                               contention_probe=probe)
+                # A descendant protocol opens its own ledger at the settled spend
+                # of the one it descends from, so no cap is reset. The refusal for
+                # a missing carried balance comes from the ledger itself.
+                source = getattr(args, "carry_forward_from", None)
+                carried = None if not source else B.carry_forward(Path(source))
+                supplier = getattr(protocol, "ledger_provenance", None)
+                ledger = B.BudgetLedger.create(
+                    ledger_path, protocol_digest=protocol.protocol_digest(),
+                    protocol=protocol, carried=carried,
+                    provenance=None if supplier is None else supplier(),
+                    contention_probe=probe)
             else:
-                ledger = B.BudgetLedger.open(ledger_path, contention_probe=probe)
+                ledger = B.BudgetLedger.open(ledger_path, contention_probe=probe,
+                                             protocol=protocol)
         except B.BudgetError as error:
             raise RunnerRefusal(str(error)) from error
 
     try:
-        ledger.assert_protocol_unchanged(P.protocol_digest())
+        ledger.assert_protocol_unchanged(protocol.protocol_digest())
         remaining = ledger.remaining(args.stage, args.recipe, args.seed)
     except (B.BudgetError, P.ProtocolError) as error:
         raise RunnerRefusal(str(error)) from error
 
     # Every refusal up to here leaves the ledger byte-identical.
-    plan = resolve_plan(args, remaining)
+    plan = resolve_plan(args, remaining, protocol=protocol)
 
     launch_record = {
         "schema_version": LAUNCH_SCHEMA, "runner_schema": SCHEMA_VERSION,
+        # Which protocol this launch is under, and its digest. Recorded so a
+        # probe-E artefact names itself and can never be read as a stage-1 one.
+        "protocol": protocol_name(args),
+        "protocol_digest": protocol.protocol_digest(),
         "stage": plan.stage, "recipe": plan.recipe, "seed": plan.seed,
         "segment_index": plan.segment_index, "start_epoch": plan.start_epoch,
         "end_epoch": plan.end_epoch, "epochs": plan.epochs,
@@ -1722,37 +1799,97 @@ class WorkerContext:
     close: object = None
 
 
+def effective_config(*, protocol, stage_key, recipe_name, seed, device,
+                     logdir) -> dict:
+    """The arm's effective configuration: the pinned yaml plus the arm's overrides.
+
+    Pure, CPU-only and side-effect free apart from reading the freeze-pinned
+    yaml, which is deep-copied and never written. Nine keys are set for every
+    arm -- ``seed, device, logdir, num_actors, max_epochs, steps_num,
+    save_interval, gamma, entropy_coef`` -- and a protocol amendment's arm may
+    additionally override the trust-region keys **its own protocol declares**.
+    No other key is ever touched, so every remaining hyperparameter stays at the
+    pinned v1 value, and the variation is configuration rather than new
+    algorithm code.
+    """
+    import copy
+    import yaml
+
+    spec = protocol.stage(stage_key)
+    arm = protocol.recipe(recipe_name)
+    cfg = copy.deepcopy(yaml.safe_load(Path(P.V2_CONFIG).read_text(encoding="utf-8")))
+    cfg["params"]["general"].update(seed=int(seed), device=str(device),
+                                    logdir=str(logdir))
+    cfg["params"]["env"]["num_actors"] = P.NUM_WORLDS
+    cfg["params"]["config"].update(
+        max_epochs=spec.epoch_cap_per_seed, steps_num=P.CONTROLS_PER_WORLD_PER_EPOCH,
+        save_interval=0, gamma=arm.gamma, entropy_coef=arm.entropy_coef)
+    overrides = dict(getattr(arm, "overrides", None) or {})
+    declared = tuple(getattr(protocol, "TRUST_REGION_KEYS", ()))
+    outside = sorted(set(overrides) - set(declared))
+    if outside:
+        raise RunnerRefusal(
+            f"arm {arm.name!r} declares overrides {outside} outside its "
+            f"protocol's declared keys {declared}; an arm may not move a "
+            "hyperparameter its protocol did not name")
+    unknown = sorted(key for key in overrides
+                     if key not in cfg["params"]["config"])
+    if unknown:
+        raise RunnerRefusal(
+            f"arm {arm.name!r} overrides {unknown}, which the pinned "
+            "configuration does not declare; an override that names no pinned "
+            "key would silently vary nothing")
+    cfg["params"]["config"].update(overrides)
+    return cfg
+
+
+def assert_built_arm(algo, *, protocol, arm) -> None:
+    """Refuse unless the built algorithm really carries the requested arm.
+
+    Positive verification rather than absence of evidence: an override that
+    failed to reach PPO would otherwise produce a segment labelled with a trust
+    region it never had. The worlds/controls clause is the sealed check this
+    replaces, unchanged in wording and in effect.
+    """
+    if (algo.num_envs != P.NUM_WORLDS
+            or algo.steps_num != P.CONTROLS_PER_WORLD_PER_EPOCH):
+        raise RunnerRefusal(
+            f"the built arm has {algo.num_envs} worlds and {algo.steps_num} controls per "
+            f"epoch, but the sealed arm is {P.NUM_WORLDS} and "
+            f"{P.CONTROLS_PER_WORLD_PER_EPOCH}")
+    for key, value in dict(getattr(arm, "overrides", None) or {}).items():
+        built = getattr(algo, key, None)
+        if built != value:
+            raise RunnerRefusal(
+                f"arm {arm.name!r} requested {key}={value!r} but the built "
+                f"algorithm carries {key}={built!r}: the override did not reach "
+                "the algorithm, and the segment is refused rather than run under "
+                "a trust region it does not have")
+
+
 def _build_runtime(args, plan) -> WorkerContext:
     """The real GPU build: backend import, model compile, environment, PPO.
 
     Everything expensive lives here, and it runs only in the child, after the
     launcher has already claimed the wall time for it.
     """
-    import copy
-    import yaml
     from msk_warp.algorithms.ppo import PPO
     from msk_warp.analysis.myoleg26_baseline import evaluate_policy, isolated_rng
     from msk_warp.envs.myoleg26_walk import MyoLeg26WalkEnv
 
+    protocol = launch_protocol(args)
     spec = P.stage(plan.stage)
-    arm = P.recipe(plan.recipe)
-    cfg = copy.deepcopy(yaml.safe_load(Path(P.V2_CONFIG).read_text(encoding="utf-8")))
-    cfg["params"]["general"].update(seed=plan.seed, device=args.device,
-                                    logdir=str(plan.out_dir))
-    cfg["params"]["env"]["num_actors"] = P.NUM_WORLDS
-    # Only gamma and entropy_coef vary between the sealed arms.
-    cfg["params"]["config"].update(
-        max_epochs=spec.epoch_cap_per_seed, steps_num=P.CONTROLS_PER_WORLD_PER_EPOCH,
-        save_interval=0, gamma=arm.gamma, entropy_coef=arm.entropy_coef)
+    arm = protocol.recipe(plan.recipe)
+    # Only gamma and entropy_coef vary between the sealed arms; a protocol
+    # amendment additionally varies the trust-region keys it declares.
+    cfg = effective_config(protocol=protocol, stage_key=plan.stage,
+                           recipe_name=plan.recipe, seed=plan.seed,
+                           device=args.device, logdir=str(plan.out_dir))
     write_json_exclusive(plan.out_dir / "effective_config.json", cfg)
 
     algo = PPO(cfg)
     env = algo.env
-    if algo.num_envs != P.NUM_WORLDS or algo.steps_num != P.CONTROLS_PER_WORLD_PER_EPOCH:
-        raise RunnerRefusal(
-            f"the built arm has {algo.num_envs} worlds and {algo.steps_num} controls per "
-            f"epoch, but the sealed arm is {P.NUM_WORLDS} and "
-            f"{P.CONTROLS_PER_WORLD_PER_EPOCH}")
+    assert_built_arm(algo, protocol=protocol, arm=arm)
 
     # The stage's own selection block. The confirmation and audit blocks stay
     # unused until checkpoint selection is locked, so they are never named here.
@@ -1898,7 +2035,8 @@ def _evaluation_writer(evaluate, out_dir, *, own_epochs, deadline, totals, paths
 
 
 def _worker_segment(args, *, build, clock, started, wrote, timing_clock=None) -> int:
-    plan = resolve_plan(args)
+    protocol = launch_protocol(args)
+    plan = resolve_plan(args, protocol=protocol)
     out_dir = plan.out_dir
     if not out_dir.is_dir():
         raise RunnerRefusal(
@@ -2060,6 +2198,8 @@ def _worker_segment(args, *, build, clock, started, wrote, timing_clock=None) ->
     }
     result = {
         "schema_version": RESULT_SCHEMA, "runner_schema": SCHEMA_VERSION,
+        "protocol": protocol_name(args),
+        "protocol_digest": protocol.protocol_digest(),
         "stage": plan.stage, "recipe": plan.recipe, "seed": plan.seed,
         "segment_index": plan.segment_index,
         "training_began": True,
@@ -2161,6 +2301,9 @@ def run_freeze(args) -> int:
 
 
 def _add_identity_arguments(parser) -> None:
+    # Omitting it means the sealed protocol, which is what stage 1 ran.
+    parser.add_argument("--protocol", default=DEFAULT_PROTOCOL,
+                        choices=list(PROTOCOLS))
     parser.add_argument("--stage", required=True, choices=list(P.STAGE_ORDER))
     parser.add_argument("--recipe", required=True)
     parser.add_argument("--seed", required=True, type=int)
@@ -2194,6 +2337,10 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--shutdown-allowance-s", default=DEFAULT_SHUTDOWN_ALLOWANCE_S, type=float)
     launch.add_argument("--reserved-bound-s", default=None, type=float)
     launch.add_argument("--create-ledger", action="store_true")
+    # A descendant protocol's ledger opens at the settled spend of the ledger it
+    # descends from. Without it, creating that ledger is refused.
+    launch.add_argument("--carry-forward-from", default=None,
+                        help="ledger whose settled spend opens this one's caps")
     launch.add_argument("--no-contention-probe", action="store_true")
 
     worker = modes.add_parser("worker", help="train one segment (spawned by launch)")
