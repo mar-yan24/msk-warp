@@ -651,7 +651,9 @@ def _ledger_summary(path, hashes) -> dict:
 
     path = Path(path)
     hashes[str(path.resolve())] = digest(path)
-    ledger = B.BudgetLedger.open(path)
+    # Read-only across protocols on purpose: this summarizer may be pointed at a
+    # ledger of a protocol it knows nothing about, and inspection grants nothing.
+    ledger = B.BudgetLedger.open(path, inspect=True)
     charged = ledger.charged()
     return {"path": str(path.resolve()), "protocol_digest": ledger.protocol_digest,
             "charged_s": charged["global_s"], "stage_s": charged["stage_s"],

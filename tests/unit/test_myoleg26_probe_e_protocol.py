@@ -384,3 +384,35 @@ def test_the_snapshot_is_json_canonical_and_stable():
     assert first == second
     assert b"NaN" not in first
     assert first != P.canonical_json(P.protocol_snapshot())
+# --------------------------------------------------------------------------
+# Unit 8 -- fix round 2: the seed is labelled as a post-hoc, data-informed
+# choice, in the provenance and therefore in the digest, the ledger header and
+# the manifest. It is NOT restated as a neutral choice anywhere.
+# --------------------------------------------------------------------------
+
+def test_the_seed_is_labelled_as_a_post_hoc_data_informed_choice():
+    note = E.SEED_CHOICE_NOTE
+    assert "NOT PREREGISTERED" in note
+    assert "POST-HOC" in note and "DATA-INFORMED" in note
+    assert "STAGE-1 OUTCOME" in note
+    assert "not threshold-seeking" in note
+    assert "seed-independent" in note
+    assert "BEFORE the launch" in note
+
+
+def test_the_seed_label_travels_with_the_provenance():
+    amendment = E.amendment_snapshot()
+    assert amendment["seed_preregistered"] is False
+    assert amendment["seed_choice"] == E.SEED_CHOICE_NOTE
+    provenance = E.ledger_provenance()
+    assert provenance["seed_preregistered"] is False
+    assert provenance["seed_choice"] == E.SEED_CHOICE_NOTE
+    assert E.SEED_CHOICE_NOTE in P.canonical_json(E.protocol_snapshot()).decode()
+
+
+def test_the_module_cites_the_correct_preregistration_section():
+    """The two upstream documents cite section 2.3; section 2 has no
+    subsections and probe E is section 4. The module has it right and a later
+    edit must not 'fix' it back."""
+    assert "section 4 (E.1-E.4)" in E.PREREGISTRATION
+    assert "2.3" not in E.PREREGISTRATION

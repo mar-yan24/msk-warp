@@ -126,8 +126,16 @@ def _sealed_ledger(tmp_path, clock, *, name="budget_ledger.jsonl"):
                                  protocol_digest=P.protocol_digest(), clock=clock)
 
 
-def _amended_ledger(tmp_path, clock, *, source=None):
+def _amended_ledger(tmp_path, clock, monkeypatch, *, source=None):
+    """A descendant ledger whose DECLARED parent is this temp sealed ledger.
+
+    ``E.PARENT_LEDGER`` is part of the amendment's provenance and so of its
+    digest, so patching it moves ``E.protocol_digest()`` consistently for the
+    whole test. That is what lets the runtime binding be exercised without a
+    test reaching into ignored ``logs/``.
+    """
     source = source or _sealed_ledger(tmp_path, FakeClock(), name="sealed.jsonl")
+    monkeypatch.setattr(E, "PARENT_LEDGER", str(source.path))
     return B.BudgetLedger.create(
         tmp_path / "probe_e_ledger.jsonl", protocol_digest=E.protocol_digest(),
         protocol=E, carried=B.carry_forward(source.path),
@@ -270,9 +278,9 @@ def test_a_probe_e_launch_is_refused_against_the_sealed_ledger(tmp_path):
     assert ledger.path.read_bytes() == before
 
 
-def test_a_sealed_launch_is_refused_against_the_amended_ledger(tmp_path):
+def test_a_sealed_launch_is_refused_against_the_amended_ledger(tmp_path, monkeypatch):
     clock = FakeClock()
-    ledger = _amended_ledger(tmp_path, clock)
+    ledger = _amended_ledger(tmp_path, clock, monkeypatch)
     before = ledger.path.read_bytes()
     args = _parse(_argv(tmp_path, **{"--ledger": str(ledger.path)}))
     with pytest.raises(R.RunnerRefusal):
@@ -280,9 +288,9 @@ def test_a_sealed_launch_is_refused_against_the_amended_ledger(tmp_path):
     assert ledger.path.read_bytes() == before
 
 
-def test_a_probe_e_launch_records_its_protocol_and_digest(tmp_path):
+def test_a_probe_e_launch_records_its_protocol_and_digest(tmp_path, monkeypatch):
     clock = FakeClock()
-    ledger = _amended_ledger(tmp_path, clock)
+    ledger = _amended_ledger(tmp_path, clock, monkeypatch)
     out_dir = tmp_path / "run" / "segment_0000"
 
     def child(argv, kwargs):
@@ -340,8 +348,9 @@ def test_a_probe_e_launch_needs_a_carried_ledger_to_be_created(tmp_path):
     assert not (tmp_path / "budget_ledger.jsonl").exists()
 
 
-def test_carry_forward_from_is_wired_to_the_ledger_creation(tmp_path):
+def test_carry_forward_from_is_wired_to_the_ledger_creation(tmp_path, monkeypatch):
     source = _sealed_ledger(tmp_path, FakeClock(), name="sealed.jsonl")
+    monkeypatch.setattr(E, "PARENT_LEDGER", str(source.path))
     argv = _argv(tmp_path, **{"--recipe": E.PRIMARY_RECIPE,
                               "--protocol": "probe-e",
                               "--ledger": str(tmp_path / "probe_e.jsonl"),
@@ -561,9 +570,10 @@ def test_the_summarizer_schema_declares_the_amended_shape():
 # asserted at the launch layer too.
 # ==========================================================================
 
-def test_a_moved_parent_refuses_the_probe_e_launch_and_writes_nothing(tmp_path):
+def test_a_moved_parent_refuses_the_probe_e_launch_and_writes_nothing(tmp_path, monkeypatch):
     clock = FakeClock()
     source = _sealed_ledger(tmp_path, FakeClock(), name="sealed.jsonl")
+    monkeypatch.setattr(E, "PARENT_LEDGER", str(source.path))
     ledger = B.BudgetLedger.create(
         tmp_path / "probe_e_ledger.jsonl", protocol_digest=E.protocol_digest(),
         protocol=E, carried=B.carry_forward(source.path),
@@ -592,10 +602,11 @@ def test_a_moved_parent_refuses_the_probe_e_launch_and_writes_nothing(tmp_path):
     assert not (tmp_path / "run" / "segment_0000").exists()
 
 
-def test_an_unmoved_parent_lets_the_probe_e_launch_through(tmp_path):
+def test_an_unmoved_parent_lets_the_probe_e_launch_through(tmp_path, monkeypatch):
     """The negative control for the test above: same setup, parent untouched."""
     clock = FakeClock()
     source = _sealed_ledger(tmp_path, FakeClock(), name="sealed.jsonl")
+    monkeypatch.setattr(E, "PARENT_LEDGER", str(source.path))
     ledger = B.BudgetLedger.create(
         tmp_path / "probe_e_ledger.jsonl", protocol_digest=E.protocol_digest(),
         protocol=E, carried=B.carry_forward(source.path),
@@ -616,3 +627,18 @@ def test_an_unmoved_parent_lets_the_probe_e_launch_through(tmp_path):
     assert R.run_launch(args, ledger=ledger, spawn=Spawner(on_spawn=child),
                         clock=clock) == R.EXIT_OK
     assert source.path.read_bytes() == parent_bytes
+def test_the_cli_path_refuses_a_parent_that_is_not_the_declared_one(tmp_path):
+    """Behavioural, and the review's reachability point: --carry-forward-from is
+    hand-typed at the one moment the probe-E ledger is created, so the binding
+    has to hold on that path too. No patch here: the REAL declared parent is
+    what it refuses against."""
+    decoy = _sealed_ledger(tmp_path, FakeClock(), name="decoy.jsonl")
+    argv = _argv(tmp_path, **{"--recipe": E.PRIMARY_RECIPE,
+                              "--protocol": "probe-e",
+                              "--ledger": str(tmp_path / "probe_e.jsonl"),
+                              "--carry-forward-from": str(decoy.path)})
+    argv += ["--create-ledger"]
+    with pytest.raises(R.RunnerRefusal, match="declared parent"):
+        R.run_launch(_parse(argv), spawn=Spawner(), clock=FakeClock(),
+                     probe=lambda: B.unobserved_contention())
+    assert not (tmp_path / "probe_e.jsonl").exists()

@@ -258,7 +258,15 @@ PARENT_RECHECK_NOTE = (
     "explicit ``resnapshot_parent`` call carrying a human-supplied reason, which "
     "appends a row holding the superseded balance beside the new one. The parent "
     "is READ ONLY throughout: it is never written, extended, migrated or "
-    "re-hashed by the descendant."
+    "re-hashed by the descendant. "
+    "RECORDED DESIGN INTENT for a successor, so nobody reaches for the wrong "
+    "tool: the check fires at the reserve, which is sufficient while a "
+    "descendant authorises ONE cell at segment 0, because there is then no next "
+    "reserve to protect. If a later descendant ever authorises more than one "
+    "cell, the right addition is NOT a refusal at settle -- that would wedge the "
+    "ledger with a pending reservation and lose a real charge -- but a recorded "
+    "``parent_moved_during_segment`` field on the settle row, so the charge "
+    "still lands and the divergence stays visible in the chain."
 )
 
 
@@ -332,7 +340,40 @@ def validate_carried_forward(block) -> dict:
     return dict(block)
 
 
-def carry_forward(path, *, protocol=None) -> CarriedForward:
+def _assert_declared_parent(spec, carried) -> None:
+    """Refuse unless ``carried`` really came from the protocol's declared parent.
+
+    Both clauses are checked separately and each names the expected value beside
+    the supplied one. A protocol that declares neither literal -- the sealed
+    campaign protocol declares no parent at all -- is unconstrained by this.
+    """
+    declared_path = getattr(spec, "PARENT_LEDGER", None)
+    if declared_path is not None:
+        root = Path(getattr(spec, "ROOT", P.ROOT))
+        expected = (root / str(declared_path)).resolve()
+        supplied = Path(carried.source_path).resolve()
+        if supplied != expected:
+            raise LedgerIntegrityError(
+                f"this protocol declares its parent ledger as {declared_path!r} "
+                f"(resolved {expected}), but the carried opening balance came "
+                f"from {supplied}. A descendant may open only at the settled "
+                "spend of the declared parent: carrying from any other ledger "
+                "would re-grant wall time that has already been spent, and the "
+                "mistake would then be guarded faithfully for the rest of this "
+                "ledger's life")
+    declared_digest = getattr(spec, "PARENT_PROTOCOL_DIGEST", None)
+    if declared_digest is not None:
+        supplied_digest = str(carried.source_protocol_digest)
+        if supplied_digest != str(declared_digest):
+            raise LedgerIntegrityError(
+                f"this protocol descends from parent protocol digest "
+                f"{declared_digest}, but the carried opening balance came from a "
+                f"ledger whose header digest is {supplied_digest}. A descendant "
+                "may open only at the settled spend of the protocol it declares "
+                "as its parent")
+
+
+def carry_forward(path) -> CarriedForward:
     """Read a ledger and total its settlements, for a descendant's header.
 
     The source is opened through :meth:`BudgetLedger.open`, so its whole hash
@@ -345,7 +386,10 @@ def carry_forward(path, *, protocol=None) -> CarriedForward:
     :meth:`BudgetLedger.assert_parent_unmoved` re-checks it at every reserve.
     See :data:`PARENT_RECHECK_NOTE`.
     """
-    source = BudgetLedger.open(path, protocol=protocol)
+    # Read across the protocol boundary on purpose: a parent's header digest is
+    # by definition not the descendant's. Inspection grants nothing and cannot
+    # write, and the whole chain is still re-verified.
+    source = BudgetLedger.open(path, inspect=True)
     open_reservation = source.pending
     if open_reservation is not None:
         raise LedgerIntegrityError(
@@ -577,6 +621,11 @@ class BudgetLedger:
         #: default; an amendment module passes itself, which is what lets its own
         #: arms be reserved while every sealed arm stays refused.
         self.protocol = P if protocol is None else protocol
+        #: True only for a ledger opened to be READ. An inspecting ledger asserts
+        #: no protocol binding, because reading a foreign ledger to total it is
+        #: exactly what carry-forward is -- and in exchange it refuses every
+        #: mutating call, so it is a read mode and not an escape hatch.
+        self._inspect_only = False
         self._carried = None
         self._carried_chain: tuple = ()
         self.path = Path(path)
@@ -621,6 +670,13 @@ class BudgetLedger:
                     f"{digest}: a second ledger for one protocol would be a "
                     "migration or a rewrite of the first, which is refused. A "
                     "carried opening balance is only for a DESCENDANT protocol")
+            # The parent a descendant opens against must be the ONE its protocol
+            # declares. Without this, carrying from any other sealed-protocol
+            # ledger -- a fresh, zero-spend one, say -- re-grants the whole cap
+            # and is then guarded faithfully for the rest of this ledger's life,
+            # which is the worst shape of the bug because everything downstream
+            # looks correct.
+            _assert_declared_parent(spec, carried)
             carried_block = carried.as_dict()
         posix_time = _finite(ledger._clock(), "clock")
         body = {
@@ -659,10 +715,25 @@ class BudgetLedger:
 
     @classmethod
     def open(cls, path, *, clock=time.time, contention_probe=None,
-             protocol=None) -> "BudgetLedger":
-        """Open and fully verify an existing ledger, or refuse."""
+             protocol=None, inspect=False) -> "BudgetLedger":
+        """Open and fully verify an existing ledger, or refuse.
+
+        The ledger's header digest is bound to ``protocol`` **here**, in the
+        durable authority, rather than by a caller remembering to ask: opening a
+        ledger under a protocol that is not its own is refused outright, so the
+        two protocols are not interchangeable at any level and in any statement
+        order. ``protocol=None`` means the sealed campaign protocol, so a
+        descendant's ledger is equally refused under the default.
+
+        ``inspect=True`` opens the ledger to be **read** across that boundary --
+        totalling a foreign parent's charge, summarising a ledger a report did
+        not create -- and asserts no binding. In exchange an inspecting ledger
+        refuses every mutating call (:meth:`_assert_writable`), so it grants
+        nothing and is not an override.
+        """
         ledger = cls(path, clock=clock, contention_probe=contention_probe,
                      protocol=protocol)
+        ledger._inspect_only = bool(inspect)
         ledger._load()
         return ledger
 
@@ -740,6 +811,24 @@ class BudgetLedger:
                 if not _SHA256_RE.match(str(row.get("protocol_digest"))):
                     raise LedgerIntegrityError(
                         "the ledger header has no valid protocol_digest")
+                # The binding, enforced by the loader rather than by whoever
+                # happens to call assert_protocol_unchanged first. Without it a
+                # sealed ledger opened under an amendment protocol would accept
+                # an amendment arm and append it to the sealed chain, which is
+                # append-only and therefore permanent.
+                if not self._inspect_only:
+                    declared = getattr(self.protocol, "protocol_digest", None)
+                    expected = None if declared is None else declared()
+                    if expected is not None and row["protocol_digest"] != expected:
+                        raise LedgerIntegrityError(
+                            f"ledger {self.path} has header protocol digest "
+                            f"{row['protocol_digest']} but was opened under the "
+                            f"protocol whose digest is {expected}; the two are "
+                            "never interchangeable, so this open is refused. To "
+                            "READ a ledger of another protocol -- to total a "
+                            "parent's charge, for instance -- open it with "
+                            "inspect=True, which grants nothing and refuses "
+                            "every write")
                 if "carried_forward" in row:
                     effective_carried = validate_carried_forward(
                         row["carried_forward"])
@@ -916,7 +1005,7 @@ class BudgetLedger:
             return
         path = Path(carried["source_path"])
         try:
-            parent = BudgetLedger.open(path)
+            parent = BudgetLedger.open(path, inspect=True)
         except BudgetError as exc:
             raise LedgerIntegrityError(
                 f"the parent ledger {path} could not be read and re-verified, so "
@@ -952,7 +1041,7 @@ class BudgetLedger:
             "(resnapshot_parent) with a stated reason, which records the "
             "superseded balance beside the new one")
 
-    def resnapshot_parent(self, *, detail, path=None) -> dict:
+    def resnapshot_parent(self, *, detail) -> dict:
         """Adopt a moved parent's balance, explicitly and on the record.
 
         A deliberate human act, not a repair the ledger performs for itself: it
@@ -961,10 +1050,11 @@ class BudgetLedger:
         the one it supersedes. The appended row carries **both** balances, so the
         audit trail shows what changed, when, and why.
 
-        ``path`` re-points at the parent only for the case where the parent
-        ledger legitimately lives somewhere else; it is validated exactly as the
-        original carry-forward was.
+        There is deliberately **no** way to re-point it at a different parent:
+        it re-reads the ledger the header names and re-checks the same declared
+        parent binding, so it is not a second route around it.
         """
+        self._assert_writable()
         self._load()
         open_reservation = self.pending
         if open_reservation is not None:
@@ -983,8 +1073,9 @@ class BudgetLedger:
                 "a re-snapshot needs an explicit detail recording why the parent "
                 "moved and on whose authority; it is a human decision, and the "
                 "reason is part of the record")
-        source = Path(carried["source_path"]) if path is None else Path(path)
-        fresh = carry_forward(source, protocol=self.protocol)
+        source = Path(carried["source_path"])
+        fresh = carry_forward(source)
+        _assert_declared_parent(self.protocol, fresh)
         if fresh.source_protocol_digest == self.protocol_digest:
             raise LedgerIntegrityError(
                 "the named parent has the same protocol digest "
@@ -1057,6 +1148,14 @@ class BudgetLedger:
             totals["settled_rows"] += 1
         return totals
 
+    def _assert_writable(self) -> None:
+        """Refuse a mutating call on a ledger that was opened to be read."""
+        if self._inspect_only:
+            raise LedgerIntegrityError(
+                f"ledger {self.path} was opened for inspection only, so it "
+                "grants nothing and is never written. Reopen it under its own "
+                "protocol to reserve, mark, settle or re-snapshot")
+
     def _checked_run(self, stage, recipe, seed):
         spec = self.protocol.stage(stage)
         arm = self.protocol.recipe(recipe)
@@ -1111,11 +1210,13 @@ class BudgetLedger:
         """Claim wall time exclusively, before anything expensive is started.
 
         Order is load-bearing: verify, refuse if a reservation is still open,
-        check every cap, observe contention, **append the row**, and only then
-        run ``create``. A caller's ``create`` may be arbitrarily expensive -- an
-        output directory, a backend import, a model compile, an environment, a
-        child process -- so nothing in it may precede the durable reservation.
+        re-check the carried parent, check every cap, observe contention,
+        **append the row**, and only then run ``create``. A caller's ``create``
+        may be arbitrarily expensive -- an output directory, a backend import, a
+        model compile, an environment, a child process -- so nothing in it may
+        precede the durable reservation.
         """
+        self._assert_writable()
         self._load()
         open_reservation = self.pending
         if open_reservation is not None:
@@ -1216,6 +1317,7 @@ class BudgetLedger:
         return reservation
 
     def _settling(self, reservation):
+        self._assert_writable()
         self._load()
         settled = {row["reservation_id"] for row in self._rows
                    if row["kind"] == SETTLE_KIND}
