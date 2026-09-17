@@ -551,3 +551,68 @@ def test_a_sealed_only_run_root_reports_no_foreign_recipe(tmp_path):
 def test_the_summarizer_schema_declares_the_amended_shape():
     assert Z.SCHEMA_VERSION == "myoleg26-ppo-v2-summary-v2"
     assert Z.FOREIGN_RECIPE_NOTE.strip()
+# ==========================================================================
+# Unit 7 -- fix round 1: a moved parent refuses the launch, not just the reserve
+#
+# Recorded honestly: this is an INTEGRATION GUARD, not a RED. It passed on its
+# first run, because ``ParentLedgerMovedError`` is a ``BudgetError`` and
+# ``run_launch`` already converts that class into a clean refusal. The point of
+# keeping it is that the conversion, and the "no durable row" property, are now
+# asserted at the launch layer too.
+# ==========================================================================
+
+def test_a_moved_parent_refuses_the_probe_e_launch_and_writes_nothing(tmp_path):
+    clock = FakeClock()
+    source = _sealed_ledger(tmp_path, FakeClock(), name="sealed.jsonl")
+    ledger = B.BudgetLedger.create(
+        tmp_path / "probe_e_ledger.jsonl", protocol_digest=E.protocol_digest(),
+        protocol=E, carried=B.carry_forward(source.path),
+        provenance=E.ledger_provenance(), clock=clock)
+    before = ledger.path.read_bytes()
+
+    # The parent settles one more segment AFTER the snapshot was taken.
+    reservation = source.reserve(
+        stage="screen", recipe="g990_e010", seed=1001, segment_index=0,
+        start_epoch=0, end_epoch=64, reserved_bound_s=540.0,
+        shutdown_allowance_s=60.0)
+    source.settle(reservation, actual_wall_s=400.0, returncode=0,
+                  counters=B.SegmentCounters(**_counters()))
+    parent_bytes = source.path.read_bytes()
+
+    args = _parse(_argv(tmp_path, **{"--recipe": E.PRIMARY_RECIPE,
+                                     "--protocol": "probe-e",
+                                     "--ledger": str(ledger.path)}))
+    spawner = Spawner()
+    with pytest.raises(R.RunnerRefusal, match="has MOVED"):
+        R.run_launch(args, ledger=ledger, spawn=spawner, clock=clock)
+
+    assert spawner.calls == []                      # no child was started
+    assert ledger.path.read_bytes() == before       # no durable row
+    assert source.path.read_bytes() == parent_bytes  # the parent was only read
+    assert not (tmp_path / "run" / "segment_0000").exists()
+
+
+def test_an_unmoved_parent_lets_the_probe_e_launch_through(tmp_path):
+    """The negative control for the test above: same setup, parent untouched."""
+    clock = FakeClock()
+    source = _sealed_ledger(tmp_path, FakeClock(), name="sealed.jsonl")
+    ledger = B.BudgetLedger.create(
+        tmp_path / "probe_e_ledger.jsonl", protocol_digest=E.protocol_digest(),
+        protocol=E, carried=B.carry_forward(source.path),
+        provenance=E.ledger_provenance(), clock=clock)
+    parent_bytes = source.path.read_bytes()
+    out_dir = tmp_path / "run" / "segment_0000"
+
+    def child(argv, kwargs):
+        clock.advance(320.0)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "result.json").write_text(json.dumps({
+            "schema_version": R.RESULT_SCHEMA, "training_began": True,
+            "accounting": _counters()}), encoding="utf-8")
+
+    args = _parse(_argv(tmp_path, **{"--recipe": E.PRIMARY_RECIPE,
+                                     "--protocol": "probe-e",
+                                     "--ledger": str(ledger.path)}))
+    assert R.run_launch(args, ledger=ledger, spawn=Spawner(on_spawn=child),
+                        clock=clock) == R.EXIT_OK
+    assert source.path.read_bytes() == parent_bytes

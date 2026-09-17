@@ -79,7 +79,13 @@ RESERVE_KIND = "reserve"
 #: admissible evidence that none did.
 SPAWN_KIND = "spawn"
 SETTLE_KIND = "settle"
-_KINDS = (HEADER_KIND, RESERVE_KIND, SPAWN_KIND, SETTLE_KIND)
+
+#: An explicit, recorded adoption of a moved parent ledger's balance. It carries
+#: BOTH the superseded opening balance and the new one, so the audit trail shows
+#: what changed and when. It is never written automatically: see
+#: :data:`PARENT_RECHECK_NOTE`.
+RESNAPSHOT_KIND = "resnapshot"
+_KINDS = (HEADER_KIND, RESERVE_KIND, SPAWN_KIND, SETTLE_KIND, RESNAPSHOT_KIND)
 
 CHARGE_ACTUAL = "actual_process_wall"
 CHARGE_RESERVED_BOUND = "reserved_bound_unknown_duration"
@@ -178,6 +184,17 @@ class ShutdownAllowanceError(BudgetError):
     """No explicit shutdown/checkpoint allowance, or none that fits."""
 
 
+class ParentLedgerMovedError(BudgetError):
+    """The parent ledger moved after this ledger's opening balance was taken.
+
+    Raised at **every** reserve, before anything durable or expensive, so a
+    descendant can never commit wall time against a stale balance. It is not
+    downgraded to a warning and there is no flag that suppresses it; the only
+    way forward is an explicit :meth:`BudgetLedger.resnapshot_parent`. See
+    :data:`PARENT_RECHECK_NOTE`.
+    """
+
+
 class PrelaunchError(BudgetError):
     """The caller's exclusive pre-launch creation step failed.
 
@@ -222,6 +239,26 @@ CARRY_FORWARD_NOTE = (
     "records the source ledger's path, byte sha256, row count and protocol "
     "digest beside its totals. The source is READ ONLY: it is never extended, "
     "migrated, rewritten or re-hashed."
+)
+
+
+PARENT_RECHECK_NOTE = (
+    "A carried opening balance is a snapshot of the parent ledger at ONE "
+    "instant. If the parent settles anything afterwards, the descendant's "
+    "balance is stale and it can over-grant the global cap -- it would be "
+    "drawing against wall time already spent. Relying on the parent being "
+    "quiescent is a convention, not a guarantee, so the check is structural "
+    "instead: EVERY reserve re-reads the parent, re-verifies its whole hash "
+    "chain, recomputes its settled charge from its own rows, and refuses on any "
+    "divergence of that total, of the parent's byte sha256 or of its row count. "
+    "The refusal names both totals and both sha256s. The descendant NEVER "
+    "reconciles a divergence on its own and never falls back to the snapshot: "
+    "an unreadable, shrunken, rewritten or chain-broken parent refuses too, and "
+    "there is no override flag. Adopting a moved parent's balance takes an "
+    "explicit ``resnapshot_parent`` call carrying a human-supplied reason, which "
+    "appends a row holding the superseded balance beside the new one. The parent "
+    "is READ ONLY throughout: it is never written, extended, migrated or "
+    "re-hashed by the descendant."
 )
 
 
@@ -303,6 +340,10 @@ def carry_forward(path, *, protocol=None) -> CarriedForward:
     written to. A source holding an unsettled reservation is refused rather than
     carried: its charge is not yet known, so carrying it would understate the
     spend and hand the descendant headroom that may not exist.
+
+    This is a snapshot at one instant, and that is **not** relied upon:
+    :meth:`BudgetLedger.assert_parent_unmoved` re-checks it at every reserve.
+    See :data:`PARENT_RECHECK_NOTE`.
     """
     source = BudgetLedger.open(path, protocol=protocol)
     open_reservation = source.pending
@@ -537,6 +578,7 @@ class BudgetLedger:
         #: arms be reserved while every sealed arm stays refused.
         self.protocol = P if protocol is None else protocol
         self._carried = None
+        self._carried_chain: tuple = ()
         self.path = Path(path)
         self._clock = clock
         self._probe = contention_probe
@@ -612,6 +654,7 @@ class BudgetLedger:
             ) from exc
         ledger._rows = (row,)
         ledger._carried = carried_block
+        ledger._carried_chain = () if carried_block is None else (dict(carried_block),)
         return ledger
 
     @classmethod
@@ -640,6 +683,10 @@ class BudgetLedger:
         previous_time = None
         pending_id = None
         spawned_id = None
+        # The opening balance the file declares, and every superseded one before
+        # it. The header's block is the first; each resnapshot row supersedes it.
+        effective_carried = None
+        carried_chain = []
         for number, line in enumerate(lines):
             try:
                 row = json.loads(line)
@@ -693,12 +740,51 @@ class BudgetLedger:
                 if not _SHA256_RE.match(str(row.get("protocol_digest"))):
                     raise LedgerIntegrityError(
                         "the ledger header has no valid protocol_digest")
-                header_carried = (
-                    validate_carried_forward(row["carried_forward"])
-                    if "carried_forward" in row else None)
+                if "carried_forward" in row:
+                    effective_carried = validate_carried_forward(
+                        row["carried_forward"])
+                    carried_chain.append(dict(effective_carried))
             elif kind == HEADER_KIND:
                 raise LedgerIntegrityError(
                     f"ledger line {number + 1} is a second header")
+            elif kind == RESNAPSHOT_KIND:
+                # An explicit adoption of a moved parent's balance. Validated
+                # here rather than trusted: it is inside the hash chain, so a
+                # later edit of it is caught, and the balances must form a
+                # contiguous, non-decreasing sequence.
+                if effective_carried is None:
+                    raise LedgerIntegrityError(
+                        f"ledger line {number + 1} re-snapshots a parent, but "
+                        "this ledger declares no carried opening balance")
+                if pending_id is not None:
+                    raise LedgerIntegrityError(
+                        f"ledger line {number + 1} re-snapshots the parent while "
+                        f"reservation {pending_id!r} is still open; that would "
+                        "move the balance the open hold was checked against")
+                for field_name in ("previous_carried", "carried_forward"):
+                    if field_name not in row:
+                        raise LedgerIntegrityError(
+                            f"ledger line {number + 1} is a re-snapshot with no "
+                            f"{field_name}")
+                superseded = validate_carried_forward(row["previous_carried"])
+                adopted = validate_carried_forward(row["carried_forward"])
+                if not str(row.get("detail") or "").strip():
+                    raise LedgerIntegrityError(
+                        f"ledger line {number + 1} is a re-snapshot with no "
+                        "detail; the reason is part of the record")
+                if superseded != effective_carried:
+                    raise LedgerIntegrityError(
+                        f"ledger line {number + 1} re-snapshots from a balance "
+                        "this ledger was not holding; the carried balances must "
+                        "form one contiguous sequence")
+                if adopted["global_s"] < effective_carried["global_s"]:
+                    raise LedgerIntegrityError(
+                        f"ledger line {number + 1} lowers the carried opening "
+                        f"balance from {effective_carried['global_s']!r} to "
+                        f"{adopted['global_s']!r}; a settled charge never "
+                        "decreases")
+                effective_carried = adopted
+                carried_chain.append(dict(adopted))
             elif kind == RESERVE_KIND:
                 if pending_id is not None:
                     raise LedgerIntegrityError(
@@ -745,7 +831,8 @@ class BudgetLedger:
                     f"ledger {self.path} record {position} changed after it was "
                     "observed; an append-only ledger never rewrites a row")
         self._rows = tuple(rows)
-        self._carried = header_carried
+        self._carried = effective_carried
+        self._carried_chain = tuple(carried_chain)
 
     # -- reading ----------------------------------------------------------
 
@@ -803,6 +890,138 @@ class BudgetLedger:
         the sealed campaign ledger's case. See :data:`CARRY_FORWARD_NOTE`.
         """
         return None if self._carried is None else dict(self._carried)
+
+    def carried_history(self) -> list:
+        """Every carried opening balance this ledger has held, oldest first.
+
+        One entry for a ledger that has never re-snapshotted, and empty for one
+        that carries nothing at all.
+        """
+        return [dict(block) for block in self._carried_chain]
+
+    def assert_parent_unmoved(self) -> None:
+        """Refuse unless the parent ledger is exactly what was carried forward.
+
+        Called by :meth:`reserve` on **every** reservation, immediately after the
+        pending-reservation trap and before any cap check, contention
+        observation or appended row -- so a refusal commits nothing. Fail closed
+        in every direction: a parent that cannot be read and re-verified refuses
+        just as loudly as one whose charge advanced, and the snapshot is never
+        accepted in its place. See :data:`PARENT_RECHECK_NOTE`.
+
+        A ledger with no carried balance has no parent, and returns.
+        """
+        carried = self._carried
+        if carried is None:
+            return
+        path = Path(carried["source_path"])
+        try:
+            parent = BudgetLedger.open(path)
+        except BudgetError as exc:
+            raise LedgerIntegrityError(
+                f"the parent ledger {path} could not be read and re-verified, so "
+                "this ledger's carried opening balance cannot be confirmed: "
+                f"{exc}. A carried balance is never trusted in place of its "
+                "source, so this reserve is refused"
+            ) from exc
+        raw = path.read_bytes()
+        actual_sha = sha256_bytes(raw)
+        totals = parent.charged()
+        actual_global = float(totals["global_s"])
+        carried_global = float(carried["global_s"])
+        open_reservation = parent.pending
+        if (actual_sha == carried["source_sha256"]
+                and actual_global == carried_global
+                and len(parent.rows) == int(carried["source_rows"])
+                and open_reservation is None):
+            return
+        held = ("" if open_reservation is None else
+                f" The parent also holds the unsettled reservation "
+                f"{open_reservation.reservation_id!r}, so its charge is not even "
+                "final yet.")
+        raise ParentLedgerMovedError(
+            f"the parent ledger {path} has MOVED since this ledger's carried "
+            f"opening balance was taken. Carried global charge {carried_global!r} "
+            f"against the parent's recomputed {actual_global!r}; carried sha256 "
+            f"{carried['source_sha256']} against the parent's {actual_sha}; "
+            f"carried {int(carried['source_rows'])} rows against "
+            f"{len(parent.rows)}.{held} Reserving against a stale balance would "
+            "draw against wall time already spent, so this reserve is refused. "
+            "Nothing is reconciled automatically and the stale snapshot is not "
+            "accepted: adopting the new balance takes an explicit re-snapshot "
+            "(resnapshot_parent) with a stated reason, which records the "
+            "superseded balance beside the new one")
+
+    def resnapshot_parent(self, *, detail, path=None) -> dict:
+        """Adopt a moved parent's balance, explicitly and on the record.
+
+        A deliberate human act, not a repair the ledger performs for itself: it
+        requires a stated reason, refuses while a reservation is open, refuses a
+        parent that has not actually moved, and refuses any balance lower than
+        the one it supersedes. The appended row carries **both** balances, so the
+        audit trail shows what changed, when, and why.
+
+        ``path`` re-points at the parent only for the case where the parent
+        ledger legitimately lives somewhere else; it is validated exactly as the
+        original carry-forward was.
+        """
+        self._load()
+        open_reservation = self.pending
+        if open_reservation is not None:
+            raise PendingReservationError(
+                f"reservation {open_reservation.reservation_id} is still "
+                "unsettled; re-snapshotting the parent now would move the "
+                "balance that open hold was checked against")
+        carried = self._carried
+        if carried is None:
+            raise LedgerIntegrityError(
+                f"ledger {self.path} carries no opening balance, so it has no "
+                "parent to re-snapshot")
+        reason = "" if detail is None else str(detail).strip()
+        if not reason:
+            raise LedgerIntegrityError(
+                "a re-snapshot needs an explicit detail recording why the parent "
+                "moved and on whose authority; it is a human decision, and the "
+                "reason is part of the record")
+        source = Path(carried["source_path"]) if path is None else Path(path)
+        fresh = carry_forward(source, protocol=self.protocol)
+        if fresh.source_protocol_digest == self.protocol_digest:
+            raise LedgerIntegrityError(
+                "the named parent has the same protocol digest "
+                f"{self.protocol_digest}: a carried balance is only for a "
+                "DESCENDANT protocol")
+        if Path(fresh.source_path) == self.path.resolve():
+            raise LedgerIntegrityError(
+                f"a ledger never carries itself forward: {self.path}")
+        block = fresh.as_dict()
+        if block["global_s"] < float(carried["global_s"]):
+            raise LedgerIntegrityError(
+                "a re-snapshot may never decrease the carried opening balance: "
+                f"{carried['global_s']!r} -> {block['global_s']!r}. An "
+                "append-only parent's settled charge only grows, so a lower "
+                "total means the parent was rewritten or a different ledger was "
+                "named, and adopting it would hand back spend")
+        if (block["source_sha256"] == carried["source_sha256"]
+                and block["global_s"] == float(carried["global_s"])
+                and block["source_rows"] == int(carried["source_rows"])):
+            raise LedgerIntegrityError(
+                f"the parent ledger {source} has not moved: sha256 "
+                f"{block['source_sha256']} and global charge "
+                f"{block['global_s']!r} are what this ledger already carries. A "
+                "re-snapshot that changes nothing would be audit noise")
+        index, posix_time, previous, clamped = self._next()
+        row = self._append({
+            "index": index, "kind": RESNAPSHOT_KIND, "prev_sha256": previous,
+            "posix_time": posix_time, "utc": _utc(posix_time),
+            "clock_clamped": clamped,
+            "previous_carried": dict(carried),
+            "carried_forward": block,
+            "detail": reason,
+            "note": PARENT_RECHECK_NOTE,
+        })
+        self._carried = block
+        self._carried_chain = self._carried_chain + (dict(block),)
+        return row
 
     def carried_totals(self) -> dict:
         """The opening balance alone, separated from this file's own rows."""
@@ -904,6 +1123,11 @@ class BudgetLedger:
                 f"reservation {open_reservation.reservation_id} is still "
                 "unsettled; work is foreground and sequential, so no further "
                 "job may start until it is settled")
+        # Structural, not conventional: the carried opening balance is re-checked
+        # against the live parent on EVERY reserve, in the same position as the
+        # pending trap -- before any cap check, before the contention
+        # observation, and before a single durable row.
+        self.assert_parent_unmoved()
 
         spec, _arm = self._checked_run(stage, recipe, seed)
         segment = _count(segment_index, "segment_index")

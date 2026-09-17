@@ -61,6 +61,17 @@ def _counters(**overrides):
     return B.SegmentCounters(**values)
 
 
+class _CountingProbe:
+    """Counts observations, so a refusal can be shown to precede the probe."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        return B.unobserved_contention()
+
+
 def _sealed(tmp_path, *, name="sealed_ledger.jsonl", charges=()):
     """A stand-in for stage 1's sealed ledger, with injected settled charges."""
     ledger = B.BudgetLedger.create(tmp_path / name,
@@ -403,3 +414,302 @@ def test_the_real_sealed_ledger_path_is_the_amendments_declared_parent():
     assert E.PARENT_LEDGER == "logs/myoleg26_ppo_v2/budget_ledger.jsonl"
     assert Path(E.LEDGER).name == B.LEDGER_FILENAME
     assert E.LEDGER != E.PARENT_LEDGER
+# --------------------------------------------------------------------------
+# Unit 7 -- fix round 1: the parent balance is re-checked at EVERY reserve
+#
+# A carried opening balance is a snapshot of the parent ledger at one instant.
+# If the parent settles anything afterwards, the descendant's balance is stale
+# and it can over-grant the global cap -- it would be drawing against money
+# already spent. The snapshot alone is a convention; these tests make it
+# structural. Every reserve re-reads the parent, recomputes its charge from its
+# own rows, and refuses on any divergence. A divergence is never reconciled by
+# the descendant: it takes an explicit, recorded re-snapshot.
+# --------------------------------------------------------------------------
+
+def _advance_parent(sealed, *, seconds=500.0, recipe="g998_e010", seed=1001):
+    """Settle one more fake segment on the parent, after the snapshot was taken."""
+    reservation = sealed.reserve(
+        stage="screen", recipe=recipe, seed=seed, segment_index=0,
+        start_epoch=0, end_epoch=64, reserved_bound_s=540.0,
+        shutdown_allowance_s=60.0, create=None)
+    return sealed.settle(reservation, actual_wall_s=seconds, returncode=0,
+                         counters=_counters())
+
+
+def _reserve(ledger, *, segment_index=0):
+    return ledger.reserve(
+        stage="screen", recipe=E.PRIMARY_RECIPE, seed=1001,
+        segment_index=segment_index, start_epoch=0, end_epoch=64,
+        reserved_bound_s=540.0, shutdown_allowance_s=60.0)
+
+
+def test_a_parent_that_has_not_moved_reserves_normally(tmp_path):
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    amended.assert_parent_unmoved()
+    reservation = _reserve(amended)
+    assert amended.pending.reservation_id == reservation.reservation_id
+
+
+def test_a_parent_whose_charge_advanced_refuses_the_next_reserve(tmp_path):
+    """Behavioural, and the whole point of this round. The refusal names both
+    totals and both sha256s, so a reader sees exactly what moved."""
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    before_sha = B.sha256_bytes(sealed.path.read_bytes())
+    _advance_parent(sealed, seconds=500.0)
+    after_sha = B.sha256_bytes(sealed.path.read_bytes())
+
+    with pytest.raises(B.ParentLedgerMovedError) as raised:
+        _reserve(amended)
+    message = str(raised.value)
+    assert "1050.0" in message          # the carried snapshot total
+    assert "1550.0" in message          # the parent's recomputed total
+    assert before_sha in message
+    assert after_sha in message
+    assert "re-snapshot" in message
+
+    with pytest.raises(B.ParentLedgerMovedError):
+        amended.assert_parent_unmoved()
+
+
+def test_the_drift_refusal_is_fail_closed_and_durable_free(tmp_path):
+    """Behavioural. The refusal precedes the reservation row and the contention
+    observation, so it commits nothing and costs nothing."""
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    probe = _CountingProbe()
+    carried = B.carry_forward(sealed.path)
+    amended = B.BudgetLedger.create(
+        tmp_path / "probe_e_ledger.jsonl", protocol_digest=E.protocol_digest(),
+        protocol=E, carried=carried, provenance=E.ledger_provenance(),
+        clock=FakeClock(), contention_probe=probe)
+    before = amended.path.read_bytes()
+    _advance_parent(sealed)
+    with pytest.raises(B.ParentLedgerMovedError):
+        _reserve(amended)
+    assert amended.path.read_bytes() == before
+    assert probe.calls == 0
+
+
+def test_a_parent_holding_a_new_unsettled_reservation_refuses_the_reserve(tmp_path):
+    """Behavioural. An open hold on the parent is drift in progress: its charge
+    is not yet known, so the descendant must not commit against it."""
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    sealed.reserve(stage="screen", recipe="g998_e010", seed=1001,
+                   segment_index=0, start_epoch=0, end_epoch=64,
+                   reserved_bound_s=540.0, shutdown_allowance_s=60.0)
+    with pytest.raises(B.ParentLedgerMovedError):
+        _reserve(amended)
+
+
+def test_an_unreadable_parent_refuses_rather_than_falling_back(tmp_path):
+    """Behavioural. Fail closed: a missing parent is never excused by the
+    snapshot the descendant happens to be carrying."""
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    sealed.path.unlink()
+    with pytest.raises(B.LedgerIntegrityError, match="parent ledger"):
+        _reserve(amended)
+
+
+def test_a_chain_broken_parent_refuses_rather_than_falling_back(tmp_path):
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    lines = sealed.path.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[-1])
+    row["charged_s"] = 1.0
+    lines[-1] = json.dumps(row, sort_keys=True)
+    sealed.path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    with pytest.raises(B.LedgerIntegrityError, match="parent ledger"):
+        _reserve(amended)
+
+
+def test_a_shrunken_parent_refuses_rather_than_falling_back(tmp_path):
+    """Behavioural. Truncating the LAST line of an append-only file leaves a
+    self-consistent chain -- the gap disclosed in ``LEDGER_TAIL_NOTE`` -- so a
+    fresh cross-process read cannot call it an integrity break. It is caught as
+    a MOVED parent instead, on the recomputed total, the byte sha256 AND the row
+    count, which is the fail-closed outcome that matters: the snapshot is never
+    accepted in its place."""
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    lines = sealed.path.read_text(encoding="utf-8").splitlines()
+    sealed.path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8",
+                           newline="\n")
+    with pytest.raises(B.BudgetError) as raised:
+        _reserve(amended)
+    message = str(raised.value)
+    assert "parent ledger" in message
+    assert "1050.0" in message and "750.0" in message
+    assert "7 rows against 6" in message
+
+
+def test_the_check_runs_at_every_reserve_not_only_at_snapshot_time(tmp_path):
+    """Behavioural. The first reserve succeeds; the parent then moves; the
+    SECOND reserve refuses. A one-time check at snapshot time would miss this."""
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    first = _reserve(amended)
+    amended.settle(first, actual_wall_s=320.0, returncode=0, counters=_counters())
+    assert amended.charged()["global_s"] == 1370.0
+    _advance_parent(sealed, seconds=500.0)
+    with pytest.raises(B.ParentLedgerMovedError):
+        _reserve(amended, segment_index=0)
+
+
+def test_a_ledger_without_a_carried_balance_is_unaffected(tmp_path):
+    """Behavioural. The sealed campaign ledger carries nothing, so it has no
+    parent to re-check and its reserve path is untouched."""
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    sealed.assert_parent_unmoved()
+    reservation = sealed.reserve(
+        stage="screen", recipe="g990_e000", seed=1001, segment_index=0,
+        start_epoch=0, end_epoch=64, reserved_bound_s=540.0,
+        shutdown_allowance_s=60.0)
+    assert sealed.pending.reservation_id == reservation.reservation_id
+
+
+# -- the explicit re-snapshot ----------------------------------------------
+
+def test_a_resnapshot_records_the_new_balance_beside_the_old_one(tmp_path):
+    """Behavioural. The audit trail shows what changed and when: one appended
+    row carrying BOTH the superseded block and the new one."""
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    old = amended.carried_forward
+    _advance_parent(sealed, seconds=500.0)
+
+    row = amended.resnapshot_parent(
+        detail="the user authorised further stage-1 work after the snapshot")
+    assert row["kind"] == B.RESNAPSHOT_KIND
+    assert row["previous_carried"]["global_s"] == 1050.0
+    assert row["previous_carried"]["source_sha256"] == old["source_sha256"]
+    assert row["carried_forward"]["global_s"] == 1550.0
+    assert row["carried_forward"]["source_sha256"] == B.sha256_bytes(
+        sealed.path.read_bytes())
+    assert row["detail"].startswith("the user authorised")
+    assert row["utc"] and row["posix_time"]
+
+    # And the reserve it was blocking now proceeds, against the NEW balance.
+    amended.assert_parent_unmoved()
+    assert amended.charged()["global_s"] == 1550.0
+    assert amended.remaining("screen", E.PRIMARY_RECIPE, 1001).global_s == (
+        P.TOTAL_WALL_CAP_S - 1550.0)
+    _reserve(amended)
+
+
+def test_the_resnapshot_history_keeps_every_superseded_balance(tmp_path):
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    _advance_parent(sealed, seconds=500.0)
+    amended.resnapshot_parent(detail="first authorised advance")
+    _advance_parent(sealed, seconds=300.0, recipe="g998_e000")
+    amended.resnapshot_parent(detail="second authorised advance")
+    history = amended.carried_history()
+    assert [entry["global_s"] for entry in history] == [1050.0, 1550.0, 1850.0]
+    assert amended.charged()["global_s"] == 1850.0
+
+
+def test_a_resnapshot_of_an_unmoved_parent_is_refused(tmp_path):
+    """Behavioural. A re-snapshot is only meaningful when the parent moved; a
+    no-op row would be audit noise."""
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    with pytest.raises(B.LedgerIntegrityError, match="has not moved"):
+        amended.resnapshot_parent(detail="nothing happened")
+
+
+def test_a_resnapshot_is_refused_while_a_reservation_is_pending(tmp_path):
+    """Behavioural. Re-snapshotting under an open hold would move the balance
+    the hold was checked against."""
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    _reserve(amended)
+    _advance_parent(sealed, seconds=500.0)
+    with pytest.raises(B.PendingReservationError):
+        amended.resnapshot_parent(detail="mid-flight")
+
+
+def test_a_resnapshot_cannot_lower_the_carried_total(tmp_path):
+    """Behavioural. An append-only parent's charge only grows; a lower total
+    means the parent was rewritten, and adopting it would hand back spend."""
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    smaller = _sealed(tmp_path, name="smaller.jsonl",
+                      charges=(("screen", "g990_e010", 1001, 10.0),))
+    header = json.loads(amended.path.read_text(encoding="utf-8").splitlines()[0])
+    assert header["carried_forward"]["global_s"] == 1050.0
+    with pytest.raises(B.LedgerIntegrityError, match="never decrease"):
+        amended.resnapshot_parent(detail="pointing at a smaller ledger",
+                                  path=smaller.path)
+
+
+def test_a_resnapshot_requires_an_explicit_detail(tmp_path):
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    _advance_parent(sealed, seconds=500.0)
+    with pytest.raises(B.LedgerIntegrityError, match="detail"):
+        amended.resnapshot_parent(detail="  ")
+
+
+def test_there_is_no_override_for_a_moved_parent():
+    """Behavioural, read off the source: no flag, keyword or environment switch
+    lets a stale snapshot be good enough."""
+    source = Path(B.__file__).read_text(encoding="utf-8")
+    for forbidden in ("allow_stale", "ignore_parent", "force_carried",
+                      "skip_parent", "os.environ"):
+        assert forbidden not in source
+
+
+def test_the_resnapshot_row_keeps_the_hash_chain_and_reopens(tmp_path):
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    prefix = amended.path.read_bytes()
+    _advance_parent(sealed, seconds=500.0)
+    amended.resnapshot_parent(detail="authorised advance")
+    raw = amended.path.read_bytes()
+    assert raw.startswith(prefix) and len(raw) > len(prefix)
+    reopened = B.BudgetLedger.open(amended.path, protocol=E)
+    assert reopened.charged()["global_s"] == 1550.0
+    assert reopened.carried_forward["global_s"] == 1550.0
+    assert [entry["global_s"] for entry in reopened.carried_history()] == [
+        1050.0, 1550.0]
+    reopened.assert_parent_unmoved()
+
+
+def test_a_tampered_resnapshot_row_is_refused(tmp_path):
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    _advance_parent(sealed, seconds=500.0)
+    amended.resnapshot_parent(detail="authorised advance")
+    lines = amended.path.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[-1])
+    row["carried_forward"]["global_s"] = 0.0
+    lines[-1] = json.dumps(row, sort_keys=True)
+    amended.path.write_text("\n".join(lines) + "\n", encoding="utf-8",
+                            newline="\n")
+    with pytest.raises(B.LedgerIntegrityError):
+        B.BudgetLedger.open(amended.path, protocol=E)
+
+
+def test_the_parent_ledger_stays_byte_identical_through_all_of_it(tmp_path):
+    """Behavioural. The descendant READS the parent and never writes it -- the
+    only writes below are the test's own, through the parent's public API."""
+    sealed = _sealed(tmp_path, charges=STAGE_1_LIKE)
+    amended = _amended(tmp_path, sealed)
+    quiet = sealed.path.read_bytes()
+    amended.assert_parent_unmoved()
+    reservation = _reserve(amended)
+    amended.mark_spawn(reservation, detail="argv_sha256=" + "0" * 64)
+    amended.settle(reservation, actual_wall_s=320.0, returncode=0,
+                   counters=_counters())
+    assert sealed.path.read_bytes() == quiet
+
+    _advance_parent(sealed, seconds=500.0)
+    moved = sealed.path.read_bytes()
+    with pytest.raises(B.ParentLedgerMovedError):
+        _reserve(amended, segment_index=1)
+    assert sealed.path.read_bytes() == moved
+    amended.resnapshot_parent(detail="authorised advance")
+    assert sealed.path.read_bytes() == moved
