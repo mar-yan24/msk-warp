@@ -1,4 +1,99 @@
 {
+  "amendments": {
+    "probe-e-trust-region-v1": {
+      "amendment_id": "probe-e-trust-region-v1",
+      "authorisation": "Explicitly authorised by the user as the PROBE-E PROTOCOL AMENDMENT, after the direction-C forensics refuted the premise on which probe E had been demoted. This module authorises no launch by itself: it grants no budget, promotes nothing and starts nothing.",
+      "canonical_recipe_order": [
+        "g990_e010_c040",
+        "g990_e010_k001"
+      ],
+      "cell": {
+        "end_epoch": 64,
+        "epochs": 64,
+        "max_cells": 1,
+        "max_segment_index": 0,
+        "recipe": "g990_e010_c040",
+        "seed": 1001,
+        "seeds": [
+          1001
+        ],
+        "segment_index": 0,
+        "selection_reset_block": [
+          11000,
+          11001,
+          11002,
+          11003,
+          11004,
+          11005,
+          11006,
+          11007,
+          11008,
+          11009,
+          11010,
+          11011,
+          11012,
+          11013,
+          11014,
+          11015
+        ],
+        "stage": "screen",
+        "start_epoch": 0
+      },
+      "declared_alternative_recipe": "g990_e010_k001",
+      "descends_from": "the sealed MyoLeg26 v2 PPO campaign protocol msk_warp.analysis.ppo_v2_protocol (schema myoleg26-ppo-v2-protocol-v1, digest 4c01fdc94117bd190cd44c6b6a5f411a5c7cfc7b7d3e0462a344dda43baf2169), which is NOT edited by this amendment and whose sealed ledger stays byte-intact and continues to validate",
+      "differs_from_parent": [
+        "adds one trust-region arm beyond the sealed four, varying exactly one of clip_range or ppo_epochs as an override of the freeze-pinned yaml, with gamma 0.990 and entropy_coef 0.01 held at their v1-equivalent values",
+        "carries its own protocol digest, so every launch under it is refused by the sealed ledger and every sealed launch is refused by this amendment's ledger",
+        "runs on a SEPARATE ledger whose opening balance is carried forward from the sealed ledger, so no cap is reset and no prior charge is escaped",
+        "authorises exactly one cell -- one 64-epoch screen segment on one seed -- and refuses a resume segment, a second seed, another stage and every sealed stage-1 arm by name"
+      ],
+      "digest": "a27513366d8197931ef3a1dc511d2957f0ef1e017390796ae483c41b9bead081",
+      "held_fixed": "Inherited by reference from the sealed protocol and unchanged: the official reward, the official model, the reset distribution, the 1.0 m/s forward speed target, no imitation, the 500-control 4 s evaluation horizon, the five reset blocks, the stage table and its seeds and caps, the segment limits, the wall caps and the walking gate.",
+      "ledger": {
+        "carry_forward_note": "The amended ledger's header records the sealed ledger's path, sha256, row count and protocol digest together with its settled totals, and every remaining figure is computed against those totals. Creating the amended ledger therefore changes no budget: it reproduces the sealed ledger's remaining global and stage figures exactly, and only the amendment's own (stage, recipe, seed) run key opens at a fresh per-seed allowance, because it is a cell that has never run.",
+        "path": "logs/myoleg26_ppo_v2_probe_e/budget_ledger.jsonl",
+        "requires_carry_forward": true,
+        "run_root": "logs/myoleg26_ppo_v2_probe_e",
+        "separate_from": "logs/myoleg26_ppo_v2/budget_ledger.jsonl"
+      },
+      "not_a_stage_1_result": "Any result produced under this amendment is a PROBE-E result, never a stage-1 result. It is one cell, one seed, one 64-epoch segment on a reset block crossed with stage 1's, so it supports no interval, no ordering and no promotion, and it is not comparable to a completed 128-epoch stage-1 run. The sealed stage-1 screen result -- four recipes, two seeds, zero eligible, STOP_FOR_REVIEW -- is untouched by it.",
+      "parent_module": "msk_warp.analysis.ppo_v2_protocol",
+      "parent_protocol_digest": "4c01fdc94117bd190cd44c6b6a5f411a5c7cfc7b7d3e0462a344dda43baf2169",
+      "parent_schema_version": "myoleg26-ppo-v2-protocol-v1",
+      "preregistration": "docs/research/2026-09-14-myoleg-session/orchestration/probes-DE-preregistration.md section 4 (E.1-E.4), written before any data. The mechanism and behaviour criteria live there and are deliberately not restated, paraphrased or re-derived in this module.",
+      "primary_recipe": "g990_e010_c040",
+      "recipes": {
+        "g990_e010_c040": {
+          "clip_range": 0.4,
+          "entropy_coef": 0.01,
+          "gamma": 0.99,
+          "overrides": {
+            "clip_range": 0.4
+          },
+          "ppo_epochs": null,
+          "role": "primary",
+          "varies": "clip_range 0.2 -> 0.4: widen the trust region"
+        },
+        "g990_e010_k001": {
+          "clip_range": null,
+          "entropy_coef": 0.01,
+          "gamma": 0.99,
+          "overrides": {
+            "ppo_epochs": 1
+          },
+          "ppo_epochs": 1,
+          "role": "declared_alternative",
+          "varies": "ppo_epochs 5 -> 1: re-enter the trust region once, not five times. NOT the same intervention as widening it."
+        }
+      },
+      "schema_version": "myoleg26-ppo-v2e-protocol-v1",
+      "trust_region_keys": [
+        "clip_range",
+        "ppo_epochs"
+      ],
+      "why": "The direction review measured clip_fraction median 0.584 with 976 of 1,024 updates above 0.5, replicated independently and worse in probe D (64 of 64 updates above 0.5). Whether that is gradient starvation or an artifact of clipping a 26-dimensional joint ratio is INFERRED, not settled, and it is the only measured optimiser anomaly on file. The sealed harness cannot vary either trust-region key, so the question needs a protocol amendment rather than a code change."
+    }
+  },
   "backend": {
     "head": "8f5636ce6b8d399c9452c04694eff22237219b8a"
   },
@@ -87,8 +182,9 @@
     "msk_warp/analysis/orbit.py": "d1dacdaa7033617455269c7cb05aa4041c846fcc8bbe96422d4fc404284ec818",
     "msk_warp/analysis/ppo_diagnostics.py": "5af92105b0ec533a70da0c1978e5b44bb6c9fc4a9d0c08bc383588beafedf0a1",
     "msk_warp/analysis/ppo_resume.py": "9d3549242a5d2769d3961b55f92bd64398ec95ee23b788d048575a28b2fb6f47",
-    "msk_warp/analysis/ppo_v2_budget.py": "7747f3b6055b4c23a491c8e729dcbcb29b26c2d6302d15e91bc0cc022369aa9b",
+    "msk_warp/analysis/ppo_v2_budget.py": "b72feb25bedaf199fc4a98e43de935ef1b51b896acbc5538a84da640b25e51ed",
     "msk_warp/analysis/ppo_v2_protocol.py": "211c9c9f15f56dc0a2c7b412b520f9e55304a4ac7fd09c220c00c581f4f936a5",
+    "msk_warp/analysis/ppo_v2_protocol_e.py": "a25d6daaed3cceffe735108b326619cf71f932a05d4f4802c899d4b8f0e819e1",
     "msk_warp/analysis/stability.py": "82b2d4141e1e4bd3b5dca3bbf8777d04b35988ef0fe2f43a50ca76c8a03ecd85",
     "msk_warp/assets/myoleg26/LICENSE.upstream": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
     "msk_warp/assets/myoleg26/SOURCE_NOTICES.txt": "cadbaa6b4e8403c9da1925fab3dfe4055bd85e077f048a1dc493d777ed3d8cca",
@@ -162,8 +258,8 @@
     "msk_warp/utils/running_mean_std.py": "f953560dc8226fbe39285c8bc45d3bbce8a897e5cc33fdf852abd06c2296f22b",
     "msk_warp/utils/time_report.py": "c972b3f14aca0b7c070e335dbdcadec06485749722d143a03213c2b0a8d0b756",
     "msk_warp/utils/torch_utils.py": "f030d39c00f0ae3cc282617c05de794fac915996de6d1de742ad76f3abf1ef93",
-    "scripts/run_myoleg26_ppo_v2.py": "1356e582ea4a870639a8af0d7984a5ea6524f02ab87abb1b66e7bd5e07d2abcd",
-    "scripts/summarize_myoleg26_ppo_v2.py": "252e854b4d11e0b3071a433050d208f06bf73c58a067dd86dce915c4f4e418cd"
+    "scripts/run_myoleg26_ppo_v2.py": "54ef40940ffd3e3b51cd9597e1bacfd91a46fa7b84133b08c59c105f3951fd0d",
+    "scripts/summarize_myoleg26_ppo_v2.py": "e93387ea0d29d3cac35b95425e27567c437465c06cb12e6e9a6b55601ad6cc12"
   },
   "files_eol": {
     "msk_warp/__init__.py": "crlf",
@@ -179,6 +275,7 @@
     "msk_warp/analysis/ppo_resume.py": "crlf",
     "msk_warp/analysis/ppo_v2_budget.py": "crlf",
     "msk_warp/analysis/ppo_v2_protocol.py": "crlf",
+    "msk_warp/analysis/ppo_v2_protocol_e.py": "crlf",
     "msk_warp/analysis/stability.py": "lf",
     "msk_warp/assets/myoleg26/LICENSE.upstream": "lf",
     "msk_warp/assets/myoleg26/SOURCE_NOTICES.txt": "lf",
@@ -268,8 +365,9 @@
       "msk_warp/analysis/orbit.py": "6520501f587c3d628d6c2a4a6909ca208387975f",
       "msk_warp/analysis/ppo_diagnostics.py": "7ba65f9e33a67d68795aa8e5af43230fa41d7448",
       "msk_warp/analysis/ppo_resume.py": "479a4ee61f36c8a5b790973140e1d97441e41f7c",
-      "msk_warp/analysis/ppo_v2_budget.py": "df479d6dc8b9786e8acd9033d2f42da9d5690470",
+      "msk_warp/analysis/ppo_v2_budget.py": "63c4208e1bac4f52f91e27a3239355691b397a54",
       "msk_warp/analysis/ppo_v2_protocol.py": "60923451f0fd3b8c9d00332ae394775e204d2eea",
+      "msk_warp/analysis/ppo_v2_protocol_e.py": "e1c2a671dc1aaec3843d1a5c30d8e0b5d774bcfc",
       "msk_warp/analysis/stability.py": "899ad46e9508f93660607eff44f83ed9f4f119d7",
       "msk_warp/assets/myoleg26/LICENSE.upstream": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
       "msk_warp/assets/myoleg26/SOURCE_NOTICES.txt": "f91c3c555ad52c22ba8deac9d43a49f6854fa0bc",
@@ -343,8 +441,8 @@
       "msk_warp/utils/running_mean_std.py": "b964c7039f28c514cab35204f147c2962b6f4fdf",
       "msk_warp/utils/time_report.py": "876fd5690f63d5276b1b2a4cda220e5f53b1b649",
       "msk_warp/utils/torch_utils.py": "9a0cdcec2ec12996a14d8555516df91001d48e79",
-      "scripts/run_myoleg26_ppo_v2.py": "fceec6397ec2adc51e8a64a02943f53b93b88fdf",
-      "scripts/summarize_myoleg26_ppo_v2.py": "77a2b3090c074d5eb65b7392509847a5b07c8249"
+      "scripts/run_myoleg26_ppo_v2.py": "aa282108b7b76aecd87e0a8d339b5487683e5d52",
+      "scripts/summarize_myoleg26_ppo_v2.py": "04b074bf8b0c3ef437134705b5509a3cfeaa174a"
     },
     "head_status": {
       "msk_warp/__init__.py": "in_head",
@@ -360,6 +458,7 @@
       "msk_warp/analysis/ppo_resume.py": "in_head",
       "msk_warp/analysis/ppo_v2_budget.py": "in_head",
       "msk_warp/analysis/ppo_v2_protocol.py": "in_head",
+      "msk_warp/analysis/ppo_v2_protocol_e.py": "in_head",
       "msk_warp/analysis/stability.py": "in_head",
       "msk_warp/assets/myoleg26/LICENSE.upstream": "in_head",
       "msk_warp/assets/myoleg26/SOURCE_NOTICES.txt": "in_head",
@@ -448,8 +547,9 @@
       "msk_warp/analysis/orbit.py": "6520501f587c3d628d6c2a4a6909ca208387975f",
       "msk_warp/analysis/ppo_diagnostics.py": "7ba65f9e33a67d68795aa8e5af43230fa41d7448",
       "msk_warp/analysis/ppo_resume.py": "479a4ee61f36c8a5b790973140e1d97441e41f7c",
-      "msk_warp/analysis/ppo_v2_budget.py": "df479d6dc8b9786e8acd9033d2f42da9d5690470",
+      "msk_warp/analysis/ppo_v2_budget.py": "63c4208e1bac4f52f91e27a3239355691b397a54",
       "msk_warp/analysis/ppo_v2_protocol.py": "60923451f0fd3b8c9d00332ae394775e204d2eea",
+      "msk_warp/analysis/ppo_v2_protocol_e.py": "e1c2a671dc1aaec3843d1a5c30d8e0b5d774bcfc",
       "msk_warp/analysis/stability.py": "899ad46e9508f93660607eff44f83ed9f4f119d7",
       "msk_warp/assets/myoleg26/LICENSE.upstream": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
       "msk_warp/assets/myoleg26/SOURCE_NOTICES.txt": "f91c3c555ad52c22ba8deac9d43a49f6854fa0bc",
@@ -523,8 +623,8 @@
       "msk_warp/utils/running_mean_std.py": "b964c7039f28c514cab35204f147c2962b6f4fdf",
       "msk_warp/utils/time_report.py": "876fd5690f63d5276b1b2a4cda220e5f53b1b649",
       "msk_warp/utils/torch_utils.py": "9a0cdcec2ec12996a14d8555516df91001d48e79",
-      "scripts/run_myoleg26_ppo_v2.py": "fceec6397ec2adc51e8a64a02943f53b93b88fdf",
-      "scripts/summarize_myoleg26_ppo_v2.py": "77a2b3090c074d5eb65b7392509847a5b07c8249"
+      "scripts/run_myoleg26_ppo_v2.py": "aa282108b7b76aecd87e0a8d339b5487683e5d52",
+      "scripts/summarize_myoleg26_ppo_v2.py": "04b074bf8b0c3ef437134705b5509a3cfeaa174a"
     }
   },
   "model_path": "msk_warp/assets/myoleg26/flat_boxes.xml",
@@ -819,7 +919,7 @@
     }
   },
   "python": "3.12.0",
-  "schema_version": "myoleg26-ppo-v2-freeze-v1",
+  "schema_version": "myoleg26-ppo-v2-freeze-v2",
   "task_contract": {
     "effort_weight": 0.01,
     "target_speed": 1.0,
