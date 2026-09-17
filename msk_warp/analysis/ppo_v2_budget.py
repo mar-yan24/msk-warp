@@ -202,6 +202,129 @@ def canonical_json(value) -> bytes:
                       allow_nan=False).encode("utf-8")
 
 
+def sha256_bytes(raw) -> str:
+    """SHA256 of exact bytes. Used to bind a carried-forward source ledger."""
+    return hashlib.sha256(bytes(raw)).hexdigest()
+
+
+#: The keys a header's ``carried_forward`` block must carry, exactly.
+CARRIED_FORWARD_KEYS = ("source_path", "source_sha256", "source_rows",
+                        "source_protocol_digest", "global_s", "stage_s",
+                        "run_s", "settled_rows")
+
+CARRY_FORWARD_NOTE = (
+    "A protocol amendment gets its OWN ledger so the ledger it descends from "
+    "stays byte-intact, and that new ledger opens at the settled spend of the "
+    "one it descends from. The opening balance is not a convenience: without it "
+    "a new ledger would reset every cap, which would make a new protocol version "
+    "a way of escaping a charge already made. The carried block lives inside the "
+    "hash-chained header row, so it cannot be edited after the fact, and it "
+    "records the source ledger's path, byte sha256, row count and protocol "
+    "digest beside its totals. The source is READ ONLY: it is never extended, "
+    "migrated, rewritten or re-hashed."
+)
+
+
+@dataclass(frozen=True)
+class CarriedForward:
+    """One ledger's settled spend, carried into a descendant ledger's header.
+
+    ``settled_rows`` counts the settlements the source *represents*, including
+    any it had itself carried, so a chain of amendments stays honest about how
+    many settlements stand behind the opening balance.
+    """
+
+    source_path: str
+    source_sha256: str
+    source_rows: int
+    source_protocol_digest: str
+    global_s: float
+    stage_s: dict
+    run_s: dict
+    settled_rows: int
+
+    def as_dict(self) -> dict:
+        if not _SHA256_RE.match(str(self.source_sha256)):
+            raise LedgerIntegrityError(
+                f"carried source_sha256 {self.source_sha256!r} is not a sha256")
+        if not _SHA256_RE.match(str(self.source_protocol_digest)):
+            raise LedgerIntegrityError(
+                "carried source_protocol_digest "
+                f"{self.source_protocol_digest!r} is not a sha256")
+        return {
+            "source_path": str(self.source_path),
+            "source_sha256": str(self.source_sha256),
+            "source_rows": _count(self.source_rows, "source_rows"),
+            "source_protocol_digest": str(self.source_protocol_digest),
+            "global_s": _finite(self.global_s, "carried global_s", minimum=0.0),
+            "stage_s": {str(key): _finite(value, f"carried stage_s[{key}]",
+                                          minimum=0.0)
+                        for key, value in dict(self.stage_s).items()},
+            "run_s": {str(key): _finite(value, f"carried run_s[{key}]",
+                                        minimum=0.0)
+                      for key, value in dict(self.run_s).items()},
+            "settled_rows": _count(self.settled_rows, "carried settled_rows"),
+            "note": CARRY_FORWARD_NOTE,
+        }
+
+
+def validate_carried_forward(block) -> dict:
+    """Refuse a header's carried block unless it is complete and well formed."""
+    if not isinstance(block, Mapping):
+        raise LedgerIntegrityError(
+            "the ledger header's carried_forward block is not an object: "
+            f"{block!r}")
+    missing = [key for key in CARRIED_FORWARD_KEYS if key not in block]
+    if missing:
+        raise LedgerIntegrityError(
+            f"the ledger header's carried_forward block is missing {missing}")
+    for key in ("source_sha256", "source_protocol_digest"):
+        if not _SHA256_RE.match(str(block[key])):
+            raise LedgerIntegrityError(
+                f"the carried_forward {key} {block[key]!r} is not a sha256")
+    _count(block["source_rows"], "carried source_rows")
+    _count(block["settled_rows"], "carried settled_rows")
+    _finite(block["global_s"], "carried global_s", minimum=0.0)
+    for field_name in ("stage_s", "run_s"):
+        mapping = block[field_name]
+        if not isinstance(mapping, Mapping):
+            raise LedgerIntegrityError(
+                f"the carried_forward {field_name} is not an object")
+        for key, value in mapping.items():
+            _finite(value, f"carried {field_name}[{key}]", minimum=0.0)
+    return dict(block)
+
+
+def carry_forward(path, *, protocol=None) -> CarriedForward:
+    """Read a ledger and total its settlements, for a descendant's header.
+
+    The source is opened through :meth:`BudgetLedger.open`, so its whole hash
+    chain is re-verified before a single number is carried. It is **never**
+    written to. A source holding an unsettled reservation is refused rather than
+    carried: its charge is not yet known, so carrying it would understate the
+    spend and hand the descendant headroom that may not exist.
+    """
+    source = BudgetLedger.open(path, protocol=protocol)
+    open_reservation = source.pending
+    if open_reservation is not None:
+        raise LedgerIntegrityError(
+            f"the source ledger {source.path} holds the unsettled reservation "
+            f"{open_reservation.reservation_id!r}; its charge is not yet known, "
+            "so carrying it forward would understate the spend")
+    totals = source.charged()
+    already = source.carried_forward or {}
+    return CarriedForward(
+        source_path=str(source.path.resolve()),
+        source_sha256=sha256_bytes(source.path.read_bytes()),
+        source_rows=len(source.rows),
+        source_protocol_digest=source.protocol_digest,
+        global_s=float(totals["global_s"]),
+        stage_s={key: float(value) for key, value in totals["stage_s"].items()},
+        run_s={key: float(value) for key, value in totals["run_s"].items()},
+        settled_rows=int(totals["settled_rows"])
+        + int(already.get("settled_rows", 0)))
+
+
 def record_digest(body) -> str:
     """SHA256 over a record body, which must exclude its own digest field."""
     return hashlib.sha256(canonical_json(body)).hexdigest()
@@ -407,7 +530,13 @@ class BudgetLedger:
     external edit between calls is caught before more budget is committed.
     """
 
-    def __init__(self, path, *, clock=time.time, contention_probe=None):
+    def __init__(self, path, *, clock=time.time, contention_probe=None,
+                 protocol=None):
+        #: The protocol this ledger is keyed to. The sealed campaign protocol by
+        #: default; an amendment module passes itself, which is what lets its own
+        #: arms be reserved while every sealed arm stays refused.
+        self.protocol = P if protocol is None else protocol
+        self._carried = None
         self.path = Path(path)
         self._clock = clock
         self._probe = contention_probe
@@ -417,24 +546,61 @@ class BudgetLedger:
 
     @classmethod
     def create(cls, path, *, protocol_digest, clock=time.time,
-               contention_probe=None) -> "BudgetLedger":
+               contention_probe=None, protocol=None, carried=None,
+               provenance=None) -> "BudgetLedger":
         """Create the one ledger, refusing to touch anything already present."""
-        ledger = cls(path, clock=clock, contention_probe=contention_probe)
+        ledger = cls(path, clock=clock, contention_probe=contention_probe,
+                     protocol=protocol)
+        spec = ledger.protocol
         digest = str(protocol_digest)
         if not _SHA256_RE.match(digest):
             raise LedgerIntegrityError(
                 f"protocol_digest must be a sha256 hex digest, got {digest!r}")
+        # A protocol that descends from another one must open at that one's
+        # settled spend. Refusing here is what stops a new protocol version from
+        # being used as a way of escaping a charge already made.
+        if getattr(spec, "REQUIRES_CARRY_FORWARD", False) and carried is None:
+            raise LedgerIntegrityError(
+                f"protocol {digest} requires a carried forward opening balance "
+                f"from {getattr(spec, 'PARENT_LEDGER', 'its parent ledger')}: a "
+                "fresh ledger would reset every cap, and a new ledger is never a "
+                "way of escaping a charge already made")
+        carried_block = None
+        if carried is not None:
+            if not isinstance(carried, CarriedForward):
+                raise LedgerIntegrityError(
+                    f"carried must be a CarriedForward, got {carried!r}")
+            if Path(carried.source_path) == ledger.path.resolve():
+                raise LedgerIntegrityError(
+                    f"a ledger never carries itself forward: {ledger.path}")
+            if carried.source_protocol_digest == digest:
+                raise LedgerIntegrityError(
+                    "the carried source ledger has the same protocol digest "
+                    f"{digest}: a second ledger for one protocol would be a "
+                    "migration or a rewrite of the first, which is refused. A "
+                    "carried opening balance is only for a DESCENDANT protocol")
+            carried_block = carried.as_dict()
         posix_time = _finite(ledger._clock(), "clock")
         body = {
             "index": 0, "kind": HEADER_KIND, "prev_sha256": GENESIS_PREV_SHA256,
             "posix_time": posix_time, "utc": _utc(posix_time),
             "schema_version": SCHEMA_VERSION, "protocol_digest": digest,
-            "total_wall_cap_s": P.TOTAL_WALL_CAP_S,
-            "reserve_wall_cap_s": P.RESERVE_WALL_CAP_S,
-            "segment_max_epochs": P.SEGMENT_MAX_EPOCHS,
-            "segment_work_deadline_s": P.SEGMENT_WORK_DEADLINE_S,
-            "segment_call_bound_s": P.SEGMENT_CALL_BOUND_S,
+            "total_wall_cap_s": spec.TOTAL_WALL_CAP_S,
+            "reserve_wall_cap_s": spec.RESERVE_WALL_CAP_S,
+            "segment_max_epochs": spec.SEGMENT_MAX_EPOCHS,
+            "segment_work_deadline_s": spec.SEGMENT_WORK_DEADLINE_S,
+            "segment_call_bound_s": spec.SEGMENT_CALL_BOUND_S,
         }
+        # Both optional blocks are written INSIDE the hash-chained header row, so
+        # neither can be edited after the ledger exists. A ledger with neither is
+        # byte-identical to one written before this facility existed.
+        if carried_block is not None:
+            body["carried_forward"] = carried_block
+        if provenance is not None:
+            if not isinstance(provenance, Mapping):
+                raise LedgerIntegrityError(
+                    f"provenance must be a mapping, got {provenance!r}")
+            body["protocol_provenance"] = dict(provenance)
         row = dict(body, record_sha256=record_digest(body))
         try:
             with ledger.path.open("x", encoding="utf-8", newline="\n") as handle:
@@ -445,12 +611,15 @@ class BudgetLedger:
                 "overwritten, replaced or started fresh"
             ) from exc
         ledger._rows = (row,)
+        ledger._carried = carried_block
         return ledger
 
     @classmethod
-    def open(cls, path, *, clock=time.time, contention_probe=None) -> "BudgetLedger":
+    def open(cls, path, *, clock=time.time, contention_probe=None,
+             protocol=None) -> "BudgetLedger":
         """Open and fully verify an existing ledger, or refuse."""
-        ledger = cls(path, clock=clock, contention_probe=contention_probe)
+        ledger = cls(path, clock=clock, contention_probe=contention_probe,
+                     protocol=protocol)
         ledger._load()
         return ledger
 
@@ -524,6 +693,9 @@ class BudgetLedger:
                 if not _SHA256_RE.match(str(row.get("protocol_digest"))):
                     raise LedgerIntegrityError(
                         "the ledger header has no valid protocol_digest")
+                header_carried = (
+                    validate_carried_forward(row["carried_forward"])
+                    if "carried_forward" in row else None)
             elif kind == HEADER_KIND:
                 raise LedgerIntegrityError(
                     f"ledger line {number + 1} is a second header")
@@ -573,6 +745,7 @@ class BudgetLedger:
                     f"ledger {self.path} record {position} changed after it was "
                     "observed; an append-only ledger never rewrites a row")
         self._rows = tuple(rows)
+        self._carried = header_carried
 
     # -- reading ----------------------------------------------------------
 
@@ -622,9 +795,37 @@ class BudgetLedger:
         return any(row["kind"] == SPAWN_KIND
                    and row["reservation_id"] == target for row in self._rows)
 
+    @property
+    def carried_forward(self):
+        """The header's carried-forward opening balance, or ``None``.
+
+        ``None`` means this ledger opens every cap at its full value, which is
+        the sealed campaign ledger's case. See :data:`CARRY_FORWARD_NOTE`.
+        """
+        return None if self._carried is None else dict(self._carried)
+
+    def carried_totals(self) -> dict:
+        """The opening balance alone, separated from this file's own rows."""
+        carried = self._carried or {}
+        return {
+            "global_s": float(carried.get("global_s", 0.0)),
+            "stage_s": {key: float(value)
+                        for key, value in (carried.get("stage_s") or {}).items()},
+            "run_s": {key: float(value)
+                      for key, value in (carried.get("run_s") or {}).items()},
+            "settled_rows": int(carried.get("settled_rows", 0)),
+        }
+
     def charged(self) -> dict:
-        """Settled charges, by global total, stage and (stage, recipe, seed) run."""
-        totals = {"global_s": 0.0, "stage_s": {}, "run_s": {}, "settled_rows": 0}
+        """Settled charges, by global total, stage and (stage, recipe, seed) run.
+
+        The three amounts INCLUDE any carried-forward opening balance, because
+        they are what every cap is measured against. ``settled_rows`` counts the
+        settlements in **this** file only; the carried row count is reported
+        separately by :meth:`carried_totals`, so the two are never conflated.
+        """
+        totals = self.carried_totals()
+        totals["settled_rows"] = 0
         for row in self._rows:
             if row["kind"] != SETTLE_KIND:
                 continue
@@ -638,8 +839,8 @@ class BudgetLedger:
         return totals
 
     def _checked_run(self, stage, recipe, seed):
-        spec = P.stage(stage)
-        arm = P.recipe(recipe)
+        spec = self.protocol.stage(stage)
+        arm = self.protocol.recipe(recipe)
         if seed not in spec.seeds:
             raise BudgetError(
                 f"seed {seed!r} is not a scheduled seed of stage {spec.key!r} "
@@ -651,7 +852,7 @@ class BudgetLedger:
         spec, _arm = self._checked_run(stage, recipe, seed)
         totals = self.charged()
         return Remaining(
-            global_s=P.TOTAL_WALL_CAP_S - totals["global_s"],
+            global_s=self.protocol.TOTAL_WALL_CAP_S - totals["global_s"],
             stage_s=spec.wall_cap_s - totals["stage_s"].get(spec.key, 0.0),
             seed_s=(spec.per_seed_safety_cap_s
                     - totals["run_s"].get(_run_key(spec.key, recipe, seed), 0.0)),
@@ -710,10 +911,10 @@ class BudgetLedger:
         last = _count(end_epoch, "end_epoch")
         if last <= first:
             raise BudgetError(f"end_epoch {last} must exceed start_epoch {first}")
-        if last - first > P.SEGMENT_MAX_EPOCHS:
+        if last - first > self.protocol.SEGMENT_MAX_EPOCHS:
             raise BudgetError(
-                f"segment spans {last - first} epochs, above the {P.SEGMENT_MAX_EPOCHS}"
-                "-epoch ceiling")
+                f"segment spans {last - first} epochs, above the "
+                f"{self.protocol.SEGMENT_MAX_EPOCHS}-epoch ceiling")
         if last > spec.epoch_cap_per_seed:
             raise BudgetError(
                 f"end_epoch {last} exceeds the stage {spec.key!r} epoch cap "
@@ -728,13 +929,14 @@ class BudgetLedger:
                 "a launch needs an explicit positive shutdown/checkpoint "
                 f"allowance, got {allowance}")
         bound = _finite(reserved_bound_s, "reserved_bound_s",
-                        maximum=float(P.SEGMENT_CALL_BOUND_S))
+                        maximum=float(self.protocol.SEGMENT_CALL_BOUND_S))
         if bound <= 0:
             raise BudgetError(f"reserved_bound_s must be positive, got {bound}")
-        if bound + allowance > P.SEGMENT_CALL_BOUND_S:
+        if bound + allowance > self.protocol.SEGMENT_CALL_BOUND_S:
             raise ShutdownAllowanceError(
                 f"a reserved bound of {bound} s plus a {allowance} s shutdown "
-                f"allowance exceeds the {P.SEGMENT_CALL_BOUND_S} s call bound")
+                f"allowance exceeds the {self.protocol.SEGMENT_CALL_BOUND_S} s "
+                "call bound")
 
         remaining = self.remaining(spec.key, recipe, seed)
         if bound + allowance > remaining.least:
@@ -754,7 +956,7 @@ class BudgetLedger:
             "seed": seed, "segment_index": segment,
             "start_epoch": first, "end_epoch": last,
             "reserved_bound_s": bound, "shutdown_allowance_s": allowance,
-            "work_deadline_s": P.SEGMENT_WORK_DEADLINE_S,
+            "work_deadline_s": self.protocol.SEGMENT_WORK_DEADLINE_S,
             "remaining_before": remaining.as_dict(),
             "contention_at_launch": contention,
         })
