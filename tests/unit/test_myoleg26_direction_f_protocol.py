@@ -859,6 +859,7 @@ def _prereg_drifted(chain):
 _RECORD_REFUSALS = [
     ("absent", _absent, r"does not exist"),
     ("not_json", _raw(b"{not json"), r"not valid JSON"),
+    ("deep_nesting", _raw(b"[" * 100_000 + b"]" * 100_000), r"not valid JSON"),
     ("not_utf8", _raw(b"\xff\xfe{}"), r"not valid UTF-8"),
     ("nan", _nan_budget, r"non-finite"),
     ("not_object", _raw(b"[1, 2]"), r"JSON object"),
@@ -1092,3 +1093,20 @@ def test_s07_the_base_recipe_note_names_every_read_of_max_epochs():
     for phrase in ("begin_epoch", "no-op", "loop bound", "linear"):
         assert phrase in lowered, phrase
     assert F.amendment_snapshot()["base_recipe"] == F.BASE_RECIPE_NOTE
+
+
+# --------------------------------------------------------------------------
+# Review round 2
+# --------------------------------------------------------------------------
+
+def test_s08_the_carry_forward_note_transcribes_the_preregistered_rule():
+    """Preregistration section 2.4 adopts the rule, in these words, for the
+    whole life of F's ledger. The note travels in the snapshot and the ledger
+    provenance, so it is inside the digest."""
+    rule = ("no sealed or E launch while an F ledger exists, until a "
+            "visibility-guard unit lands")
+    note = F.CARRY_FORWARD_NOTE
+    assert rule in note
+    assert "whole life" in note
+    assert "cannot see Direction F's spend" in note
+    assert F.amendment_snapshot()["ledger"]["carry_forward_note"] == note

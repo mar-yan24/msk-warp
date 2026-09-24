@@ -49,8 +49,9 @@ deliberately **not** re-exported from ``msk_warp/analysis/__init__.py``.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 import datetime
 import hashlib
 import json
@@ -321,6 +322,14 @@ MAX_CARRY_CHAIN_DEPTH = 32
 LAUNCH_RECORD_FILENAME = "launch.json"
 SEGMENT_DIR_PREFIX = "segment_"
 
+#: A segment directory name the runner writes: the prefix and a zero-padded
+#: index (see :func:`_assert_run_root_reconciled`).
+_SEGMENT_DIR_RE = re.compile(r"segment_([0-9]+)", re.ASCII)
+
+#: The fields a launch record shares with the reserve row it was written under.
+_LAUNCH_KEYS = ("stage", "recipe", "seed", "segment_index", "start_epoch",
+                "end_epoch")
+
 
 @dataclass(frozen=True)
 class CarriedForward:
@@ -425,7 +434,85 @@ def _assert_declared_parent(spec, carried) -> None:
                 "as its parent")
 
 
-def _assert_source_chain_current(source_path, *, descendant, action) -> None:
+def _assert_source_lineage(spec, source, *, descendant, action) -> None:
+    """With ``BIND_LEDGER_PATH``, the source ledger must be one its own protocol
+    could have written: it carries what that protocol requires, from the parent
+    that protocol declares.
+
+    :func:`_assert_declared_parent` checks the source's path and header digest,
+    but a ledger with the parent's digest can be written at the parent's path
+    by ``create`` under another spec. One that carries nothing, or that carries
+    from some other ledger of the grandparent's protocol -- a fresh, zero-spend
+    one, say -- would hand this ledger an opening balance that omits spend
+    already made. The parent's protocol is read from ``PARENT_PROTOCOL``; a bound
+    protocol that requires a carried balance must declare it. Opt-in, so the
+    sealed protocol and probe E are unaffected.
+    """
+    if not getattr(spec, "BIND_LEDGER_PATH", False):
+        return
+    parent_spec = getattr(spec, "PARENT_PROTOCOL", None)
+    if parent_spec is None:
+        if getattr(spec, "REQUIRES_CARRY_FORWARD", False):
+            raise LedgerIntegrityError(
+                "this protocol binds its ledger path and requires a carried "
+                "opening balance, but declares no PARENT_PROTOCOL, so the "
+                f"lineage of its source ledger {source.path} cannot be checked "
+                f"and the {action} for {descendant} is refused")
+        return
+    history = source.carried_history()
+    if getattr(parent_spec, "REQUIRES_CARRY_FORWARD", False) and not history:
+        raise LedgerIntegrityError(
+            f"the source ledger {source.path} declares no carried forward "
+            "opening balance, but its own protocol requires one from "
+            f"{getattr(parent_spec, 'PARENT_LEDGER', 'its parent ledger')}. It "
+            "was not written by create under that protocol, and its totals omit "
+            f"the spend beneath it, so the {action} for {descendant} is refused "
+            "and nothing is written")
+    for block in history:
+        try:
+            _assert_declared_parent(parent_spec, SimpleNamespace(
+                source_path=block["source_path"],
+                source_protocol_digest=block["source_protocol_digest"]))
+        except LedgerIntegrityError as exc:
+            raise LedgerIntegrityError(
+                f"the source ledger {source.path} holds a carried opening "
+                "balance that its own protocol would refuse, so its totals "
+                "cannot stand for the spend beneath it and the "
+                f"{action} for {descendant} is refused. Its protocol's refusal: "
+                f"{exc}"
+            ) from exc
+
+
+def _assert_carried_rederived(carried, *, descendant) -> None:
+    """With ``BIND_LEDGER_PATH``, the carried balance ``create`` is handed must
+    be the one :func:`carry_forward` derives from its source as it stands.
+
+    A :class:`CarriedForward` is an ordinary value, so one edited after it was
+    taken -- a stage or seed total emptied, a lower global charge -- would
+    otherwise be written into the header and guarded faithfully for the rest
+    of the ledger's life.
+    """
+    try:
+        fresh = carry_forward(carried.source_path)
+    except BudgetError as exc:
+        raise LedgerIntegrityError(
+            "the carried opening balance could not be re-derived from its "
+            f"source ledger {carried.source_path}, so the create for "
+            f"{descendant} is refused: {exc}"
+        ) from exc
+    if fresh != carried:
+        changed = [item.name for item in fields(CarriedForward)
+                   if getattr(fresh, item.name) != getattr(carried, item.name)]
+        raise LedgerIntegrityError(
+            "the carried opening balance does not match its source ledger as "
+            f"it stands ({carried.source_path}): {changed} differ from what "
+            "carry_forward derives now. A carried balance is taken from the "
+            "source, never supplied by hand, so the create for "
+            f"{descendant} is refused and nothing is written")
+
+
+def _assert_source_chain_current(source_path, *, descendant, action,
+                                 spec=None) -> None:
     """Refuse to adopt a carried balance from a source ledger that is stale.
 
     A source whose OWN carried balance no longer matches its parent has a
@@ -434,6 +521,9 @@ def _assert_source_chain_current(source_path, *, descendant, action) -> None:
     already spent, so :meth:`BudgetLedger.create` and
     :meth:`BudgetLedger.resnapshot_parent` refuse it and name the order that
     fixes it: re-snapshot the stale source first, then the descendant.
+
+    With ``spec`` given, the source's own lineage is checked as well (see
+    :func:`_assert_source_lineage`).
     """
     source = Path(source_path)
     here = str(Path(descendant).resolve())
@@ -463,6 +553,8 @@ def _assert_source_chain_current(source_path, *, descendant, action) -> None:
             f"the carried-forward chain above {source} could not be confirmed, "
             f"so the {action} for {here} is refused: {exc}"
         ) from exc
+    if spec is not None:
+        _assert_source_lineage(spec, ledger, descendant=here, action=action)
 
 
 def _assert_bound_ledger_path(spec, path, *, action="create") -> None:
@@ -527,6 +619,186 @@ def _assert_bound_ledger_lineage(spec, path, carried_chain) -> None:
             source_protocol_digest=block["source_protocol_digest"]))
 
 
+def _ledger_binding(spec) -> dict:
+    """What ``create`` under a bound protocol records in the header."""
+    return {"ledger": str(getattr(spec, "LEDGER", None)),
+            "run_root": str(getattr(spec, "RUN_ROOT", None))}
+
+
+def _assert_bound_ledger_header(spec, path, header) -> None:
+    """With ``BIND_LEDGER_PATH``, the header must name the spec that wrote it.
+
+    ``create`` under a bound protocol runs the path binding, the run-root guard
+    and the launch lock before the file exists, and records ``ledger_binding``
+    inside the hash-chained header. A file with this protocol's digest written
+    any other way -- ``create`` with ``protocol`` omitted, say, which runs none
+    of the three -- has no such record, or another one, and is refused at
+    every open that may write. Opt-in, so the sealed ledger and E are
+    unaffected.
+    """
+    if not getattr(spec, "BIND_LEDGER_PATH", False):
+        return
+    expected = _ledger_binding(spec)
+    recorded = header.get("ledger_binding")
+    if recorded != expected:
+        raise LedgerIntegrityError(
+            f"ledger {path} was not created under this protocol: its header "
+            f"records the ledger binding {recorded!r}, where create under this "
+            f"protocol records {expected!r}. Only that create runs the path "
+            "binding, the run-root guard and the launch lock before the file "
+            "exists, so a file written any other way would open with every cap "
+            "reset; refused and nothing is written. To READ it, open it with "
+            "inspect=True, which grants nothing")
+
+
+def _launch_traces(root) -> list:
+    """Every ``launch.json`` or ``segment_*`` entry under ``root``, at any depth.
+
+    Sorted. The walk never follows a symlink, creates nothing and changes
+    nothing; an entry that cannot be listed raises the OSError for the caller
+    to refuse on.
+    """
+    launch_name = os.path.normcase(LAUNCH_RECORD_FILENAME)
+    segment_prefix = os.path.normcase(SEGMENT_DIR_PREFIX)
+    found = []
+
+    def _refuse_walk_error(error):
+        raise error
+
+    for current, dirs, files in os.walk(root, onerror=_refuse_walk_error,
+                                        followlinks=False):
+        for name in (*dirs, *files):
+            key = os.path.normcase(name)
+            if key == launch_name or key.startswith(segment_prefix):
+                found.append(os.path.join(current, name))
+    found.sort()
+    return found
+
+
+def _is_plain_directory(path) -> bool:
+    """A real directory: not a symlink and not a junction."""
+    junction = getattr(os.path, "isjunction", None)
+    return (os.path.isdir(path) and not os.path.islink(path)
+            and not (junction is not None and junction(path)))
+
+
+def _scalar_key(values):
+    """``values`` as a tuple, or ``None`` unless every one is a str or a number."""
+    key = tuple(values)
+    if all(isinstance(value, (str, int, float)) and not isinstance(value, bool)
+           for value in key):
+        return key
+    return None
+
+
+def _launch_record_key(path, digest):
+    """The reservation a launch record names, or ``None`` if it names none usably.
+
+    Usable means: a regular file, not a symlink, holding UTF-8 JSON that
+    decodes to an object with this ledger's protocol digest, string stage and
+    recipe, and integer seed, segment index and epochs. Anything else -- even
+    nesting deep enough to exhaust the decoder -- is ``None``, never an error.
+    """
+    if os.path.islink(path) or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as handle:
+            record = json.loads(handle.read().decode("utf-8"))
+    except (OSError, ValueError, TypeError, RecursionError):
+        return None
+    if not isinstance(record, dict) or record.get("protocol_digest") != digest:
+        return None
+    for name in _LAUNCH_KEYS[:2]:
+        if not isinstance(record.get(name), str):
+            return None
+    for name in _LAUNCH_KEYS[2:]:
+        value = record.get(name)
+        if not isinstance(value, int) or isinstance(value, bool):
+            return None
+    return tuple(record[name] for name in _LAUNCH_KEYS)
+
+
+def _assert_run_root_reconciled(spec, path, rows) -> None:
+    """With ``BIND_LEDGER_PATH``, every launch trace under RUN_ROOT must be one
+    this ledger reserved.
+
+    Guard (e) proves the run root unlaunched when the ledger is created. This
+    re-proves the same fact on every use: each ``launch.json`` must be a
+    record of this ledger's protocol naming a reserve row's stage, recipe,
+    seed, segment index and epochs, and each ``segment_*`` entry must be a real
+    directory with a canonical ``segment_NNNN`` name whose index a reserve row
+    holds -- each reserve row accounting for at most one of each. One more of
+    anything means launches happened that this ledger never charged, for
+    example because the ledger was deleted, the traces moved aside, a new
+    ledger created and the traces put back; using it would re-grant their
+    spend. Called by every non-inspecting :meth:`BudgetLedger.open` and by
+    :meth:`BudgetLedger.reserve` before the parent re-check, the lock, the
+    contention probe and any row. Settlement is never gated by it. Opt-in, so
+    the sealed ledger and E are unaffected.
+    """
+    if not getattr(spec, "BIND_LEDGER_PATH", False):
+        return
+    declared = getattr(spec, "RUN_ROOT", None)
+    if declared is None:
+        raise LedgerIntegrityError(
+            "this protocol binds its ledger path (BIND_LEDGER_PATH) but declares "
+            "no RUN_ROOT, so the launch traces of the ledger "
+            f"{path} cannot be reconciled; refused")
+    root = Path(getattr(spec, "ROOT", P.ROOT)) / str(declared)
+    if not os.path.lexists(root):
+        return
+    if not os.path.isdir(root):
+        raise LedgerIntegrityError(
+            f"the run root {root} exists but is not a directory, so its launch "
+            f"traces cannot be reconciled with the ledger {path}; refused")
+    try:
+        traces = _launch_traces(root)
+    except OSError as exc:
+        raise LedgerIntegrityError(
+            f"the run root {root} could not be walked to reconcile its launch "
+            f"traces with the ledger {path} ({exc}); refused"
+        ) from exc
+    digest = rows[0].get("protocol_digest")
+    reserved = [row for row in rows if row.get("kind") == RESERVE_KIND]
+    records = Counter(key for key in (
+        _scalar_key(row.get(name) for name in _LAUNCH_KEYS) for row in reserved)
+        if key is not None)
+    segments = Counter(row.get("segment_index") for row in reserved
+                       if isinstance(row.get("segment_index"), int)
+                       and not isinstance(row.get("segment_index"), bool))
+    launch_name = os.path.normcase(LAUNCH_RECORD_FILENAME)
+    unaccounted = []
+    for trace in traces:
+        name = os.path.basename(trace)
+        if os.path.normcase(name) == launch_name:
+            key = _launch_record_key(trace, digest)
+            if key is not None and records[key] > 0:
+                records[key] -= 1
+                continue
+        else:
+            match = _SEGMENT_DIR_RE.fullmatch(name)
+            if match is not None and _is_plain_directory(trace):
+                index = int(match.group(1))
+                if (name == f"{SEGMENT_DIR_PREFIX}{index:04d}"
+                        and segments[index] > 0):
+                    segments[index] -= 1
+                    continue
+        unaccounted.append(trace)
+    if unaccounted:
+        shown = ", ".join(unaccounted[:6])
+        more = "" if len(unaccounted) <= 6 else f", and {len(unaccounted) - 6} more"
+        raise LedgerIntegrityError(
+            f"the run root {root} holds {len(unaccounted)} unaccounted launch "
+            f"trace(s) ({shown}{more}) that no reserve row of the ledger {path} "
+            "accounts for. Every launch.json and segment_* entry under a bound "
+            "run root is matched to this ledger's own reservations; one more "
+            "means launches happened that this ledger never charged -- for "
+            "example because an earlier ledger was deleted and this one created "
+            "in its place -- and using it would re-grant their spend. Refused "
+            "and nothing is written. The launch history is never cleared to "
+            "make room")
+
+
 def _assert_run_root_unlaunched(spec) -> None:
     """With ``BIND_LEDGER_PATH``, refuse a ledger for a run root already used.
 
@@ -555,27 +827,14 @@ def _assert_run_root_unlaunched(spec) -> None:
         raise LedgerIntegrityError(
             f"the run root {root} exists but is not a directory, so it cannot be "
             "checked for earlier launches; refused")
-    launch_name = os.path.normcase(LAUNCH_RECORD_FILENAME)
-    segment_prefix = os.path.normcase(SEGMENT_DIR_PREFIX)
-    found = []
-
-    def _refuse_walk_error(error):
-        raise error
-
     try:
-        for current, dirs, files in os.walk(root, onerror=_refuse_walk_error,
-                                            followlinks=False):
-            for name in (*dirs, *files):
-                key = os.path.normcase(name)
-                if key == launch_name or key.startswith(segment_prefix):
-                    found.append(os.path.join(current, name))
+        found = _launch_traces(root)
     except OSError as exc:
         raise LedgerIntegrityError(
             f"the run root {root} could not be walked to check for earlier "
             f"launches ({exc}); refused"
         ) from exc
     if found:
-        found.sort()
         shown = ", ".join(found[:6])
         more = "" if len(found) <= 6 else f", and {len(found) - 6} more"
         raise LedgerIntegrityError(
@@ -895,7 +1154,10 @@ class BudgetLedger:
             # Transitive: the declared parent must itself be current against
             # ITS parent, or its settled total omits spend beneath it.
             _assert_source_chain_current(carried.source_path,
-                                         descendant=ledger.path, action="create")
+                                         descendant=ledger.path, action="create",
+                                         spec=spec)
+            if getattr(spec, "BIND_LEDGER_PATH", False):
+                _assert_carried_rederived(carried, descendant=ledger.path)
             carried_block = carried.as_dict()
         # Opt-in bindings for a protocol that declares BIND_LEDGER_PATH: one
         # ledger, at one path, and never again once launches have happened.
@@ -924,6 +1186,10 @@ class BudgetLedger:
                 raise LedgerIntegrityError(
                     f"provenance must be a mapping, got {provenance!r}")
             body["protocol_provenance"] = dict(provenance)
+        # A bound protocol's header names the spec that wrote it, so a file
+        # written any other way is refused at open (_assert_bound_ledger_header).
+        if getattr(spec, "BIND_LEDGER_PATH", False):
+            body["ledger_binding"] = _ledger_binding(spec)
         row = dict(body, record_sha256=record_digest(body))
         try:
             with ledger.path.open("x", encoding="utf-8", newline="\n") as handle:
@@ -960,6 +1226,9 @@ class BudgetLedger:
                      protocol=protocol)
         ledger._inspect_only = bool(inspect)
         ledger._load()
+        if not ledger._inspect_only:
+            _assert_run_root_reconciled(ledger.protocol, ledger.path,
+                                        ledger._rows)
         return ledger
 
     # -- verification -----------------------------------------------------
@@ -986,7 +1255,7 @@ class BudgetLedger:
         for number, line in enumerate(lines):
             try:
                 row = json.loads(line)
-            except (ValueError, TypeError) as exc:
+            except (ValueError, TypeError, RecursionError) as exc:
                 raise LedgerIntegrityError(
                     f"ledger {self.path} line {number + 1} is not valid JSON: {exc}"
                 ) from exc
@@ -1006,7 +1275,7 @@ class BudgetLedger:
                     if key != "record_sha256"}
             try:
                 recomputed = record_digest(body)
-            except (TypeError, ValueError) as exc:
+            except (TypeError, ValueError, RecursionError) as exc:
                 raise LedgerIntegrityError(
                     f"ledger line {number + 1} cannot be re-encoded: {exc}") from exc
             if stored != recomputed:
@@ -1152,6 +1421,7 @@ class BudgetLedger:
             # every cap afresh. Opt-in flags; the sealed ledger and E skip both.
             _assert_bound_ledger_path(self.protocol, self.path, action="open")
             _assert_bound_ledger_lineage(self.protocol, self.path, carried_chain)
+            _assert_bound_ledger_header(self.protocol, self.path, rows[0])
         self._rows = tuple(rows)
         self._carried = effective_carried
         self._carried_chain = tuple(carried_chain)
@@ -1402,7 +1672,7 @@ class BudgetLedger:
         # Transitive: never adopt a balance from a parent that is itself stale.
         # The order is fixed -- the stale parent re-snapshots first, then this.
         _assert_source_chain_current(fresh.source_path, descendant=self.path,
-                                     action="re-snapshot")
+                                     action="re-snapshot", spec=self.protocol)
         if fresh.source_protocol_digest == self.protocol_digest:
             raise LedgerIntegrityError(
                 "the named parent has the same protocol digest "
@@ -1537,6 +1807,7 @@ class BudgetLedger:
         """Claim wall time exclusively, before anything expensive is started.
 
         Order is load-bearing: verify, refuse if a reservation is still open,
+        reconcile a bound protocol's run root with this ledger's reservations,
         re-check the carried parent chain, call the protocol's launch lock if
         it declares one, check every cap, observe contention,
         **append the row**, and only then run ``create``. A caller's ``create``
@@ -1552,6 +1823,9 @@ class BudgetLedger:
                 f"reservation {open_reservation.reservation_id} is still "
                 "unsettled; work is foreground and sequential, so no further "
                 "job may start until it is settled")
+        # A bound protocol's run root holds only the launches this ledger
+        # reserved, or nothing is reserved against it.
+        _assert_run_root_reconciled(self.protocol, self.path, self._rows)
         # Structural, not conventional: the carried opening balance is re-checked
         # against the live parent on EVERY reserve, in the same position as the
         # pending trap -- before any cap check, before the contention
@@ -1957,14 +2231,14 @@ def read_lock(path) -> dict:
         raise LockError(f"lock {target} does not exist")
     try:
         record = json.loads(target.read_text(encoding="utf-8"))
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, RecursionError) as exc:
         raise LockError(f"lock {target} is not valid JSON: {exc}") from exc
     if not isinstance(record, dict) or "lock_sha256" not in record:
         raise LockError(f"lock {target} has no lock_sha256")
     body = {key: value for key, value in record.items() if key != "lock_sha256"}
     try:
         recomputed = record_digest(body)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise LockError(f"lock {target} cannot be re-encoded: {exc}") from exc
     if record["lock_sha256"] != recomputed:
         raise LockError(

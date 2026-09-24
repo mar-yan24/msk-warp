@@ -1282,3 +1282,341 @@ def test_s10_a_resnapshot_from_the_wrong_parent_is_refused_at_open(chain):
     with pytest.raises(B.LedgerIntegrityError, match="declares its parent ledger"):
         B.BudgetLedger.open(chain.f_path, protocol=F)
     del f
+
+
+# --------------------------------------------------------------------------
+# Review round 2: a ledger is used only with the launch history it accounts
+# for, and only if create under this protocol wrote it
+# --------------------------------------------------------------------------
+
+def _launch_record(*, seed=4001, segment_index=0, start_epoch=0, end_epoch=64,
+                   digest=None) -> dict:
+    """A launch.json shaped like the runner's, for the reservation it names."""
+    return {
+        "schema_version": "myoleg26-ppo-v2-launch-v1", "protocol": "direction-f",
+        "protocol_digest": F.protocol_digest() if digest is None else digest,
+        "stage": "refine", "recipe": F_RECIPE, "seed": seed,
+        "segment_index": segment_index, "start_epoch": start_epoch,
+        "end_epoch": end_epoch, "epochs": end_epoch - start_epoch,
+    }
+
+
+def _segment_dir(chain, *, seed=4001, segment_index=0) -> Path:
+    return chain.run_root / f"{F_RECIPE}_s{seed}" / f"segment_{segment_index:04d}"
+
+
+def _trace(chain, *, seed=4001, segment_index=0, start_epoch=0, end_epoch=64,
+           digest=None):
+    """A reserve ``create`` callable that leaves the runner's launch traces."""
+    def _create():
+        out_dir = _segment_dir(chain, seed=seed, segment_index=segment_index)
+        out_dir.mkdir(parents=True, exist_ok=False)
+        (out_dir / "launch.json").write_text(json.dumps(_launch_record(
+            seed=seed, segment_index=segment_index, start_epoch=start_epoch,
+            end_epoch=end_epoch, digest=digest)), encoding="utf-8")
+    return _create
+
+
+def _launch(chain, ledger, *, seed=4001, actual=441.0, segment_index=0,
+            start_epoch=0, end_epoch=64, digest=None):
+    reservation = _reserve_f(
+        ledger, seed=seed, segment_index=segment_index, start_epoch=start_epoch,
+        end_epoch=end_epoch,
+        create=_trace(chain, seed=seed, segment_index=segment_index,
+                      start_epoch=start_epoch, end_epoch=end_epoch,
+                      digest=digest))
+    return ledger.settle(reservation, actual_wall_s=actual, returncode=0,
+                         counters=_counters())
+
+
+def _create_without_protocol(chain):
+    """The adversarial review's G1 call: F's digest and the genuine E carry,
+    with ``protocol`` omitted, so create runs under the sealed spec."""
+    return B.BudgetLedger.create(
+        chain.f_path, protocol_digest=F.protocol_digest(),
+        carried=B.carry_forward(chain.e_path),
+        provenance=F.ledger_provenance(), clock=FakeClock())
+
+
+def _refused_everywhere(chain, match, *, probe=None, ledger=None):
+    """Open under F and a reserve through a ledger object are both refused,
+    before the contention probe, with the file byte-identical."""
+    before = chain.f_path.read_bytes()
+    with pytest.raises(B.LedgerIntegrityError, match=match):
+        B.BudgetLedger.open(chain.f_path, protocol=F)
+    probe = _CountingProbe() if probe is None else probe
+    calls = probe.calls
+    target = ledger if ledger is not None else B.BudgetLedger(
+        chain.f_path, protocol=F, clock=FakeClock(), contention_probe=probe)
+    with pytest.raises(B.LedgerIntegrityError, match=match):
+        _reserve_f(target, seed=4002)
+    assert probe.calls == calls
+    assert chain.f_path.read_bytes() == before
+    assert B.BudgetLedger.open(chain.f_path, inspect=True).rows
+
+
+class _WithRunRoot:
+    """Direction F with its RUN_ROOT pointed somewhere else, and nothing else
+    changed, so its create walks a run root that is not F's."""
+
+    def __init__(self, run_root):
+        self._run_root = str(run_root)
+
+    def __getattr__(self, name):
+        if name == "RUN_ROOT":
+            return self._run_root
+        return getattr(F, name)
+
+
+def test_r01_a_protocol_omitted_re_create_after_launches_cannot_reopen_the_caps(chain):
+    """Adversarial review round 2, G1. After a launch the ledger is deleted and
+    written again by create with ``protocol`` omitted, so neither the run-root
+    guard, the lock nor the path check ran. Under F it must be refused."""
+    f = chain.build()
+    _launch(chain, f)
+    assert f.charged()["stage_s"]["refine"] == 441.0
+    chain.f_path.unlink()
+    _create_without_protocol(chain)
+    assert _header(chain.f_path)["protocol_digest"] == F.protocol_digest()
+    _refused_everywhere(chain, "not created under this protocol")
+
+
+def test_r02_an_f_digest_header_not_written_under_f_is_refused_before_any_launch(chain):
+    """G1b: the header names the spec that wrote it. With no launch at all, so
+    nothing in the run root could refuse it, a protocol-omitted F ledger is
+    still refused, by the missing binding alone."""
+    _prepared(chain)
+    _create_without_protocol(chain)
+    assert "ledger_binding" not in _header(chain.f_path)
+    _refused_everywhere(chain, "not created under this protocol")
+
+
+def test_r03_a_locked_build_gains_no_usable_f_ledger_from_a_protocol_omitted_create(chain):
+    """G2. While F is locked, a protocol-omitted create still writes a file with
+    the locked build's digest. It is refused under the locked F, and after the
+    flip it is refused again (the digest moved)."""
+    chain.build_sealed()
+    chain.build_e()
+    _create_without_protocol(chain)
+    with pytest.raises(B.LedgerIntegrityError,
+                       match="not created under this protocol"):
+        B.BudgetLedger.open(chain.f_path, protocol=F)
+    chain.authorise()
+    with pytest.raises(B.LedgerIntegrityError):
+        B.BudgetLedger.open(chain.f_path, protocol=F)
+
+
+def test_r04_the_f_header_binds_its_ledger_and_run_root_and_ancestors_do_not(chain):
+    chain.build()
+    assert _header(chain.f_path)["ledger_binding"] == {
+        "ledger": str(chain.f_path), "run_root": str(chain.run_root)}
+    assert "ledger_binding" not in _header(chain.e_path)
+    assert "ledger_binding" not in _header(chain.sealed_path)
+
+
+def test_r05_a_header_bound_to_another_run_root_is_refused(chain):
+    """The binding is compared, not merely present: a ledger whose create
+    walked some other run root never proved F's run root unlaunched."""
+    _prepared(chain)
+    elsewhere = chain.tmp / "elsewhere"
+    elsewhere.mkdir()
+    chain.create_f(protocol=_WithRunRoot(elsewhere))
+    assert _header(chain.f_path)["ledger_binding"]["run_root"] == str(elsewhere)
+    _refused_everywhere(chain, "not created under this protocol")
+
+
+def _stray_segment_dir(chain):
+    _segment_dir(chain, seed=4002).mkdir(parents=True)
+
+
+def _stray_duplicate_record(chain):
+    source = _segment_dir(chain) / "launch.json"
+    (chain.run_root / f"{F_RECIPE}_s4001" / "launch.json").write_bytes(
+        source.read_bytes())
+
+
+def _stray_foreign_name(chain):
+    (chain.run_root / "segment_x").mkdir()
+
+
+def _stray_non_canonical_index(chain):
+    (chain.run_root / "segment_00000").mkdir()
+
+
+def _stray_unparseable(chain):
+    (chain.run_root / "launch.json").write_text("{not json", encoding="utf-8")
+
+
+def _stray_deeply_nested(chain):
+    (chain.run_root / "launch.json").write_text("[" * 100_000 + "]" * 100_000,
+                                                encoding="utf-8")
+
+
+def _stray_record_directory(chain):
+    (chain.run_root / "notes" / "launch.json").mkdir(parents=True)
+
+
+def _stray_unreserved_record(chain):
+    (chain.run_root / "launch.json").write_text(json.dumps(_launch_record(
+        seed=4002)), encoding="utf-8")
+
+
+@pytest.mark.parametrize("stray", [
+    _stray_segment_dir, _stray_duplicate_record, _stray_foreign_name,
+    _stray_non_canonical_index, _stray_unparseable, _stray_deeply_nested,
+    _stray_record_directory, _stray_unreserved_record,
+], ids=lambda stray: stray.__name__[len("_stray_"):])
+def test_r06_a_launch_trace_no_reservation_accounts_for_is_refused(chain, stray):
+    """G1b's reconciliation. Every ``launch.json`` and ``segment_*`` entry under
+    RUN_ROOT must be accounted for by a reserve row; one more of anything is
+    refused at open and at reserve, before the probe and before any row."""
+    probe = _CountingProbe()
+    f = chain.build(probe=probe)
+    _launch(chain, f)
+    B.BudgetLedger.open(chain.f_path, protocol=F)       # accounted: it opens
+    stray(chain)
+    _refused_everywhere(chain, "unaccounted", probe=probe, ledger=f)
+
+
+def test_r07_a_launch_record_of_another_protocol_is_not_accounted(chain):
+    """The reserved segment's launch.json must carry this ledger's digest."""
+    f = chain.build()
+    _launch(chain, f, digest=E.protocol_digest())
+    _refused_everywhere(chain, "unaccounted", ledger=f)
+
+
+def test_r08_accounted_traces_including_an_aborted_create_keep_working(chain):
+    """Positive control: genuine traces, and a directory left by a create that
+    failed after its mkdir, never refuse the ledger that reserved them."""
+    probe = _CountingProbe()
+    f = chain.build(probe=probe)
+    _launch(chain, f, seed=4001)
+
+    def _half_created():
+        _segment_dir(chain, seed=4002).mkdir(parents=True)
+        raise OSError("disk full after mkdir")
+
+    with pytest.raises(B.PrelaunchError):
+        _reserve_f(f, seed=4002, create=_half_created)
+    (chain.run_root / "notes.txt").write_text("free text", encoding="utf-8")
+    reopened = B.BudgetLedger.open(chain.f_path, protocol=F,
+                                   contention_probe=probe)
+    _launch(chain, reopened, seed=4002, segment_index=1, start_epoch=64,
+            end_epoch=128)
+    again = B.BudgetLedger.open(chain.f_path, protocol=F)
+    assert again.charged()["stage_s"]["refine"] == 882.0
+    assert probe.calls == 3
+
+
+def test_r09_traces_hidden_during_a_re_create_and_restored_are_refused(chain):
+    """D1. The traces are moved out of RUN_ROOT, the deleted ledger is created
+    again under F (guard (e) then sees nothing), and the traces come back. The
+    new ledger reserved none of them, so it is refused at open and at reserve."""
+    f = chain.build()
+    _launch(chain, f)
+    chain.f_path.unlink()
+    run_dir = chain.run_root / f"{F_RECIPE}_s4001"
+    aside = chain.tmp / "aside"
+    os.replace(run_dir, aside)
+    probe = _CountingProbe()
+    chain.create_f(probe=probe)
+    reopened = B.BudgetLedger.open(chain.f_path, protocol=F,
+                                   contention_probe=probe)
+    os.replace(aside, run_dir)
+    _refused_everywhere(chain, "unaccounted", probe=probe, ledger=reopened)
+
+
+def test_r10_a_deeply_nested_ledger_line_is_an_integrity_error(chain):
+    """T3. Nesting deep enough to exhaust the decoder's recursion is refused as
+    a LedgerIntegrityError, on the ledger itself and through an ancestor."""
+    f = chain.build()
+    deep = ("[" * 100_000 + "]" * 100_000 + "\n").encode("utf-8")
+    fork = _copy_of_f(chain, "deep")
+    with fork.open("ab") as handle:
+        handle.write(deep)
+    with pytest.raises(B.LedgerIntegrityError, match="not valid JSON"):
+        B.BudgetLedger.open(fork, inspect=True)
+    before = chain.f_path.read_bytes()
+    with chain.sealed_path.open("ab") as handle:
+        handle.write(deep)
+    with pytest.raises(B.LedgerIntegrityError):
+        _reserve_f(f)
+    assert chain.f_path.read_bytes() == before
+
+
+def test_r10b_a_deeply_nested_lock_is_a_lock_error(tmp_path):
+    lock = tmp_path / "lock.json"
+    lock.write_text("[" * 100_000 + "]" * 100_000, encoding="utf-8")
+    with pytest.raises(B.LockError, match="not valid JSON"):
+        B.read_lock(lock)
+
+
+@pytest.mark.parametrize("changes", [
+    {"stage_s": {}}, {"run_s": {}}, {"global_s": 0.0}, {"settled_rows": 0},
+    {"source_rows": 1},
+], ids=["stage_s", "run_s", "global_s", "settled_rows", "source_rows"])
+def test_r11_a_forged_carried_balance_is_refused_at_create(chain, changes):
+    """F1b. A CarriedForward edited after carry_forward is refused: create
+    re-derives it from the source ledger as it stands and compares."""
+    _prepared(chain)
+    forged = dataclasses.replace(B.carry_forward(chain.e_path), **changes)
+    with pytest.raises(B.LedgerIntegrityError,
+                       match="does not match its source ledger"):
+        chain.create_f(carried=forged)
+    assert not chain.f_path.exists()
+
+
+def _replace_e_with_decoy(chain, *, carry_from=None):
+    """Put an E-digest ledger written under no protocol at E's real path."""
+    chain.e_path.unlink()
+    B.BudgetLedger.create(
+        chain.e_path, protocol_digest=E.protocol_digest(),
+        carried=None if carry_from is None else B.carry_forward(carry_from),
+        clock=FakeClock())
+
+
+def _fresh_sealed(chain, charges=()) -> Path:
+    """A sealed-digest ledger at another path, with its own (fake) spend."""
+    path = chain.tmp / "fresh_sealed" / "budget_ledger.jsonl"
+    path.parent.mkdir()
+    ledger = B.BudgetLedger.create(path, protocol_digest=P.protocol_digest(),
+                                   clock=FakeClock())
+    for recipe, actual in charges:
+        _charge(ledger, stage="screen", recipe=recipe, seed=1001, actual=actual)
+    return path
+
+
+def test_r12_a_carry_less_e_digest_decoy_at_e_path_is_refused_as_parent(chain):
+    """E1. An E-digest ledger at E's real path that carries nothing is not a
+    ledger E's protocol could have written, so F refuses to open against it."""
+    _prepared(chain)
+    _replace_e_with_decoy(chain)
+    with pytest.raises(B.LedgerIntegrityError,
+                       match="carried forward opening balance"):
+        chain.create_f()
+    assert not chain.f_path.exists()
+
+
+def test_r13_an_e_decoy_carrying_from_a_fresh_sealed_ledger_is_refused(chain):
+    """E2. An E-digest ledger at E's real path that carries from a zero-spend
+    sealed ledger elsewhere would hand F the whole sealed spend back."""
+    _prepared(chain)
+    _replace_e_with_decoy(chain, carry_from=_fresh_sealed(chain))
+    with pytest.raises(B.LedgerIntegrityError,
+                       match="declares its parent ledger"):
+        chain.create_f()
+    assert not chain.f_path.exists()
+
+
+def test_r14_a_re_snapshot_onto_an_e_decoy_is_refused(chain):
+    """The same parent-lineage check guards the other adoption point. The decoy
+    carries MORE than F holds, so the never-decrease rule cannot catch it."""
+    f = chain.build()
+    spend = (("g990_e010", 500.0), ("g998_e010", 500.0), ("g990_e000", 500.0))
+    _replace_e_with_decoy(chain, carry_from=_fresh_sealed(chain, spend))
+    assert B.carry_forward(chain.e_path).global_s > f.carried_forward["global_s"]
+    before = chain.f_path.read_bytes()
+    with pytest.raises(B.LedgerIntegrityError,
+                       match="declares its parent ledger"):
+        f.resnapshot_parent(detail="E was replaced")
+    assert chain.f_path.read_bytes() == before

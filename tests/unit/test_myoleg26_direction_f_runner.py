@@ -21,8 +21,7 @@ What is under test
 * An F launch against the wrong ledger is refused, and so are the other
   protocols' launches against F's ledger.
 * The sealed summarizer treats an F run as foreign.
-* The committed manifest records F. Those tests stay red until the manifest is
-  regenerated.
+* The committed manifest records F (tests 21-25).
 
 The design-C section 3.7 runner list maps onto ``test_NN_...`` (1-25).
 Supplementary checks are ``test_sNN_...``.
@@ -1128,7 +1127,7 @@ def test_20_the_sealed_summarizer_reports_an_f_run_as_foreign_and_stops(tmp_path
 
 
 # ==========================================================================
-# 21-25: the freeze records F (21 and 23 are red until regeneration)
+# 21-25: the freeze records F
 # ==========================================================================
 
 def _frozen() -> dict:
@@ -1308,3 +1307,69 @@ def test_s16_a_lock_that_names_no_verified_record_is_refused(chain, returned):
     lock = _Proxy(assert_authorised=lambda: returned)
     with pytest.raises(R.RunnerRefusal, match="sha256"):
         R._assert_launch_authorised(lock)
+
+
+# ==========================================================================
+# Review round 2: the segment-directory bound, and a re-created ledger
+# ==========================================================================
+
+@pytest.mark.parametrize("route", ["attribute", "junction", "symlink"])
+def test_s17_a_segment_dir_that_leaves_the_run_root_is_refused(chain, route):
+    """Review x05. The run directory is inside RUN_ROOT but the segment
+    directory is not: an out_dir handed to run_launch, or a link where the
+    segment directory would be. The segment-directory bound refuses before the
+    reservation, so the ledger is byte-identical, no child is spawned and
+    nothing appears outside the run root."""
+    ledger = chain.build()
+    outside = chain.tmp / "outside"
+    args = _f_launch(chain)
+    if route == "attribute":
+        args.out_dir = str(outside / "segment_0000")
+    else:
+        outside.mkdir()
+        chain.run_dir().mkdir()
+        _link_directory(route, outside, chain.run_dir() / "segment_0000")
+    before = chain.f_path.read_bytes()
+    spawner = Spawner()
+    with pytest.raises(R.RunnerRefusal,
+                       match=r"the segment directory .* not inside this "
+                             r"protocol's RUN_ROOT"):
+        R.run_launch(args, ledger=ledger, spawn=spawner, clock=FakeClock())
+    assert chain.f_path.read_bytes() == before
+    assert spawner.calls == []
+    assert B.BudgetLedger.open(chain.f_path, inspect=True).pending is None
+    assert not outside.exists() or list(outside.iterdir()) == []
+
+
+def test_s18_a_protocol_omitted_re_create_is_refused_by_the_runner(chain):
+    """Adversarial review round 2, G1, through the CLI. After a launch the
+    ledger is deleted and written again by create with ``protocol`` omitted.
+    A launch that merely opens it must be refused before any row, directory or
+    child."""
+    chain.build_sealed()
+    chain.build_e()
+    chain.authorise()
+    clock = FakeClock(start=0.0)
+    out_dir = chain.run_dir() / "segment_0000"
+    assert R.run_launch(_f_launch(chain, "--create-ledger",
+                                  **{"--carry-forward-from": str(chain.e_path)}),
+                        spawn=Spawner(on_spawn=_child(clock, out_dir, 318.3)),
+                        clock=clock, probe=_CountingProbe()) == R.EXIT_OK
+    chain.f_path.unlink()
+    B.BudgetLedger.create(chain.f_path, protocol_digest=F.protocol_digest(),
+                          carried=B.carry_forward(chain.e_path),
+                          provenance=F.ledger_provenance(),
+                          clock=FakeClock(step=1.0))
+    before = chain.f_path.read_bytes()
+    tree = _tree(chain.tmp)
+    spawner = Spawner()
+    probe = _CountingProbe()
+    args = _f_launch(chain, **{"--seed": "4002",
+                               "--run-dir": str(chain.run_dir(4002))})
+    with pytest.raises(R.RunnerRefusal):
+        R.run_launch(args, spawn=spawner, clock=FakeClock(), probe=probe)
+    assert spawner.calls == []
+    assert probe.calls == 0
+    assert chain.f_path.read_bytes() == before
+    assert not chain.run_dir(4002).exists()
+    assert _tree(chain.tmp) == tree

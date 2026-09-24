@@ -73,6 +73,12 @@ SEALED_MODULE = "msk_warp.analysis.ppo_v2_protocol"
 PARENT_MODULE = "msk_warp.analysis.ppo_v2_protocol_e"
 PARENT_SCHEMA_VERSION = _parent.SCHEMA_VERSION
 
+#: The parent protocol module itself. The budget ledger reads it to check that
+#: the ledger F carries from is one E's protocol could have written: carrying
+#: what E requires, from the parent E declares. Not part of the snapshot; the
+#: parent is already pinned by :data:`PARENT_PROTOCOL_DIGEST`.
+PARENT_PROTOCOL = _parent
+
 #: Probe E's protocol digest, transcribed as a literal. Direction F descends
 #: from this one probe-E protocol and refuses to hash under any other.
 PARENT_PROTOCOL_DIGEST = (
@@ -202,8 +208,9 @@ HELD_FIXED_NOTE = (
 CARRY_FORWARD_NOTE = (
     "Direction F's ledger opens at the settled spend carried from probe E's "
     "ledger, which itself carried the sealed ledger's settled spend, so no cap "
-    "is reset. The sealed and probe-E ledgers cannot see Direction F's spend; "
-    "no sealed or probe-E launch may run while a Direction F ledger exists")
+    "is reset. The sealed and probe-E ledgers cannot see Direction F's spend. "
+    "Rule adopted for the whole life of Direction F's ledger: no sealed or E "
+    "launch while an F ledger exists, until a visibility-guard unit lands")
 
 
 # ---------------------------------------------------------------------------
@@ -627,7 +634,7 @@ def assert_authorised() -> str:
     try:
         record = json.loads(text, object_pairs_hook=_refuse_duplicate_keys,
                             parse_constant=_refuse_non_finite)
-    except json.JSONDecodeError as error:
+    except (json.JSONDecodeError, RecursionError) as error:
         raise _record_error(f"not valid JSON ({error})") from None
     if not isinstance(record, dict):
         raise _record_error(
