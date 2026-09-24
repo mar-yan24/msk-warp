@@ -59,6 +59,7 @@ import os
 from pathlib import Path
 import re
 import time
+from types import SimpleNamespace
 
 from msk_warp.analysis import ppo_v2_protocol as P
 
@@ -464,12 +465,15 @@ def _assert_source_chain_current(source_path, *, descendant, action) -> None:
         ) from exc
 
 
-def _assert_bound_ledger_path(spec, path) -> None:
-    """With ``BIND_LEDGER_PATH``, the one ledger may be created only at LEDGER.
+def _assert_bound_ledger_path(spec, path, *, action="create") -> None:
+    """With ``BIND_LEDGER_PATH``, the one ledger lives only at LEDGER.
 
-    Opt-in, so the sealed protocol and probe E -- which declare no such flag --
-    are unaffected. Without it, a second ledger for the same protocol written
-    anywhere else would open every cap afresh beside the first.
+    Checked by ``create`` before the file is written and by every
+    non-inspecting open (``action="open"``) before the ledger is used, so a
+    byte copy of the one ledger at another path -- a second ledger with every
+    cap afresh -- can neither be written nor used. Paths are compared after
+    ``resolve()``, so a link to the one ledger is the one ledger. Opt-in, so the
+    sealed protocol and probe E -- which declare no such flag -- are unaffected.
     """
     if not getattr(spec, "BIND_LEDGER_PATH", False):
         return
@@ -480,12 +484,47 @@ def _assert_bound_ledger_path(spec, path) -> None:
             "no LEDGER, so the one place its ledger may live is unknown; refused")
     expected = (Path(getattr(spec, "ROOT", P.ROOT)) / str(declared)).resolve()
     supplied = Path(path).resolve()
-    if supplied != expected:
+    if supplied == expected:
+        return
+    if action == "create":
         raise LedgerIntegrityError(
             f"this protocol binds its one ledger to {expected} (LEDGER "
             f"{str(declared)!r}), but create was asked to write {supplied}. A "
             "second ledger for one protocol, anywhere else, would open every cap "
             "afresh beside the first, so it is refused and nothing is written")
+    raise LedgerIntegrityError(
+        f"this protocol binds its one ledger to {expected} (LEDGER "
+        f"{str(declared)!r}), but {action} was asked to use {supplied}. A ledger "
+        "for this protocol anywhere else -- a copy of the one ledger, say -- "
+        "would hold every cap afresh beside it, so it is refused and nothing is "
+        "written. To READ it, open it with inspect=True, which grants nothing")
+
+
+def _assert_bound_ledger_lineage(spec, path, carried_chain) -> None:
+    """With ``BIND_LEDGER_PATH`` and ``REQUIRES_CARRY_FORWARD``, re-check at open
+    what ``create`` checked: the file declares a carried opening balance, and
+    every carried balance in it -- the header's and each re-snapshot's -- came
+    from the protocol's declared parent.
+
+    ``create`` enforces this only under the spec it is handed, so a ledger
+    written under another spec (``protocol=None``, say) with this protocol's
+    digest would otherwise open with its caps reset. Opt-in, so the sealed
+    protocol and probe E are unaffected.
+    """
+    if not (getattr(spec, "BIND_LEDGER_PATH", False)
+            and getattr(spec, "REQUIRES_CARRY_FORWARD", False)):
+        return
+    if not carried_chain:
+        raise LedgerIntegrityError(
+            f"ledger {path} declares no carried forward opening balance, but its "
+            f"protocol requires one from "
+            f"{getattr(spec, 'PARENT_LEDGER', 'its parent ledger')}: without it "
+            "every cap would open reset, so this ledger is refused. It was not "
+            "written by create under this protocol")
+    for block in carried_chain:
+        _assert_declared_parent(spec, SimpleNamespace(
+            source_path=block["source_path"],
+            source_protocol_digest=block["source_protocol_digest"]))
 
 
 def _assert_run_root_unlaunched(spec) -> None:
@@ -1105,6 +1144,14 @@ class BudgetLedger:
                 raise LedgerIntegrityError(
                     f"ledger {self.path} record {position} changed after it was "
                     "observed; an append-only ledger never rewrites a row")
+        if not self._inspect_only:
+            # Where and from what this protocol's one ledger was written is
+            # re-checked on every open that may write, not trusted to whoever
+            # called create: a byte copy elsewhere, or a file written under
+            # another spec with this protocol's digest, would otherwise hold
+            # every cap afresh. Opt-in flags; the sealed ledger and E skip both.
+            _assert_bound_ledger_path(self.protocol, self.path, action="open")
+            _assert_bound_ledger_lineage(self.protocol, self.path, carried_chain)
         self._rows = tuple(rows)
         self._carried = effective_carried
         self._carried_chain = tuple(carried_chain)

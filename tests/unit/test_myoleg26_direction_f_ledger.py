@@ -120,9 +120,13 @@ def _no_real_logs_or_docs(monkeypatch):
     yield
 
 
-def test_s00_the_isolation_guard_has_teeth():
+def test_s00_the_isolation_guard_has_teeth(monkeypatch):
     """Anti-vacuity for the guard. Real ledgers, the real run roots and docs/
-    are refused before any byte is read, and an ordinary tracked file is not."""
+    are refused before any byte is read, and an ordinary tracked file is not.
+
+    The ledger clause does not depend on whether the ignored real ledger exists
+    on this checkout: the existence probe is answered for guarded paths without
+    touching them, so the read itself must reach, and be refused by, the guard."""
     with pytest.raises(AssertionError, match="real"):
         open(ROOT / "logs" / "myoleg26_ppo_v2" / "budget_ledger.jsonl", "rb")
     with pytest.raises(AssertionError, match="real"):
@@ -132,9 +136,13 @@ def test_s00_the_isolation_guard_has_teeth():
         list(os.walk(ROOT / "logs" / "myoleg26_ppo_v2_probe_e"))
     with pytest.raises(AssertionError, match="real"):
         os.listdir(ROOT / "docs")
-    with pytest.raises(AssertionError, match="real"):
-        B.BudgetLedger.open(ROOT / "logs" / "myoleg26_ppo_v2"
-                            / "budget_ledger.jsonl", inspect=True)
+    real_is_file = Path.is_file
+    with monkeypatch.context() as context:
+        context.setattr(Path, "is_file", lambda self: (
+            True if _under_guarded_root(self) else real_is_file(self)))
+        with pytest.raises(AssertionError, match="real"):
+            B.BudgetLedger.open(ROOT / "logs" / "myoleg26_ppo_v2"
+                                / "budget_ledger.jsonl", inspect=True)
     assert BUDGET_SOURCE.read_bytes()
 
 
@@ -675,7 +683,10 @@ def test_16_a_loop_in_the_chain_raises_integrity_error_not_recursion(tmp_path):
                           carried=B.carry_forward(b_path), clock=FakeClock())
     os.replace(a_next, a_path)
     head = B.BudgetLedger.open(a_path, inspect=True)
-    with pytest.raises(B.LedgerIntegrityError, match="loop") as raised:
+    # Anchored on the loop guard's own words: "loop" alone would also match
+    # this test's tmp_path directory name, which every message includes.
+    with pytest.raises(B.LedgerIntegrityError,
+                       match="loops back on itself") as raised:
         head.assert_parent_unmoved()
     assert not isinstance(raised.value, RecursionError)
     message = str(raised.value)
@@ -1164,3 +1175,110 @@ def test_s06_the_note_describes_the_transitive_rule_and_keeps_the_intent():
     assert "loop" in note.lower()
     assert "parent_moved_during_segment" in note
     assert "wedge" in note
+
+
+# --------------------------------------------------------------------------
+# Review round 1: the bound identity holds at every open, not only at create
+# --------------------------------------------------------------------------
+
+def _copy_of_f(chain, name="fork") -> Path:
+    """A byte-exact copy of the one F ledger at another path."""
+    fork = chain.tmp / name / "budget_ledger.jsonl"
+    fork.parent.mkdir()
+    fork.write_bytes(chain.f_path.read_bytes())
+    return fork
+
+
+def test_s07_a_byte_copy_of_the_f_ledger_is_refused_at_open(chain):
+    """Adversarial review A. A copy of the F ledger is a second F ledger with
+    its own refine cap. It must not open under F, with or without spend on it.
+    The bound ledger still opens, and ``inspect=True`` still reads the copy (it
+    grants nothing), which shows the path, not the content, decided."""
+    f = chain.build()
+    fresh_fork = _copy_of_f(chain, "fork_at_zero")
+    _charge_f(f, seed=4001, actual=318.3)
+    spent_fork = _copy_of_f(chain, "fork_after_spend")
+    for fork in (fresh_fork, spent_fork):
+        before = fork.read_bytes()
+        with pytest.raises(B.LedgerIntegrityError,
+                           match="binds its one ledger") as raised:
+            B.BudgetLedger.open(fork, protocol=F)
+        message = str(raised.value)
+        assert _resolved(fork) in message
+        assert _resolved(chain.f_path) in message
+        assert fork.read_bytes() == before
+        assert B.BudgetLedger.open(fork, inspect=True).rows
+    reopened = B.BudgetLedger.open(chain.f_path, protocol=F)
+    assert reopened.charged()["stage_s"]["refine"] == 318.3
+
+
+def test_s08_a_ledger_object_built_at_a_copy_cannot_reserve(chain):
+    """The same binding through the durable authority's reserve path: a ledger
+    object constructed directly at the copy re-reads the file and is refused
+    before any row is written, before the contention probe and before the lock."""
+    chain.build()
+    fork = _copy_of_f(chain)
+    before = fork.read_bytes()
+    probe = _CountingProbe()
+    forked = B.BudgetLedger(fork, protocol=F, clock=FakeClock(),
+                            contention_probe=probe)
+    with pytest.raises(B.LedgerIntegrityError, match="binds its one ledger"):
+        _reserve_f(forked)
+    assert fork.read_bytes() == before
+    assert probe.calls == 0
+    # Positive control: the same call against the bound ledger reserves.
+    bound = B.BudgetLedger(chain.f_path, protocol=F, clock=FakeClock())
+    assert _reserve_f(bound).stage == "refine"
+
+
+@pytest.mark.parametrize("carry", ["none", "sealed"])
+def test_s09_an_f_digest_ledger_created_outside_the_f_protocol_is_refused(
+        chain, carry):
+    """Adversarial review G. ``create`` with ``protocol=None`` and F's digest
+    skips every F create-time guard, so it can write an F-digest header with no
+    carried balance, or with one carried from the wrong parent. Opening or
+    reserving it under F must refuse, at the bound path, with nothing written."""
+    chain.build_sealed()
+    chain.build_e()
+    chain.authorise()
+    carried = None if carry == "none" else B.carry_forward(chain.sealed_path)
+    B.BudgetLedger.create(chain.f_path, protocol_digest=F.protocol_digest(),
+                          carried=carried, clock=FakeClock())
+    header = _header(chain.f_path)
+    assert header["protocol_digest"] == F.protocol_digest()
+    before = chain.f_path.read_bytes()
+    expected = ("carried forward opening balance" if carry == "none"
+                else "declares its parent ledger")
+    with pytest.raises(B.LedgerIntegrityError, match=expected):
+        B.BudgetLedger.open(chain.f_path, protocol=F)
+    probe = _CountingProbe()
+    with pytest.raises(B.LedgerIntegrityError, match=expected):
+        _reserve_f(B.BudgetLedger(chain.f_path, protocol=F, clock=FakeClock(),
+                                  contention_probe=probe))
+    assert probe.calls == 0
+    assert chain.f_path.read_bytes() == before
+    assert B.BudgetLedger.open(chain.f_path, inspect=True).rows
+
+
+def test_s10_a_resnapshot_from_the_wrong_parent_is_refused_at_open(chain):
+    """Every carried balance in the file, not only the header's, must come from
+    the declared parent. A hand-appended re-snapshot row from another ledger
+    with a valid hash chain is refused under F."""
+    f = chain.build()
+    rows = [json.loads(line) for line in
+            chain.f_path.read_text(encoding="utf-8").splitlines()]
+    previous = dict(rows[-1]["carried_forward"]) if "carried_forward" in rows[-1] \
+        else dict(rows[0]["carried_forward"])
+    adopted = dict(previous, source_path=_resolved(chain.sealed_path))
+    body = {"index": len(rows), "kind": B.RESNAPSHOT_KIND,
+            "prev_sha256": rows[-1]["record_sha256"],
+            "posix_time": rows[-1]["posix_time"] + 1.0,
+            "utc": rows[-1]["utc"], "previous_carried": previous,
+            "carried_forward": adopted, "detail": "hand-appended test row"}
+    row = dict(body, record_sha256=B.record_digest(body))
+    with chain.f_path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
+    assert B.BudgetLedger.open(chain.f_path, inspect=True).rows[-1] == row
+    with pytest.raises(B.LedgerIntegrityError, match="declares its parent ledger"):
+        B.BudgetLedger.open(chain.f_path, protocol=F)
+    del f

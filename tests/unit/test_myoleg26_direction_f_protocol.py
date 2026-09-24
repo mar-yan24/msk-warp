@@ -798,7 +798,10 @@ def test_31b_the_source_lock_refuses_before_any_record_is_read(chain, monkeypatc
 def test_32_authorised_with_a_valid_record_passes(chain):
     chain.authorise()
     chain.write_record()
-    assert F.assert_authorised() is None
+    # The lock returns the sha256 of the very bytes it parsed and verified, so a
+    # caller can name them without a second read of the record.
+    assert F.assert_authorised() == hashlib.sha256(
+        chain.record_path.read_bytes()).hexdigest()
     for segment_index, seed in F.run_order():
         assert F.assert_launchable(stage="refine", recipe=F_RECIPE, seed=seed,
                                    segment_index=segment_index, epochs=64) is None
@@ -1065,3 +1068,27 @@ def test_s05_the_record_schema_is_declared_and_carried_in_the_snapshot():
     assert record == {"path": RECORD_PATH,
                       "schema_version": "myoleg26-direction-f-authorisation-v1",
                       "keys": sorted(RECORD_KEYS)}
+
+
+def test_s06_the_geometry_note_labels_the_latency_premise_as_assumed():
+    """Review fix. Prereg section 3.3: that per-step cost is latency-bound is
+    **assumed, not measured on MyoLeg26**, the conclusion is conditional on it,
+    and the only support is the Ant scaling. The note is inside F's digest, so
+    it must not call the premise measured."""
+    lowered = F.GEOMETRY_NOTE.lower()
+    assert "assumed, not measured on myoleg26" in lowered
+    assert "measured per-step cost" not in lowered
+    assert "if so" in lowered
+    assert "ant scaling" in lowered
+    assert F.amendment_snapshot()["geometry"] == F.GEOMETRY_NOTE
+
+
+def test_s07_the_base_recipe_note_names_every_read_of_max_epochs():
+    """Review note. PPO reads max_epochs as the begin_epoch argument (a no-op
+    for MyoLeg26), as the loop bound, and in the linear-schedule branch, which
+    lr_schedule constant never enters. The note says so rather than 'only'."""
+    lowered = F.BASE_RECIPE_NOTE.lower()
+    assert "acts only as a loop bound" not in lowered
+    for phrase in ("begin_epoch", "no-op", "loop bound", "linear"):
+        assert phrase in lowered, phrase
+    assert F.amendment_snapshot()["base_recipe"] == F.BASE_RECIPE_NOTE

@@ -1021,6 +1021,12 @@ def test_15_the_built_arm_check_accepts_the_f_arm():
 # 16-19: each launch against its own ledger only
 # ==========================================================================
 
+#: The two refusals a cross-protocol launch can meet: the loader's header-digest
+#: binding (a ledger opened by path) and ``assert_protocol_unchanged`` (a ledger
+#: object injected into ``run_launch``). Either one pins the reason.
+INTERCHANGE_REFUSAL = "never interchangeable|but the current protocol digest is"
+
+
 @pytest.mark.parametrize("route", ["ledger_path", "injected_ledger"])
 @pytest.mark.parametrize("target", ["probe_e", "sealed"])
 def test_16_17_an_f_launch_against_an_ancestor_ledger_is_refused(chain, route, target):
@@ -1033,7 +1039,7 @@ def test_16_17_an_f_launch_against_an_ancestor_ledger_is_refused(chain, route, t
     args = _f_launch(chain, **{"--ledger": str(ledger.path)})
     kwargs = ({"ledger": ledger} if route == "injected_ledger"
               else {"probe": _CountingProbe()})
-    with pytest.raises(R.RunnerRefusal):
+    with pytest.raises(R.RunnerRefusal, match=INTERCHANGE_REFUSAL):
         R.run_launch(args, spawn=spawner, clock=FakeClock(), **kwargs)
     assert ledger.path.read_bytes() == before
     assert spawner.calls == []
@@ -1056,7 +1062,7 @@ def test_18_sealed_and_probe_e_launches_against_the_f_ledger_are_refused(
         run_dir = chain.tmp / "e_run"
     kwargs = ({"ledger": ledger} if route == "injected_ledger"
               else {"probe": _CountingProbe()})
-    with pytest.raises(R.RunnerRefusal):
+    with pytest.raises(R.RunnerRefusal, match=INTERCHANGE_REFUSAL):
         R.run_launch(args, spawn=spawner, clock=FakeClock(), **kwargs)
     assert chain.f_path.read_bytes() == before
     assert spawner.calls == []
@@ -1168,3 +1174,137 @@ def test_24_the_freeze_checks_f_reset_block_and_records_its_entry():
 
 def test_25_the_v1_manifest_is_untouched():
     assert hashlib.sha256(V1_MANIFEST.read_bytes()).hexdigest() == V1_MANIFEST_SHA256
+
+
+# ==========================================================================
+# Review round 1: the ledger copy, the run directory and the record sha
+# ==========================================================================
+
+def test_s11_a_copied_f_ledger_named_by_ledger_is_refused(chain):
+    """Adversarial review A through the CLI. ``--ledger`` naming a byte copy of
+    the F ledger is refused before any row, directory or child."""
+    chain.build()
+    fork = chain.tmp / "fork" / "budget_ledger.jsonl"
+    fork.parent.mkdir()
+    fork.write_bytes(chain.f_path.read_bytes())
+    before, bound_before = fork.read_bytes(), chain.f_path.read_bytes()
+    spawner = Spawner()
+    args = _f_launch(chain, **{"--ledger": str(fork)})
+    with pytest.raises(R.RunnerRefusal, match="binds its one ledger"):
+        R.run_launch(args, spawn=spawner, clock=FakeClock(), probe=_CountingProbe())
+    assert fork.read_bytes() == before
+    assert chain.f_path.read_bytes() == bound_before
+    assert spawner.calls == []
+    assert not chain.run_dir().exists()
+
+
+def _outside_run_dir(chain, monkeypatch, where):
+    """A --run-dir that does not resolve inside F's run root, and its top."""
+    outside = chain.tmp / "outside_runs"
+    if where == "absolute":
+        return outside / "x", outside
+    if where == "dotdot":
+        return chain.run_root / ".." / "outside_runs" / "x", outside
+    elsewhere = chain.tmp / "some_cwd"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    return Path("runs") / "x", elsewhere / "runs"
+
+
+@pytest.mark.parametrize("where", ["absolute", "relative", "dotdot"])
+def test_s12_an_f_launch_is_refused_outside_its_run_root(chain, monkeypatch, where):
+    """Adversarial review B. A launch directory outside RUN_ROOT would hide the
+    launch from the deleted-ledger guard, so it is refused before any row,
+    directory or child. A relative --run-dir resolves against the working
+    directory and is judged by where it lands."""
+    chain.build()
+    before = chain.f_path.read_bytes()
+    run_dir, top = _outside_run_dir(chain, monkeypatch, where)
+    spawner = Spawner()
+    args = _f_launch(chain, **{"--run-dir": str(run_dir)})
+    with pytest.raises(R.RunnerRefusal, match="RUN_ROOT") as caught:
+        R.run_launch(args, spawn=spawner, clock=FakeClock(), probe=_CountingProbe())
+    assert str(chain.run_root.resolve()) in str(caught.value)
+    assert chain.f_path.read_bytes() == before
+    assert spawner.calls == []
+    assert not top.exists()
+
+
+def test_s13_an_outside_run_dir_is_refused_before_the_ledger_is_created(chain):
+    """The run-directory check precedes the create-or-open branch: with
+    --create-ledger, an outside --run-dir leaves no ledger and no directory."""
+    chain.build_sealed()
+    chain.build_e()
+    chain.authorise()
+    outside = chain.tmp / "outside_runs"
+    args = _f_launch(chain, "--create-ledger",
+                     **{"--carry-forward-from": str(chain.e_path),
+                        "--run-dir": str(outside / "x")})
+    spawner = Spawner()
+    with pytest.raises(R.RunnerRefusal, match="RUN_ROOT"):
+        R.run_launch(args, spawn=spawner, clock=FakeClock(), probe=_CountingProbe())
+    assert not chain.f_path.exists()
+    assert not outside.exists()
+    assert spawner.calls == []
+    assert _tree(chain.run_root) == ["user_authorisation.json"]
+
+
+def _link_directory(kind, target, link):
+    if kind == "symlink":
+        try:
+            os.symlink(target, link, target_is_directory=True)
+        except (OSError, NotImplementedError, AttributeError) as error:
+            pytest.skip(f"directory symlinks unavailable here: {error}")
+        return
+    try:
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+    except (ImportError, AttributeError, OSError) as error:
+        pytest.skip(f"junctions unavailable here: {error}")
+
+
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+def test_s14_a_linked_run_dir_that_leaves_the_run_root_is_refused(chain, kind):
+    """Adversarial review B3. A link inside RUN_ROOT that points outside it is
+    judged by its resolved target, so launch output cannot hide behind a link
+    the run-root walk does not follow."""
+    chain.build()
+    outside = chain.tmp / "outside_runs"
+    outside.mkdir()
+    link = chain.run_root / "linked"
+    _link_directory(kind, outside, link)
+    before = chain.f_path.read_bytes()
+    spawner = Spawner()
+    args = _f_launch(chain, **{"--run-dir": str(link / "x")})
+    with pytest.raises(R.RunnerRefusal, match="RUN_ROOT"):
+        R.run_launch(args, spawn=spawner, clock=FakeClock(), probe=_CountingProbe())
+    assert chain.f_path.read_bytes() == before
+    assert spawner.calls == []
+    assert list(outside.iterdir()) == []
+
+
+def test_s15_the_recorded_sha_is_of_the_bytes_the_lock_verified(chain, monkeypatch):
+    """Adversarial review J. The sha the launch records must be of the bytes the
+    lock parsed, not of a second read that could see a swapped record."""
+    chain.authorise()
+    verified = chain.record_path.read_bytes()
+    real = F.assert_authorised
+
+    def lock_then_swap():
+        result = real()
+        chain.record_path.write_bytes(b'{"swapped": true}')
+        return result
+
+    monkeypatch.setattr(F, "assert_authorised", lock_then_swap)
+    assert R._assert_launch_authorised(F) == hashlib.sha256(verified).hexdigest()
+
+
+@pytest.mark.parametrize("returned", [None, "", "not-a-sha", "A" * 64, 7])
+def test_s16_a_lock_that_names_no_verified_record_is_refused(chain, returned):
+    """A protocol that declares an authorisation record must have its lock
+    return the sha256 of the record it verified; anything else is refused
+    rather than filled in by a second, unverified read."""
+    chain.authorise()
+    lock = _Proxy(assert_authorised=lambda: returned)
+    with pytest.raises(R.RunnerRefusal, match="sha256"):
+        R._assert_launch_authorised(lock)

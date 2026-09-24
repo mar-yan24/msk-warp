@@ -1633,6 +1633,12 @@ def _assert_launch_authorised(protocol):
     creates no ledger file, no run directory and no child. Returns the sha256
     of the authorisation record the lock accepted, when the protocol declares
     one, so the launch record can name the exact bytes it ran under.
+
+    That sha256 is the one the lock itself returns for the bytes it read and
+    verified, not a second read of the record afterwards: a record replaced
+    between the two reads would otherwise be named in place of the one that
+    was checked. A lock that declares a record but returns anything other than
+    a lowercase 64-hex digest is refused.
     """
     lock = getattr(protocol, "assert_authorised", None)
     if lock is None:
@@ -1642,13 +1648,47 @@ def _assert_launch_authorised(protocol):
             "the protocol declares a launch lock that is not callable; refused "
             "rather than skipped, because a lock that cannot run proves nothing")
     try:
-        lock()
+        verified = lock()
     except P.ProtocolError as error:
         raise RunnerRefusal(str(error)) from error
     record = getattr(protocol, "AUTHORISATION_RECORD", None)
     if record is None:
         return None
-    return sha256_file(Path(getattr(protocol, "ROOT", ROOT)) / str(record))
+    if not (isinstance(verified, str) and len(verified) == 64
+            and all(char in "0123456789abcdef" for char in verified)):
+        raise RunnerRefusal(
+            "the protocol's launch lock declares an authorisation record but did "
+            f"not return the sha256 of the bytes it verified (got {verified!r}); "
+            "refused, because the launch record must name exactly those bytes")
+    return verified
+
+
+def _assert_launch_dir_bound(protocol, directory, *, what, strictly_inside) -> None:
+    """Keep every launch directory of a path-binding protocol inside RUN_ROOT.
+
+    Guard (e) proves a run root unlaunched by walking RUN_ROOT, so a launch
+    directory anywhere else would be invisible to it. Paths are compared after
+    ``resolve()``, so a relative path, a ``..`` segment, or a link or junction
+    inside RUN_ROOT that points out of it is judged by where it really lands.
+    Opt-in on ``BIND_LEDGER_PATH``, so the sealed protocol and probe E keep
+    exactly their existing behaviour.
+    """
+    if not getattr(protocol, "BIND_LEDGER_PATH", False):
+        return
+    declared = getattr(protocol, "RUN_ROOT", None)
+    if declared is None:
+        raise RunnerRefusal(
+            "the protocol binds its ledger path but declares no RUN_ROOT, so "
+            "where its launch directories may live is unknown; refused")
+    run_root = (Path(getattr(protocol, "ROOT", ROOT)) / str(declared)).resolve()
+    landed = Path(directory).resolve()
+    inside = run_root in landed.parents
+    if not (inside or (landed == run_root and not strictly_inside)):
+        raise RunnerRefusal(
+            f"the {what} {Path(directory)} resolves to {landed}, which is not "
+            f"inside this protocol's RUN_ROOT {run_root}. Guard (e) proves the "
+            "run root unlaunched by walking RUN_ROOT, so a launch anywhere else "
+            "would be invisible to it; refused and nothing is written")
 
 
 def run_launch(args, *, ledger=None, spawn=subprocess.Popen, clock=time.perf_counter,
@@ -1664,6 +1704,10 @@ def run_launch(args, *, ledger=None, spawn=subprocess.Popen, clock=time.perf_cou
     # The launch lock comes first: while it is closed, the create-or-open branch
     # below is never reached, so no ledger file and no run directory can appear.
     authorisation_sha256 = _assert_launch_authorised(protocol)
+    # Also before the create-or-open branch: a launch directory outside the run
+    # root creates nothing, not even the ledger.
+    _assert_launch_dir_bound(protocol, args.run_dir, what="run directory",
+                             strictly_inside=False)
     if ledger is None:
         if probe is None and not getattr(args, "no_contention_probe", False):
             probe = gpu_contention_probe
@@ -1694,6 +1738,8 @@ def run_launch(args, *, ledger=None, spawn=subprocess.Popen, clock=time.perf_cou
 
     # Every refusal up to here leaves the ledger byte-identical.
     plan = resolve_plan(args, remaining, protocol=protocol)
+    _assert_launch_dir_bound(protocol, plan.out_dir, what="segment directory",
+                             strictly_inside=True)
 
     launch_record = {
         "schema_version": LAUNCH_SCHEMA, "runner_schema": SCHEMA_VERSION,

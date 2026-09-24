@@ -93,7 +93,10 @@ RUN_ROOT = "logs/myoleg26_ppo_v2_direction_f"
 #: The ledger must open at the settled spend of :data:`PARENT_LEDGER`.
 REQUIRES_CARRY_FORWARD = True
 
-#: The ledger header binds its own path, so a copied ledger is refused.
+#: The one ledger lives at :data:`LEDGER`. The budget module refuses to create
+#: it anywhere else and refuses every non-inspecting open of it anywhere else,
+#: so a copied ledger is refused; the runner also keeps every launch directory
+#: inside :data:`RUN_ROOT`.
 BIND_LEDGER_PATH = True
 
 #: Repository root that relative paths resolve against.
@@ -174,17 +177,21 @@ RESET_BLOCK_NOTE = (
 
 GEOMETRY_NOTE = (
     "The research handoff names this direction 'fewer worlds, more epochs'. "
-    "Direction F departs from that name and keeps the sealed 64 worlds. The "
-    "measured per-step cost is latency-bound, so fewer worlds would not buy more "
-    "epochs at a fixed wall time; it would only shrink the batch, from 1,024 to "
-    "256 per minibatch at 16 worlds, and add batch noise as a second varied "
-    "factor. Depth is bought with wall time at the sealed geometry instead")
+    "Direction F departs from that name and keeps the sealed 64 worlds. Assumed, "
+    "not measured on MyoLeg26: per-step cost is latency-bound and nearly flat in "
+    "world count; the only support is the Ant scaling in the SHAC speedup "
+    "recipe. If so, fewer worlds would not buy more epochs at a fixed wall time; "
+    "they would only shrink the batch, from 1,024 to 256 transitions per "
+    "minibatch at 16 worlds, and add batch noise as a second varied factor. "
+    "Depth is bought with wall time at the sealed geometry instead")
 
 BASE_RECIPE_NOTE = (
     "g990_e010 is the pinned yaml pair: the only arm with no deviation from the "
     "frozen config, and probe E's base. It was not chosen by any stage-1 "
-    "ranking. With lr_schedule constant, max_epochs acts only as a loop bound, "
-    "so the effective config differs from sealed g990_e010 in depth alone")
+    "ranking. PPO reads max_epochs only as the argument to env.begin_epoch, "
+    "which is a no-op for MyoLeg26, as the loop bound, and in the linear-schedule "
+    "branch, which lr_schedule constant never enters. So the effective config "
+    "differs from sealed g990_e010 in depth alone")
 
 HELD_FIXED_NOTE = (
     "Held fixed: the official 26-muscle model without arms, 1.0 m/s walking "
@@ -592,11 +599,13 @@ def _is_blank(value) -> bool:
     return not isinstance(value, str) or not value.strip()
 
 
-def assert_authorised() -> None:
+def assert_authorised() -> str:
     """Refuse unless both layers of the launch lock are open.
 
     Takes no arguments. The source constant is checked first, before any read,
-    so an unauthorised build never touches the record at all.
+    so an unauthorised build never touches the record at all. On success it
+    returns the sha256 of the exact record bytes it read and verified, so a
+    caller can name them without a second, unverified read of the file.
     """
     if AUTHORISED is not True:
         raise AuthorisationError(
@@ -696,6 +705,7 @@ def assert_authorised() -> None:
             "protocol_digest",
             f"must bind the live Direction F digest {live_digest}",
             record["protocol_digest"])
+    return hashlib.sha256(raw).hexdigest()
 
 
 # ---------------------------------------------------------------------------
