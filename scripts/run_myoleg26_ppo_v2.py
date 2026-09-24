@@ -46,6 +46,7 @@ from msk_warp.analysis import myoleg26_selection_v2 as S
 from msk_warp.analysis import ppo_v2_budget as B
 from msk_warp.analysis import ppo_v2_protocol as P
 from msk_warp.analysis import ppo_v2_protocol_e as E
+from msk_warp.analysis import ppo_v2_protocol_f as F
 
 SCHEMA_VERSION = "myoleg26-ppo-v2-runner-v1"
 
@@ -58,7 +59,13 @@ SCHEMA_VERSION = "myoleg26-ppo-v2-runner-v1"
 #: every launch, and the two recipe name sets are disjoint, so no run is ambiguous
 #: about which protocol and which ledger it belongs to. Selecting a protocol here
 #: does not authorise a launch; it only names which protocol a launch is under.
-PROTOCOLS = MappingProxyType({"sealed": P, "probe-e": E})
+#:
+#: ``direction-f`` is the Direction F funding-line amendment, a descendant of
+#: ``probe-e`` with its own digest, its own carried-forward ledger and disjoint
+#: recipe names. It is locked by a two-layer launch lock -- a source constant
+#: plus the user's authorisation record -- which :func:`run_launch` checks before
+#: any ledger or run directory exists, and which the worker checks again.
+PROTOCOLS = MappingProxyType({"sealed": P, "probe-e": E, "direction-f": F})
 
 #: Omitting ``--protocol`` means the sealed protocol, and a sealed launch's worker
 #: argv is left byte-identical to what stage 1 executed.
@@ -615,7 +622,9 @@ def freeze_record_v2(*, root=None, run=subprocess.run) -> dict:
 
     # A preregistration invariant, re-verified at freeze time rather than trusted:
     # the five v2 reset blocks stay mutually disjoint and disjoint from v1's.
+    # Direction F's own block is then checked against all of them and v1.
     P.assert_reset_blocks_disjoint()
+    F.assert_reset_blocks_disjoint()
 
     identity = freeze_identity(files, root=root, run=run)
     return {
@@ -625,7 +634,9 @@ def freeze_record_v2(*, root=None, run=subprocess.run) -> dict:
         # and the parent digest it descends from. The sealed block above is NOT
         # modified by an amendment, so stage 1's ledger keeps validating.
         "amendments": {E.AMENDMENT_ID: {**E.amendment_snapshot(),
-                                        "digest": E.protocol_digest()}},
+                                        "digest": E.protocol_digest()},
+                       F.AMENDMENT_ID: {**F.amendment_snapshot(),
+                                        "digest": F.protocol_digest()}},
         "config": cfg,
         "config_path": config_path.relative_to(root).as_posix(),
         "task_contract": MyoLegTaskContract().as_dict(),
@@ -1613,6 +1624,73 @@ def _settlement_from_result(path):
     return counters, "trained"
 
 
+def _assert_launch_authorised(protocol):
+    """The protocol's launch lock, checked before any ledger or run directory exists.
+
+    A protocol that declares no lock (the sealed protocol and probe E) passes
+    unchanged and gains no new constraint. A protocol that declares one must
+    pass it here, at the very start of :func:`run_launch`, so a locked launch
+    creates no ledger file, no run directory and no child. Returns the sha256
+    of the authorisation record the lock accepted, when the protocol declares
+    one, so the launch record can name the exact bytes it ran under.
+
+    That sha256 is the one the lock itself returns for the bytes it read and
+    verified, not a second read of the record afterwards: a record replaced
+    between the two reads would otherwise be named in place of the one that
+    was checked. A lock that declares a record but returns anything other than
+    a lowercase 64-hex digest is refused.
+    """
+    lock = getattr(protocol, "assert_authorised", None)
+    if lock is None:
+        return None
+    if not callable(lock):
+        raise RunnerRefusal(
+            "the protocol declares a launch lock that is not callable; refused "
+            "rather than skipped, because a lock that cannot run proves nothing")
+    try:
+        verified = lock()
+    except P.ProtocolError as error:
+        raise RunnerRefusal(str(error)) from error
+    record = getattr(protocol, "AUTHORISATION_RECORD", None)
+    if record is None:
+        return None
+    if not (isinstance(verified, str) and len(verified) == 64
+            and all(char in "0123456789abcdef" for char in verified)):
+        raise RunnerRefusal(
+            "the protocol's launch lock declares an authorisation record but did "
+            f"not return the sha256 of the bytes it verified (got {verified!r}); "
+            "refused, because the launch record must name exactly those bytes")
+    return verified
+
+
+def _assert_launch_dir_bound(protocol, directory, *, what, strictly_inside) -> None:
+    """Keep every launch directory of a path-binding protocol inside RUN_ROOT.
+
+    Guard (e) proves a run root unlaunched by walking RUN_ROOT, so a launch
+    directory anywhere else would be invisible to it. Paths are compared after
+    ``resolve()``, so a relative path, a ``..`` segment, or a link or junction
+    inside RUN_ROOT that points out of it is judged by where it really lands.
+    Opt-in on ``BIND_LEDGER_PATH``, so the sealed protocol and probe E keep
+    exactly their existing behaviour.
+    """
+    if not getattr(protocol, "BIND_LEDGER_PATH", False):
+        return
+    declared = getattr(protocol, "RUN_ROOT", None)
+    if declared is None:
+        raise RunnerRefusal(
+            "the protocol binds its ledger path but declares no RUN_ROOT, so "
+            "where its launch directories may live is unknown; refused")
+    run_root = (Path(getattr(protocol, "ROOT", ROOT)) / str(declared)).resolve()
+    landed = Path(directory).resolve()
+    inside = run_root in landed.parents
+    if not (inside or (landed == run_root and not strictly_inside)):
+        raise RunnerRefusal(
+            f"the {what} {Path(directory)} resolves to {landed}, which is not "
+            f"inside this protocol's RUN_ROOT {run_root}. Guard (e) proves the "
+            "run root unlaunched by walking RUN_ROOT, so a launch anywhere else "
+            "would be invisible to it; refused and nothing is written")
+
+
 def run_launch(args, *, ledger=None, spawn=subprocess.Popen, clock=time.perf_counter,
                probe=None) -> int:
     """Reserve, spawn exactly one child, own its timeout, settle. No GPU here.
@@ -1623,6 +1701,13 @@ def run_launch(args, *, ledger=None, spawn=subprocess.Popen, clock=time.perf_cou
     """
     ledger_path = Path(args.ledger)
     protocol = launch_protocol(args)
+    # The launch lock comes first: while it is closed, the create-or-open branch
+    # below is never reached, so no ledger file and no run directory can appear.
+    authorisation_sha256 = _assert_launch_authorised(protocol)
+    # Also before the create-or-open branch: a launch directory outside the run
+    # root creates nothing, not even the ledger.
+    _assert_launch_dir_bound(protocol, args.run_dir, what="run directory",
+                             strictly_inside=False)
     if ledger is None:
         if probe is None and not getattr(args, "no_contention_probe", False):
             probe = gpu_contention_probe
@@ -1653,6 +1738,8 @@ def run_launch(args, *, ledger=None, spawn=subprocess.Popen, clock=time.perf_cou
 
     # Every refusal up to here leaves the ledger byte-identical.
     plan = resolve_plan(args, remaining, protocol=protocol)
+    _assert_launch_dir_bound(protocol, plan.out_dir, what="segment directory",
+                             strictly_inside=True)
 
     launch_record = {
         "schema_version": LAUNCH_SCHEMA, "runner_schema": SCHEMA_VERSION,
@@ -1672,6 +1759,10 @@ def run_launch(args, *, ledger=None, spawn=subprocess.Popen, clock=time.perf_cou
         "parent_result": None if plan.parent_result is None else str(plan.parent_result),
         "device": str(args.device),
     }
+    # Added only for a protocol that declares an authorisation record, so the
+    # sealed and probe-E launch records keep exactly their existing keys.
+    if authorisation_sha256 is not None:
+        launch_record["authorisation_record_sha256"] = authorisation_sha256
 
     def _create():
         """Runs inside ``reserve``: cheap, and provably before any child."""
@@ -1815,6 +1906,18 @@ def effective_config(*, protocol, stage_key, recipe_name, seed, device,
     import copy
     import yaml
 
+    # This runner builds only the sealed geometry, so a protocol that declares
+    # another one is refused rather than silently run at the sealed values.
+    worlds = getattr(protocol, "NUM_WORLDS", P.NUM_WORLDS)
+    controls = getattr(protocol, "CONTROLS_PER_WORLD_PER_EPOCH",
+                       P.CONTROLS_PER_WORLD_PER_EPOCH)
+    if worlds != P.NUM_WORLDS or controls != P.CONTROLS_PER_WORLD_PER_EPOCH:
+        raise RunnerRefusal(
+            f"the protocol declares {worlds!r} worlds and {controls!r} controls per "
+            f"world per epoch, but this runner builds only the sealed geometry of "
+            f"{P.NUM_WORLDS} worlds and {P.CONTROLS_PER_WORLD_PER_EPOCH} controls "
+            "per world per epoch; refused rather than run at a geometry the "
+            "protocol did not declare")
     spec = protocol.stage(stage_key)
     arm = protocol.recipe(recipe_name)
     cfg = copy.deepcopy(yaml.safe_load(Path(P.V2_CONFIG).read_text(encoding="utf-8")))
@@ -1867,6 +1970,19 @@ def assert_built_arm(algo, *, protocol, arm) -> None:
                 "a trust region it does not have")
 
 
+def worker_stage(protocol, stage_key):
+    """``(stage record, selection reset block)`` of the LAUNCH protocol.
+
+    Pure. The worker used to read the sealed stage record here whatever the
+    launch protocol was, so an amendment that changes a stage's epoch cap or
+    reset block would have trained to the sealed cap, evaluated on the sealed
+    block and skipped every evaluation epoch past the sealed cap. Both values
+    now come from the protocol the launch named, through its own lookups.
+    """
+    spec = protocol.stage(stage_key)
+    return spec, tuple(protocol.selection_reset_block(stage_key))
+
+
 def _build_runtime(args, plan) -> WorkerContext:
     """The real GPU build: backend import, model compile, environment, PPO.
 
@@ -1878,7 +1994,7 @@ def _build_runtime(args, plan) -> WorkerContext:
     from msk_warp.envs.myoleg26_walk import MyoLeg26WalkEnv
 
     protocol = launch_protocol(args)
-    spec = P.stage(plan.stage)
+    spec, block = worker_stage(protocol, plan.stage)
     arm = protocol.recipe(plan.recipe)
     # Only gamma and entropy_coef vary between the sealed arms; a protocol
     # amendment additionally varies the trust-region keys it declares.
@@ -1893,7 +2009,7 @@ def _build_runtime(args, plan) -> WorkerContext:
 
     # The stage's own selection block. The confirmation and audit blocks stay
     # unused until checkpoint selection is locked, so they are never named here.
-    seeds = list(P.selection_reset_block(plan.stage))
+    seeds = list(block)
     with isolated_rng():
         kwargs = {key: value for key, value in cfg["params"]["env"].items()
                   if key not in ("name", "num_actors")}
@@ -2049,7 +2165,7 @@ def _worker_segment(args, *, build, clock, started, wrote, timing_clock=None) ->
 
     work_deadline = started + plan.work_deadline_s
     capture_reserve_s = float(getattr(args, "capture_reserve_s", DEFAULT_CAPTURE_RESERVE_S))
-    spec = P.stage(plan.stage)
+    spec, _block = worker_stage(protocol, plan.stage)
     # The production default is ON, resolved here rather than by the caller, so a
     # driver that never mentions timing still records the split. The only OFF path
     # is an explicit in-process ``train_segment(timing_clock=None)`` call.
