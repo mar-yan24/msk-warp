@@ -22,7 +22,7 @@
         "schema_version": "myoleg26-direction-f-authorisation-v1"
       },
       "authorised": false,
-      "base_recipe": "g990_e010 is the pinned yaml pair: the only arm with no deviation from the frozen config, and probe E's base. It was not chosen by any stage-1 ranking. With lr_schedule constant, max_epochs acts only as a loop bound, so the effective config differs from sealed g990_e010 in depth alone",
+      "base_recipe": "g990_e010 is the pinned yaml pair: the only arm with no deviation from the frozen config, and probe E's base. It was not chosen by any stage-1 ranking. PPO reads max_epochs only as the argument to env.begin_epoch, which is a no-op for MyoLeg26, as the loop bound, and in the linear-schedule branch, which lr_schedule constant never enters. So the effective config differs from sealed g990_e010 in depth alone",
       "canonical_recipe_order": [
         "g990_e010_f512"
       ],
@@ -153,7 +153,7 @@
         "funded from the sealed refine cap as a funding line only, where probe E was funded from the screen cap",
         "a two-layer launch lock: a source constant inside the digest and a user-written authorisation record"
       ],
-      "digest": "a52e766eee224d783a128b8d8d34ee2e8d60745b55bf396458842af4cfa6888e",
+      "digest": "db81e1ba5ebc735419bc8994370413cf03c8b45f769e92e71470702fba3ce349",
       "funding": {
         "cap": "refine",
         "cap_s": 7200,
@@ -163,7 +163,7 @@
         "promotes": false
       },
       "funding_note": "The budget ledger debits the refine line, because the budget keys every charge by stage. The Stage record declared here carries that key for funding only: its wall cap is FUNDING_CAP_S, inside the preregistered window and never above the sealed refine cap, and it promotes nothing",
-      "geometry": "The research handoff names this direction 'fewer worlds, more epochs'. Direction F departs from that name and keeps the sealed 64 worlds. The measured per-step cost is latency-bound, so fewer worlds would not buy more epochs at a fixed wall time; it would only shrink the batch, from 1,024 to 256 per minibatch at 16 worlds, and add batch noise as a second varied factor. Depth is bought with wall time at the sealed geometry instead",
+      "geometry": "The research handoff names this direction 'fewer worlds, more epochs'. Direction F departs from that name and keeps the sealed 64 worlds. Assumed, not measured on MyoLeg26: per-step cost is latency-bound and nearly flat in world count; the only support is the Ant scaling in the SHAC speedup recipe. If so, fewer worlds would not buy more epochs at a fixed wall time; they would only shrink the batch, from 1,024 to 256 transitions per minibatch at 16 worlds, and add batch noise as a second varied factor. Depth is bought with wall time at the sealed geometry instead",
       "grandparent_protocol_digest": "4c01fdc94117bd190cd44c6b6a5f411a5c7cfc7b7d3e0462a344dda43baf2169",
       "held_fixed": "Held fixed: the official 26-muscle model without arms, 1.0 m/s walking without imitation, the pinned yaml and freeze, 64 worlds, 128 controls per world per epoch, 4 physics substeps, the 500-control evaluation horizon, the 64-epoch evaluation interval, the segment sizing and the walking gate",
       "ledger": {
@@ -418,10 +418,10 @@
     "msk_warp/analysis/orbit.py": "d1dacdaa7033617455269c7cb05aa4041c846fcc8bbe96422d4fc404284ec818",
     "msk_warp/analysis/ppo_diagnostics.py": "5af92105b0ec533a70da0c1978e5b44bb6c9fc4a9d0c08bc383588beafedf0a1",
     "msk_warp/analysis/ppo_resume.py": "9d3549242a5d2769d3961b55f92bd64398ec95ee23b788d048575a28b2fb6f47",
-    "msk_warp/analysis/ppo_v2_budget.py": "23419c7204e936700c7d753c191f49c8dd0733f32350feb32dd8f0dc1130983a",
+    "msk_warp/analysis/ppo_v2_budget.py": "520c862c8df5e712803e0864f5f1d43c6a12cb2cfc0fb43bacf9602e182a2632",
     "msk_warp/analysis/ppo_v2_protocol.py": "211c9c9f15f56dc0a2c7b412b520f9e55304a4ac7fd09c220c00c581f4f936a5",
     "msk_warp/analysis/ppo_v2_protocol_e.py": "864b22e8de9ab74aef092efd95e2a92646ec5524322293d27da84af93b9553fb",
-    "msk_warp/analysis/ppo_v2_protocol_f.py": "229a90156d0d6421eac5b1363889aa443df344e68843144234cab7948ffea2ed",
+    "msk_warp/analysis/ppo_v2_protocol_f.py": "d3694d933f4cf2c943c844d35020aa8921baa0cbac6dcd4b59cd93883fd31594",
     "msk_warp/analysis/stability.py": "82b2d4141e1e4bd3b5dca3bbf8777d04b35988ef0fe2f43a50ca76c8a03ecd85",
     "msk_warp/assets/myoleg26/LICENSE.upstream": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
     "msk_warp/assets/myoleg26/SOURCE_NOTICES.txt": "cadbaa6b4e8403c9da1925fab3dfe4055bd85e077f048a1dc493d777ed3d8cca",
@@ -495,7 +495,7 @@
     "msk_warp/utils/running_mean_std.py": "f953560dc8226fbe39285c8bc45d3bbce8a897e5cc33fdf852abd06c2296f22b",
     "msk_warp/utils/time_report.py": "c972b3f14aca0b7c070e335dbdcadec06485749722d143a03213c2b0a8d0b756",
     "msk_warp/utils/torch_utils.py": "f030d39c00f0ae3cc282617c05de794fac915996de6d1de742ad76f3abf1ef93",
-    "scripts/run_myoleg26_ppo_v2.py": "74819843d4a0c45c0eae0c961a2005544e0809d5898d4c199b24d2326fb6cbec",
+    "scripts/run_myoleg26_ppo_v2.py": "c602a222722221046e5ad79ded4f375370eed3c61c4441d64c186e3580fc6349",
     "scripts/summarize_myoleg26_ppo_v2.py": "71dc93bb650c3d317ac6a0f20222c92cff67a4c43cfe576d99af82c32c41fb0c"
   },
   "files_eol": {
@@ -603,10 +603,10 @@
       "msk_warp/analysis/orbit.py": "6520501f587c3d628d6c2a4a6909ca208387975f",
       "msk_warp/analysis/ppo_diagnostics.py": "7ba65f9e33a67d68795aa8e5af43230fa41d7448",
       "msk_warp/analysis/ppo_resume.py": "479a4ee61f36c8a5b790973140e1d97441e41f7c",
-      "msk_warp/analysis/ppo_v2_budget.py": "d3b5165e29b8f5f602ea19ec8f624268e928b041",
+      "msk_warp/analysis/ppo_v2_budget.py": "d82ede335619307712384c7f247930fc1389fe28",
       "msk_warp/analysis/ppo_v2_protocol.py": "60923451f0fd3b8c9d00332ae394775e204d2eea",
       "msk_warp/analysis/ppo_v2_protocol_e.py": "3b98ad8d7955c6df439222ac746a75175e683a36",
-      "msk_warp/analysis/ppo_v2_protocol_f.py": "2f52b8cc19e9813481502c49c68e8d743a6fec27",
+      "msk_warp/analysis/ppo_v2_protocol_f.py": "9659d252b16cd8805bad42bb01a7bf140f357b99",
       "msk_warp/analysis/stability.py": "899ad46e9508f93660607eff44f83ed9f4f119d7",
       "msk_warp/assets/myoleg26/LICENSE.upstream": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
       "msk_warp/assets/myoleg26/SOURCE_NOTICES.txt": "f91c3c555ad52c22ba8deac9d43a49f6854fa0bc",
@@ -680,7 +680,7 @@
       "msk_warp/utils/running_mean_std.py": "b964c7039f28c514cab35204f147c2962b6f4fdf",
       "msk_warp/utils/time_report.py": "876fd5690f63d5276b1b2a4cda220e5f53b1b649",
       "msk_warp/utils/torch_utils.py": "9a0cdcec2ec12996a14d8555516df91001d48e79",
-      "scripts/run_myoleg26_ppo_v2.py": "59e4ffed24ba4458141ba79e8ed426294b8be515",
+      "scripts/run_myoleg26_ppo_v2.py": "554b50af6220b731f3de3e8663ba2a46a1f928a0",
       "scripts/summarize_myoleg26_ppo_v2.py": "20568ab3c7e2e5bbfa8f0138c4d7fb08692c7a94"
     },
     "head_status": {
@@ -787,10 +787,10 @@
       "msk_warp/analysis/orbit.py": "6520501f587c3d628d6c2a4a6909ca208387975f",
       "msk_warp/analysis/ppo_diagnostics.py": "7ba65f9e33a67d68795aa8e5af43230fa41d7448",
       "msk_warp/analysis/ppo_resume.py": "479a4ee61f36c8a5b790973140e1d97441e41f7c",
-      "msk_warp/analysis/ppo_v2_budget.py": "d3b5165e29b8f5f602ea19ec8f624268e928b041",
+      "msk_warp/analysis/ppo_v2_budget.py": "d82ede335619307712384c7f247930fc1389fe28",
       "msk_warp/analysis/ppo_v2_protocol.py": "60923451f0fd3b8c9d00332ae394775e204d2eea",
       "msk_warp/analysis/ppo_v2_protocol_e.py": "3b98ad8d7955c6df439222ac746a75175e683a36",
-      "msk_warp/analysis/ppo_v2_protocol_f.py": "2f52b8cc19e9813481502c49c68e8d743a6fec27",
+      "msk_warp/analysis/ppo_v2_protocol_f.py": "9659d252b16cd8805bad42bb01a7bf140f357b99",
       "msk_warp/analysis/stability.py": "899ad46e9508f93660607eff44f83ed9f4f119d7",
       "msk_warp/assets/myoleg26/LICENSE.upstream": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
       "msk_warp/assets/myoleg26/SOURCE_NOTICES.txt": "f91c3c555ad52c22ba8deac9d43a49f6854fa0bc",
@@ -864,7 +864,7 @@
       "msk_warp/utils/running_mean_std.py": "b964c7039f28c514cab35204f147c2962b6f4fdf",
       "msk_warp/utils/time_report.py": "876fd5690f63d5276b1b2a4cda220e5f53b1b649",
       "msk_warp/utils/torch_utils.py": "9a0cdcec2ec12996a14d8555516df91001d48e79",
-      "scripts/run_myoleg26_ppo_v2.py": "59e4ffed24ba4458141ba79e8ed426294b8be515",
+      "scripts/run_myoleg26_ppo_v2.py": "554b50af6220b731f3de3e8663ba2a46a1f928a0",
       "scripts/summarize_myoleg26_ppo_v2.py": "20568ab3c7e2e5bbfa8f0138c4d7fb08692c7a94"
     }
   },
