@@ -151,7 +151,7 @@ def test_the_default_protocol_is_the_sealed_one():
     assert R.resolve_protocol("sealed") is P
     assert R.resolve_protocol(R.DEFAULT_PROTOCOL) is P
     assert R.resolve_protocol("probe-e") is E
-    assert set(R.PROTOCOLS) == {"sealed", "probe-e"}
+    assert set(R.PROTOCOLS) == {"sealed", "probe-e", "direction-f"}
 
 
 def test_an_unknown_protocol_is_refused_by_name():
@@ -469,7 +469,7 @@ def test_the_committed_manifest_keeps_the_sealed_protocol_untouched():
 def test_the_committed_manifest_records_the_amendment_and_its_parent():
     frozen = json.loads(V2_MANIFEST.read_text(encoding="utf-8"))
     amendments = frozen["amendments"]
-    assert set(amendments) == {E.AMENDMENT_ID}
+    assert set(amendments) == {E.AMENDMENT_ID, "direction-f-horizon-v1"}
     entry = amendments[E.AMENDMENT_ID]
     assert entry["digest"] == E.protocol_digest()
     assert entry["parent_protocol_digest"] == P.protocol_digest()

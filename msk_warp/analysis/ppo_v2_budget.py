@@ -55,6 +55,7 @@ import datetime
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import time
@@ -192,6 +193,31 @@ class ParentLedgerMovedError(BudgetError):
     downgraded to a warning and there is no flag that suppresses it; the only
     way forward is an explicit :meth:`BudgetLedger.resnapshot_parent`. See
     :data:`PARENT_RECHECK_NOTE`.
+
+    The re-check is transitive, so the ledger that moved need not be the direct
+    parent. ``moved_ledger`` names the ledger whose charge actually moved, and
+    ``stale_chain`` names every ledger whose carried balance is stale because of
+    it, nearest the moved ledger first -- which is the order in which they must
+    be re-snapshotted.
+    """
+
+    def __init__(self, message, *, stale_chain=(), moved_ledger=None):
+        super().__init__(message)
+        self.stale_chain = tuple(str(item) for item in stale_chain)
+        self.moved_ledger = None if moved_ledger is None else str(moved_ledger)
+
+
+class UnauthorisedLaunchError(BudgetError):
+    """The ledger's protocol declares a launch lock, and the lock is closed.
+
+    Raised by :meth:`BudgetLedger.create` before the file is written, and by
+    :meth:`BudgetLedger.reserve` after the parent re-check but before any cap
+    check, contention observation or durable row -- so a refusal commits
+    nothing. The protocol's own refusal is chained as ``__cause__``. A protocol
+    that declares no ``assert_authorised`` (the sealed campaign protocol and
+    probe E) is unaffected. Settlement is never gated: revoking an
+    authorisation stops the next launch, it never strands a charge already
+    committed.
     """
 
 
@@ -259,6 +285,19 @@ PARENT_RECHECK_NOTE = (
     "appends a row holding the superseded balance beside the new one. The parent "
     "is READ ONLY throughout: it is never written, extended, migrated or "
     "re-hashed by the descendant. "
+    "The re-check is TRANSITIVE. Once the direct parent matches its snapshot, "
+    "the parent's own carried balance is re-checked against ITS parent, and so "
+    "on up the chain: a parent whose ancestor moved is itself stale even though "
+    "its own bytes never changed, so a descendant three levels down refuses "
+    "when the sealed grandparent settles. A moved ancestor raises "
+    "ParentLedgerMovedError naming the chain from the moved ledger down and "
+    "the remedy, which is to re-snapshot every stale ledger in order, nearest "
+    "the moved ledger first (for Direction F: re-snapshot probe E, then F). "
+    "``create`` and ``resnapshot_parent`` refuse, in the same way, to adopt a "
+    "balance from a source ledger that is itself stale. A chain that loops "
+    "back on itself, or runs deeper than MAX_CARRY_CHAIN_DEPTH ledgers, is a "
+    "LedgerIntegrityError and never a RecursionError: a genuine lineage is "
+    "created parent-first, so it cannot loop. "
     "RECORDED DESIGN INTENT for a successor, so nobody reaches for the wrong "
     "tool: the check fires at the reserve, which is sufficient while a "
     "descendant authorises ONE cell at segment 0, because there is then no next "
@@ -268,6 +307,18 @@ PARENT_RECHECK_NOTE = (
     "``parent_moved_during_segment`` field on the settle row, so the charge "
     "still lands and the divergence stays visible in the chain."
 )
+
+#: The deepest carried-forward chain the transitive re-check will walk. The
+#: real chain is three ledgers deep (sealed, probe E, Direction F); the bound
+#: exists so that any chain, looping or merely long, ends in a
+#: LedgerIntegrityError rather than a RecursionError.
+MAX_CARRY_CHAIN_DEPTH = 32
+
+#: The runner's per-segment launch record and segment directory prefix. Their
+#: presence under a bound protocol's RUN_ROOT is evidence that a launch already
+#: happened there (see :func:`_assert_run_root_unlaunched`).
+LAUNCH_RECORD_FILENAME = "launch.json"
+SEGMENT_DIR_PREFIX = "segment_"
 
 
 @dataclass(frozen=True)
@@ -371,6 +422,131 @@ def _assert_declared_parent(spec, carried) -> None:
                 f"ledger whose header digest is {supplied_digest}. A descendant "
                 "may open only at the settled spend of the protocol it declares "
                 "as its parent")
+
+
+def _assert_source_chain_current(source_path, *, descendant, action) -> None:
+    """Refuse to adopt a carried balance from a source ledger that is stale.
+
+    A source whose OWN carried balance no longer matches its parent has a
+    settled total that omits spend beneath it, even though its bytes never
+    changed. Carrying that total into a descendant would re-grant wall time
+    already spent, so :meth:`BudgetLedger.create` and
+    :meth:`BudgetLedger.resnapshot_parent` refuse it and name the order that
+    fixes it: re-snapshot the stale source first, then the descendant.
+    """
+    source = Path(source_path)
+    here = str(Path(descendant).resolve())
+    try:
+        ledger = BudgetLedger.open(source, inspect=True)
+    except BudgetError as exc:
+        raise LedgerIntegrityError(
+            f"the carried source ledger {source} could not be read and "
+            f"re-verified, so the {action} for {here} is refused: {exc}"
+        ) from exc
+    try:
+        ledger.assert_parent_unmoved(_seen=(here,))
+    except ParentLedgerMovedError as exc:
+        stale = exc.stale_chain + (here,)
+        remedy = "re-snapshot " + ", then ".join(stale)
+        raise ParentLedgerMovedError(
+            f"the carried opening balance for {here} would come from {source}, "
+            "which is itself STALE: the ledger "
+            f"{exc.moved_ledger} has moved beneath it. Adopting that balance "
+            "would carry a total that omits wall time already spent, so this "
+            f"{action} is refused and nothing is written. Remedy, in order: "
+            f"{remedy} -- the last step being this {action}. The source's own "
+            f"refusal: {exc}",
+            stale_chain=stale, moved_ledger=exc.moved_ledger) from exc
+    except LedgerIntegrityError as exc:
+        raise LedgerIntegrityError(
+            f"the carried-forward chain above {source} could not be confirmed, "
+            f"so the {action} for {here} is refused: {exc}"
+        ) from exc
+
+
+def _assert_bound_ledger_path(spec, path) -> None:
+    """With ``BIND_LEDGER_PATH``, the one ledger may be created only at LEDGER.
+
+    Opt-in, so the sealed protocol and probe E -- which declare no such flag --
+    are unaffected. Without it, a second ledger for the same protocol written
+    anywhere else would open every cap afresh beside the first.
+    """
+    if not getattr(spec, "BIND_LEDGER_PATH", False):
+        return
+    declared = getattr(spec, "LEDGER", None)
+    if declared is None:
+        raise LedgerIntegrityError(
+            "this protocol binds its ledger path (BIND_LEDGER_PATH) but declares "
+            "no LEDGER, so the one place its ledger may live is unknown; refused")
+    expected = (Path(getattr(spec, "ROOT", P.ROOT)) / str(declared)).resolve()
+    supplied = Path(path).resolve()
+    if supplied != expected:
+        raise LedgerIntegrityError(
+            f"this protocol binds its one ledger to {expected} (LEDGER "
+            f"{str(declared)!r}), but create was asked to write {supplied}. A "
+            "second ledger for one protocol, anywhere else, would open every cap "
+            "afresh beside the first, so it is refused and nothing is written")
+
+
+def _assert_run_root_unlaunched(spec) -> None:
+    """With ``BIND_LEDGER_PATH``, refuse a ledger for a run root already used.
+
+    The deleted-ledger re-grant guard. The path binding pins WHERE the one
+    ledger lives, but a ledger that was deleted could be created again at that
+    same path at zero spend. Launches leave durable traces the ledger does not
+    own -- the runner writes ``launch.json`` inside a ``segment_*`` directory
+    under the run root -- so any such entry, at any depth, means launches
+    already happened and a fresh ledger would re-grant their spend. Other files
+    (the authorisation record, notes) are allowed. The walk never follows a
+    symlink, creates nothing and changes nothing. Opt-in, so probe E, whose run
+    root legitimately holds its launches, is unaffected.
+    """
+    if not getattr(spec, "BIND_LEDGER_PATH", False):
+        return
+    declared = getattr(spec, "RUN_ROOT", None)
+    if declared is None:
+        raise LedgerIntegrityError(
+            "this protocol binds its ledger path (BIND_LEDGER_PATH) but declares "
+            "no RUN_ROOT, so its run root cannot be checked for earlier launches; "
+            "a ledger is never created without that check")
+    root = Path(getattr(spec, "ROOT", P.ROOT)) / str(declared)
+    if not os.path.lexists(root):
+        return
+    if not os.path.isdir(root):
+        raise LedgerIntegrityError(
+            f"the run root {root} exists but is not a directory, so it cannot be "
+            "checked for earlier launches; refused")
+    launch_name = os.path.normcase(LAUNCH_RECORD_FILENAME)
+    segment_prefix = os.path.normcase(SEGMENT_DIR_PREFIX)
+    found = []
+
+    def _refuse_walk_error(error):
+        raise error
+
+    try:
+        for current, dirs, files in os.walk(root, onerror=_refuse_walk_error,
+                                            followlinks=False):
+            for name in (*dirs, *files):
+                key = os.path.normcase(name)
+                if key == launch_name or key.startswith(segment_prefix):
+                    found.append(os.path.join(current, name))
+    except OSError as exc:
+        raise LedgerIntegrityError(
+            f"the run root {root} could not be walked to check for earlier "
+            f"launches ({exc}); refused"
+        ) from exc
+    if found:
+        found.sort()
+        shown = ", ".join(found[:6])
+        more = "" if len(found) <= 6 else f", and {len(found) - 6} more"
+        raise LedgerIntegrityError(
+            f"the run root {root} already holds {len(found)} launch record(s) "
+            f"or segment directories ({shown}{more}). A bound ledger is created "
+            "once, before the first launch, so these mean launches already "
+            "happened; creating a ledger now -- for example after the first one "
+            "was deleted -- would re-grant their spend at a zero opening "
+            "balance. That deleted-ledger re-grant is refused and nothing is "
+            "written. The launch history is never cleared to make room")
 
 
 def carry_forward(path) -> CarriedForward:
@@ -677,7 +853,17 @@ class BudgetLedger:
             # which is the worst shape of the bug because everything downstream
             # looks correct.
             _assert_declared_parent(spec, carried)
+            # Transitive: the declared parent must itself be current against
+            # ITS parent, or its settled total omits spend beneath it.
+            _assert_source_chain_current(carried.source_path,
+                                         descendant=ledger.path, action="create")
             carried_block = carried.as_dict()
+        # Opt-in bindings for a protocol that declares BIND_LEDGER_PATH: one
+        # ledger, at one path, and never again once launches have happened.
+        _assert_bound_ledger_path(spec, ledger.path)
+        _assert_run_root_unlaunched(spec)
+        # The protocol's launch lock, if it declares one, before the file exists.
+        ledger._assert_protocol_authorised("create")
         posix_time = _finite(ledger._clock(), "clock")
         body = {
             "index": 0, "kind": HEADER_KIND, "prev_sha256": GENESIS_PREV_SHA256,
@@ -988,7 +1174,7 @@ class BudgetLedger:
         """
         return [dict(block) for block in self._carried_chain]
 
-    def assert_parent_unmoved(self) -> None:
+    def assert_parent_unmoved(self, *, _seen=()) -> None:
         """Refuse unless the parent ledger is exactly what was carried forward.
 
         Called by :meth:`reserve` on **every** reservation, immediately after the
@@ -998,12 +1184,41 @@ class BudgetLedger:
         just as loudly as one whose charge advanced, and the snapshot is never
         accepted in its place. See :data:`PARENT_RECHECK_NOTE`.
 
+        The check is **transitive**: once the direct parent matches its
+        snapshot, the parent's own carried balance is re-checked the same way,
+        up to a ledger that carries nothing. A moved ancestor is a
+        :class:`ParentLedgerMovedError` naming the chain and the re-snapshot
+        order; a loop, or a chain deeper than :data:`MAX_CARRY_CHAIN_DEPTH`, is
+        a :class:`LedgerIntegrityError`.
+
+        ``_seen`` is internal: the resolved paths already visited below this
+        ledger, oldest descendant first. It can only add refusals -- the loop
+        and depth guards -- and never skips a check.
+
         A ledger with no carried balance has no parent, and returns.
         """
         carried = self._carried
         if carried is None:
             return
+        here = str(self.path.resolve())
+        visited = tuple(str(item) for item in _seen)
         path = Path(carried["source_path"])
+        if len(visited) >= MAX_CARRY_CHAIN_DEPTH:
+            raise LedgerIntegrityError(
+                f"the carried-forward chain below {here} is more than "
+                f"{MAX_CARRY_CHAIN_DEPTH} ledgers deep, which no genuine lineage "
+                "is; the chain cannot be confirmed, so this is refused")
+        parent_key = os.path.normcase(str(path.resolve()))
+        seen_keys = {os.path.normcase(item) for item in visited}
+        if (os.path.normcase(here) in seen_keys
+                or parent_key in seen_keys | {os.path.normcase(here)}):
+            loop = " -> ".join(visited + (here, str(path.resolve())))
+            raise LedgerIntegrityError(
+                f"the carried-forward chain loops back on itself: {loop} (each "
+                "ledger carried from the next). A genuine lineage never loops, "
+                "because every descendant is created after its parent; a loop "
+                "means a ledger was replaced after a descendant carried from it. "
+                "Nothing is reconciled, so this is refused")
         try:
             parent = BudgetLedger.open(path, inspect=True)
         except BudgetError as exc:
@@ -1023,6 +1238,7 @@ class BudgetLedger:
                 and actual_global == carried_global
                 and len(parent.rows) == int(carried["source_rows"])
                 and open_reservation is None):
+            self._assert_ancestors_unmoved(parent, visited + (here,))
             return
         held = ("" if open_reservation is None else
                 f" The parent also holds the unsettled reservation "
@@ -1039,7 +1255,67 @@ class BudgetLedger:
             "Nothing is reconciled automatically and the stale snapshot is not "
             "accepted: adopting the new balance takes an explicit re-snapshot "
             "(resnapshot_parent) with a stated reason, which records the "
-            "superseded balance beside the new one")
+            "superseded balance beside the new one",
+            stale_chain=(here,), moved_ledger=str(path))
+
+    def _assert_ancestors_unmoved(self, parent, visited) -> None:
+        """The transitive step: re-check the direct parent's own carried balance.
+
+        ``parent`` has just matched this ledger's snapshot. Its own parent may
+        still have moved since the parent's balance was taken, and then this
+        ledger's balance -- which includes the parent's -- is stale too. The
+        refusal is re-raised here naming the whole chain and the remedy order.
+        """
+        here = visited[-1]
+        try:
+            parent.assert_parent_unmoved(_seen=visited)
+        except ParentLedgerMovedError as exc:
+            stale = exc.stale_chain + (here,)
+            chain = " -> ".join((f"{exc.moved_ledger} (moved)",)
+                                + tuple(f"{item} (stale)" for item in stale))
+            remedy = "re-snapshot " + ", then ".join(stale)
+            raise ParentLedgerMovedError(
+                f"an ANCESTOR ledger has MOVED beneath this ledger's carried "
+                f"opening balance, although the direct parent {parent.path} still "
+                f"matches its snapshot. The chain, from the moved ledger down: "
+                f"{chain}. Every stale ledger must adopt the new balance in "
+                f"order, nearest the moved ledger first: {remedy} "
+                "(resnapshot_parent on each, with a stated reason). Reserving "
+                "against a stale balance would draw against wall time already "
+                "spent, so this is refused and nothing is reconciled "
+                f"automatically. The ancestor's own refusal: {exc}",
+                stale_chain=stale, moved_ledger=exc.moved_ledger) from exc
+        except LedgerIntegrityError as exc:
+            raise LedgerIntegrityError(
+                f"the carried-forward chain above {here} could not be "
+                f"confirmed: its direct parent {parent.path} matches its "
+                "snapshot, but the parent's own carried balance does not "
+                f"verify: {exc}. A carried balance is never trusted in place of "
+                "its source, so this is refused"
+            ) from exc
+
+    def _assert_protocol_authorised(self, action) -> None:
+        """Call the protocol's launch lock, if it declares one, or refuse.
+
+        A protocol without ``assert_authorised`` (the sealed campaign protocol,
+        probe E) is unaffected. A protocol refusal becomes an
+        :class:`UnauthorisedLaunchError` chained to it.
+        """
+        hook = getattr(self.protocol, "assert_authorised", None)
+        if hook is None:
+            return
+        if not callable(hook):
+            raise UnauthorisedLaunchError(
+                f"the protocol of ledger {self.path} declares a launch lock that "
+                f"is not callable ({hook!r}), so this {action} is refused")
+        try:
+            hook()
+        except P.ProtocolError as exc:
+            raise UnauthorisedLaunchError(
+                f"the protocol of ledger {self.path} declares a launch lock and "
+                f"it is closed, so this {action} is refused before anything is "
+                f"written: {exc}"
+            ) from exc
 
     def resnapshot_parent(self, *, detail) -> dict:
         """Adopt a moved parent's balance, explicitly and on the record.
@@ -1076,6 +1352,10 @@ class BudgetLedger:
         source = Path(carried["source_path"])
         fresh = carry_forward(source)
         _assert_declared_parent(self.protocol, fresh)
+        # Transitive: never adopt a balance from a parent that is itself stale.
+        # The order is fixed -- the stale parent re-snapshots first, then this.
+        _assert_source_chain_current(fresh.source_path, descendant=self.path,
+                                     action="re-snapshot")
         if fresh.source_protocol_digest == self.protocol_digest:
             raise LedgerIntegrityError(
                 "the named parent has the same protocol digest "
@@ -1210,7 +1490,8 @@ class BudgetLedger:
         """Claim wall time exclusively, before anything expensive is started.
 
         Order is load-bearing: verify, refuse if a reservation is still open,
-        re-check the carried parent, check every cap, observe contention,
+        re-check the carried parent chain, call the protocol's launch lock if
+        it declares one, check every cap, observe contention,
         **append the row**, and only then run ``create``. A caller's ``create``
         may be arbitrarily expensive -- an output directory, a backend import, a
         model compile, an environment, a child process -- so nothing in it may
@@ -1229,6 +1510,8 @@ class BudgetLedger:
         # pending trap -- before any cap check, before the contention
         # observation, and before a single durable row.
         self.assert_parent_unmoved()
+        # The protocol's launch lock, if it declares one, in the same position.
+        self._assert_protocol_authorised("reserve")
 
         spec, _arm = self._checked_run(stage, recipe, seed)
         segment = _count(segment_index, "segment_index")
